@@ -54,6 +54,16 @@ jobs:
             "debian:${{ matrix.debian }}-slim" \
             bash /workspace/vps-disaster-recovery/tests/debian-smoke.sh /workspace/vps-disaster-recovery
 
+  docker-policy:
+    name: Docker policy fail-closed regression
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unknown attached volume must fail; classified ignore must pass
+        working-directory: vps-disaster-recovery
+        run: sudo -E bash ./tests/docker-policy.sh
+
   s3-roundtrip:
     name: Real S3 roundtrip / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -75,7 +85,8 @@ jobs:
           path: |
             vps-disaster-recovery/results/*.json
             /tmp/perf-*.log
-          if-no-files-found: ignore
+            /tmp/vps-dr-failure-context.txt
+          if-no-files-found: warn
           retention-days: 14
 
   postgres-roundtrip:
@@ -108,5 +119,6 @@ jobs:
           path: |
             vps-disaster-recovery/results/performance.json
             vps-disaster-recovery/results/performance.md
-          if-no-files-found: error
+            /tmp/vps-dr-failure-context.txt
+          if-no-files-found: warn
           retention-days: 30
