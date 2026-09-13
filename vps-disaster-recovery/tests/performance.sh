@@ -5,7 +5,7 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source "$ROOT/tests/lib.sh"
 SIZE_MIB=${SIZE_MIB:-256}
 SMALL_FILES=${SMALL_FILES:-10000}
-trap 'rc=$?; write_failure_context /tmp/vps-dr-failure-context.txt; exit $rc' ERR
+trap 'rc=$?; write_failure_context /tmp/vps-dr-failure-context.txt; chmod 0644 /tmp/vps-dr-failure-context.txt 2>/dev/null || true; exit $rc' ERR
 trap 'stop_minio; rm -rf /srv/vps-dr-perf /tmp/vps-dr-perf-restore; cleanup_candidate_state' EXIT
 
 install_candidate_dependencies
@@ -60,4 +60,7 @@ cat > "$ROOT/results/performance.md" <<EOF_MD
 | Repo after second | ${raw2} bytes |
 | Incremental growth | ${growth} bytes |
 EOF_MD
+# Candidate sourcing sets umask 077 and this test runs as root. GitHub's
+# upload-artifact runs as the runner user, so publish only these non-secret metrics.
+chmod 0644 "$ROOT/results/performance.json" "$ROOT/results/performance.md"
 cat "$ROOT/results/performance.md"
