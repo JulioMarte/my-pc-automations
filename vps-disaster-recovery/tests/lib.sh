@@ -6,9 +6,11 @@ MINIO_ENDPOINT=${MINIO_ENDPOINT:-http://127.0.0.1:9000}
 MINIO_USER=${MINIO_USER:-ciadmin}
 MINIO_PASSWORD=${MINIO_PASSWORD:-ci-minio-password-123456}
 TEST_BUCKET=${TEST_BUCKET:-vps-dr-ci}
-# Pinned last maintained community MinIO container. The project stopped publishing
-# community Docker Hub images in 2026; pinning avoids a mutable/broken :latest.
 MINIO_IMAGE=${MINIO_IMAGE:-quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z}
+
+source_candidate_once() {
+  declare -F load_config >/dev/null 2>&1 || source "$SCRIPT"
+}
 
 wait_http() {
   local url=$1
@@ -24,8 +26,6 @@ start_minio() {
     -e MINIO_ROOT_PASSWORD="$MINIO_PASSWORD" \
     "$MINIO_IMAGE" server /data --console-address ':9001' >/dev/null
   wait_http "$MINIO_ENDPOINT/minio/health/live"
-  # The pinned official server image contains mc (its own published healthcheck
-  # used `mc ready local`). Create a dedicated alias/bucket inside the container.
   docker exec vps-dr-minio sh -c \
     "mc alias set ci 'http://127.0.0.1:9000' '$MINIO_USER' '$MINIO_PASSWORD' >/dev/null && mc mb --ignore-existing ci/$TEST_BUCKET >/dev/null"
 }
@@ -33,9 +33,7 @@ start_minio() {
 stop_minio() { docker rm -f vps-dr-minio >/dev/null 2>&1 || true; }
 
 install_candidate_dependencies() {
-  # Exercise the candidate's own Debian/Ubuntu dependency + Restic bootstrap path.
-  # shellcheck disable=SC1090
-  source "$SCRIPT"
+  source_candidate_once
   ensure_directories
   install_packages
   validate_restic_version
@@ -132,16 +130,13 @@ EOF_CRED
 EOF_EX
   printf '# kind\tname\tengine\tstrategy\tmax_age_hours\textra\n' > /etc/vps-backup/workloads.tsv
   chmod 0600 /etc/vps-backup/{config.conf,credentials,restic-password,paths.txt,excludes.txt,workloads.tsv}
-  # Establish the exact mount baseline observed by the candidate on this ephemeral host.
-  # shellcheck disable=SC1090
-  source "$SCRIPT"
+  source_candidate_once
   ensure_directories
   write_mount_baseline
 }
 
 init_repo() {
-  # shellcheck disable=SC1090
-  source "$SCRIPT"
+  source_candidate_once
   load_config
   if ! repo_exists; then restic_cmd init; fi
 }
