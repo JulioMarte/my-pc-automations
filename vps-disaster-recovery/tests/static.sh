@@ -14,7 +14,7 @@ else
 fi
 
 echo '== version =='
-[[ "$($SCRIPT version)" == 'vps-backup v1.3.2' ]]
+[[ "$($SCRIPT version)" == 'vps-backup v1.3.3' ]]
 
 echo '== helper invariants =='
 # shellcheck disable=SC1090
@@ -45,7 +45,7 @@ grep -Fq '  local dir="${STAGING_DIR}/system"' "$SCRIPT"
 grep -Fq '  local policy_json='"'"'[]'"'"' restore_hashes="${dir}/restore-hooks.sha256" restore_count=0' "$SCRIPT"
 ! grep -Fq 'local dir="${STAGING_DIR}/system" policy_json=' "$SCRIPT"
 
-echo '== restic backup wrapper context =='
-grep -n -B 18 -A 28 'restic backup falló' "$SCRIPT" || true
+echo '== Restic timestamp regression =='
+! grep -Fq -- '--time "$BACKUP_RUN_TIME"' "$SCRIPT"
 
 echo 'STATIC PASS'
