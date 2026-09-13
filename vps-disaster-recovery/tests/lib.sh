@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-SCRIPT=${SCRIPT:-$($ROOT/tools/materialize-candidate.sh)}
+SCRIPT=${SCRIPT:-$(bash "$ROOT/tools/materialize-candidate.sh")}
 MINIO_ENDPOINT=${MINIO_ENDPOINT:-http://127.0.0.1:9000}
 MINIO_USER=${MINIO_USER:-ciadmin}
 MINIO_PASSWORD=${MINIO_PASSWORD:-ci-minio-password-123456}
