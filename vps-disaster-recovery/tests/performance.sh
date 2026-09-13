@@ -5,13 +5,13 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source "$ROOT/tests/lib.sh"
 SIZE_MIB=${SIZE_MIB:-256}
 SMALL_FILES=${SMALL_FILES:-10000}
+trap 'rc=$?; write_failure_context /tmp/vps-dr-failure-context.txt; exit $rc' ERR
 trap 'stop_minio; rm -rf /srv/vps-dr-perf /tmp/vps-dr-perf-restore; cleanup_candidate_state' EXIT
 
 install_candidate_dependencies
 start_minio
 cleanup_candidate_state
 install -d /srv/vps-dr-perf
-# Mixed workload: incompressible bytes + highly compressible data + many small files.
 dd if=/dev/urandom of=/srv/vps-dr-perf/random.bin bs=1M count=$((SIZE_MIB/2)) status=none
 yes 'compressible-vps-dr-fixture' | head -c $((SIZE_MIB/2*1024*1024)) > /srv/vps-dr-perf/compressible.txt || true
 mkdir -p /srv/vps-dr-perf/small
