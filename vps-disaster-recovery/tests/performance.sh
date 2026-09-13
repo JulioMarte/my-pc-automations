@@ -23,13 +23,10 @@ init_repo
 before=$(date +%s%N)
 "$SCRIPT" backup >/tmp/perf-backup1.log
 backup1_ms=$(( ($(date +%s%N)-before)/1000000 ))
-# Change ~1 MiB and 100 small files to test incremental/dedup behavior.
 dd if=/dev/urandom of=/srv/vps-dr-perf/random.bin bs=1M count=1 seek=4 conv=notrunc status=none
 for i in $(seq 1 100); do printf 'mutation-%s-%s\n' "$i" "$RANDOM" >> "/srv/vps-dr-perf/small/f-$i"; done
 
-# Capture raw repository size before and after incremental backup from Restic JSON.
-# shellcheck disable=SC1090
-source "$SCRIPT"
+source_candidate_once
 load_config
 raw1=$(repository_raw_bytes)
 before=$(date +%s%N)
@@ -42,7 +39,6 @@ before=$(date +%s%N)
 "$SCRIPT" restore --snapshot "$sid" --tag system --target /tmp/vps-dr-perf-restore >/tmp/perf-restore.log
 restore_ms=$(( ($(date +%s%N)-before)/1000000 ))
 growth=$((raw2-raw1))
-# Incremental growth should be much smaller than the initial unique repository for this fixture.
 (( raw1 > 0 ))
 (( growth >= 0 ))
 (( growth < raw1 / 2 ))
