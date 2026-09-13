@@ -21,9 +21,6 @@ wait_http() {
 start_minio() {
   docker rm -f vps-dr-minio >/dev/null 2>&1 || true
   docker pull "$MINIO_IMAGE" >/dev/null
-  # Test infrastructure must not create persistent Docker volumes, otherwise the
-  # candidate correctly sees the S3 fixture itself as unclassified DR state.
-  # tmpfs keeps MinIO fully functional while isolating it from workload discovery.
   docker run -d --name vps-dr-minio -p 9000:9000 \
     --tmpfs /data:rw,nosuid,nodev,size=768m \
     -e MINIO_ROOT_USER="$MINIO_USER" \
@@ -54,8 +51,12 @@ write_failure_context() {
     echo '=== disk ==='
     df -h 2>&1 || true
     echo '=== vps-backup log tail ==='
-    tail -n 200 /var/log/vps-backup.log 2>/dev/null || true
+    tail -n 250 /var/log/vps-backup.log 2>/dev/null || true
   } >"$out" 2>&1
+  chmod 0644 "$out" 2>/dev/null || true
+  echo '===== CI FAILURE CONTEXT =====' >&2
+  cat "$out" >&2 || true
+  echo '===== END FAILURE CONTEXT =====' >&2
 }
 
 install_candidate_dependencies() {
