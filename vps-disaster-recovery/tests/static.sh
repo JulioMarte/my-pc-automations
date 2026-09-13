@@ -15,7 +15,9 @@ else
 fi
 
 echo '== version =='
-[[ "$($SCRIPT version)" == 'vps-backup v1.4.0' ]]
+[[ "$($SCRIPT version)" == 'vps-backup v1.4.1' ]]
+grep -Fqx 'readonly APP_VERSION="1.4.1"' "$SCRIPT"
+! grep -Eq '^readonly VERSION=' "$SCRIPT"
 
 echo '== helper invariants =='
 # shellcheck disable=SC1090
