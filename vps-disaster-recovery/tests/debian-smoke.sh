@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 ROOT=${1:-/workspace/vps-disaster-recovery}
-SCRIPT=$(bash "$ROOT/tools/materialize-candidate.sh" /tmp/vps-backup-v1.3.sh)
 apt-get update >/dev/null
-apt-get install -y --no-install-recommends ca-certificates curl bzip2 dpkg bash coreutils grep sed gawk >/dev/null
+apt-get install -y --no-install-recommends ca-certificates curl bzip2 dpkg bash coreutils grep sed gawk patch >/dev/null
+SCRIPT=$(bash "$ROOT/tools/materialize-candidate.sh" /tmp/vps-backup-v1.4.1.sh)
 bash -n "$SCRIPT"
-"$SCRIPT" version | grep -qx 'vps-backup v1.3.3'
+"$SCRIPT" version | grep -qx 'vps-backup v1.4.1'
 # Source-only helper tests validate Debian/Ubuntu os-release handling and dpkg comparison.
 # shellcheck disable=SC1090
 source "$SCRIPT"
@@ -13,5 +13,7 @@ validate_os
 version_ge 0.19.1 0.19.1
 ! version_ge 0.18.9 0.19.1
 validate_backup_id debian-ci
+apply_backup_profile balanced
+[[ "$BACKUP_INTERVAL_HOURS/$DATABASE_RPO_HOURS" == '6/6' ]]
 printf 'DEBIAN SMOKE PASS: '
 . /etc/os-release; printf '%s\n' "$PRETTY_NAME"
