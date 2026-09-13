@@ -40,4 +40,7 @@ if command -v systemd-analyze >/dev/null 2>&1; then
   done
 fi
 
+echo '== staging regression context =='
+nl -ba "$SCRIPT" | sed -n '1555,1585p'
+
 echo 'STATIC PASS'
