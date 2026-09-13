@@ -1,0 +1,112 @@
+name: VPS Disaster Recovery CI
+
+on:
+  pull_request:
+    paths:
+      - 'vps-disaster-recovery/**'
+      - '.github/workflows/vps-dr-ci.yml'
+  push:
+    branches:
+      - main
+      - 'feat/vps-disaster-recovery-ci'
+    paths:
+      - 'vps-disaster-recovery/**'
+      - '.github/workflows/vps-dr-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vps-dr-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static:
+    name: Static / Ubuntu 24.04
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install static tooling
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Materialize and verify candidate
+        working-directory: vps-disaster-recovery
+        run: bash ./tools/materialize-candidate.sh
+      - name: Static + calendar tests
+        working-directory: vps-disaster-recovery
+        run: bash ./tests/static.sh
+
+  debian-smoke:
+    name: Debian ${{ matrix.debian }} smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        debian: ['12', '13']
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run in clean Debian container
+        run: |
+          docker run --rm \
+            -v "$PWD:/workspace:ro" \
+            "debian:${{ matrix.debian }}-slim" \
+            bash /workspace/vps-disaster-recovery/tests/debian-smoke.sh /workspace/vps-disaster-recovery
+
+  s3-roundtrip:
+    name: Real S3 roundtrip / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Backup -> MinIO S3 -> restore -> checksum -> restic check
+        working-directory: vps-disaster-recovery
+        run: sudo -E bash ./tests/s3-roundtrip.sh
+      - name: Upload roundtrip metrics/logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s3-roundtrip-${{ matrix.os }}
+          path: |
+            vps-disaster-recovery/results/*.json
+            /tmp/perf-*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  postgres-roundtrip:
+    name: PostgreSQL 16 destruction/recovery
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Candidate DB backup + destroy + restore + checksum
+        working-directory: vps-disaster-recovery
+        run: sudo -E bash ./tests/postgres-roundtrip.sh
+
+  performance:
+    name: Performance / dedup benchmark
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Mixed-data benchmark
+        working-directory: vps-disaster-recovery
+        env:
+          SIZE_MIB: '256'
+          SMALL_FILES: '10000'
+        run: sudo -E bash ./tests/performance.sh
+      - name: Publish benchmark artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vps-dr-performance
+          path: |
+            vps-disaster-recovery/results/performance.json
+            vps-disaster-recovery/results/performance.md
+          if-no-files-found: error
+          retention-days: 30
