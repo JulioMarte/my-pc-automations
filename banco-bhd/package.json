@@ -1,0 +1,21 @@
+{
+  "name": "banco-bhd",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Automatizacion Playwright para Internet Banking BHD",
+  "main": "src/index.js",
+  "scripts": {
+    "login": "node src/index.js login",
+    "record": "node src/index.js record",
+    "movements": "node src/index.js movements",
+    "hotmail": "node src/index.js hotmail",
+    "replay": "node src/index.js replay",
+    "cookies": "node src/index.js cookies",
+    "analyze": "node src/analyze.js"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "patchright": "^1.63.0",
+    "playwright": "^1.63.0"
+  }
+}
