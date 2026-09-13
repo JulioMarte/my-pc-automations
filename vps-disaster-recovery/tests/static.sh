@@ -41,9 +41,11 @@ if command -v systemd-analyze >/dev/null 2>&1; then
 fi
 
 echo '== staging regression =='
-# The two declarations must stay separate under set -u.
 grep -Fq '  local dir="${STAGING_DIR}/system"' "$SCRIPT"
 grep -Fq '  local policy_json='"'"'[]'"'"' restore_hashes="${dir}/restore-hooks.sha256" restore_count=0' "$SCRIPT"
 ! grep -Fq 'local dir="${STAGING_DIR}/system" policy_json=' "$SCRIPT"
+
+echo '== restic backup wrapper context =='
+grep -n -B 18 -A 28 'restic backup falló' "$SCRIPT" || true
 
 echo 'STATIC PASS'
