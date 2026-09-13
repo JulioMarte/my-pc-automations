@@ -9,12 +9,13 @@ bash -n "$SCRIPT"
 echo '== shellcheck errors =='
 if command -v shellcheck >/dev/null 2>&1; then
   shellcheck -S error -e SC1090,SC1091 "$SCRIPT"
+  shellcheck -S error "$ROOT/tools/build-recovery-image.sh"
 else
   echo 'shellcheck unavailable; skipping'
 fi
 
 echo '== version =='
-[[ "$($SCRIPT version)" == 'vps-backup v1.3.3' ]]
+[[ "$($SCRIPT version)" == 'vps-backup v1.4.0' ]]
 
 echo '== helper invariants =='
 # shellcheck disable=SC1090
@@ -30,6 +31,15 @@ version_ge '0.19.1' '0.19.1'
 version_ge '0.20.0' '0.19.1'
 ! version_ge '0.18.9' '0.19.1'
 
+echo '== backup profiles =='
+apply_backup_profile economy
+[[ "$BACKUP_PROFILE/$BACKUP_INTERVAL_HOURS/$DATABASE_RPO_HOURS" == 'economy/12/12' ]]
+apply_backup_profile balanced
+[[ "$BACKUP_PROFILE/$BACKUP_INTERVAL_HOURS/$DATABASE_RPO_HOURS" == 'balanced/6/6' ]]
+apply_backup_profile critical
+[[ "$BACKUP_PROFILE/$BACKUP_INTERVAL_HOURS/$DATABASE_RPO_HOURS" == 'critical/2/2' ]]
+! apply_backup_profile nonsense
+
 echo '== systemd calendar matrix =='
 if command -v systemd-analyze >/dev/null 2>&1; then
   for start in $(seq -w 0 23); do
@@ -40,12 +50,20 @@ if command -v systemd-analyze >/dev/null 2>&1; then
   done
 fi
 
-echo '== staging regression =='
-grep -Fq '  local dir="${STAGING_DIR}/system"' "$SCRIPT"
-grep -Fq '  local policy_json='"'"'[]'"'"' restore_hashes="${dir}/restore-hooks.sha256" restore_count=0' "$SCRIPT"
-! grep -Fq 'local dir="${STAGING_DIR}/system" policy_json=' "$SCRIPT"
+echo '== set -u restore regressions =='
+grep -Fq 'local restore_root="$1" policy=""' "$SCRIPT"
+grep -Fq 'local restore_root="$1" volumes_root="$2" policy=""' "$SCRIPT"
+! grep -Fq 'policy="${restore_root}/' "$SCRIPT"
+! grep -Fq 'restore_hashes="${dir}/restore-hooks.sha256"' "$SCRIPT"
 
 echo '== Restic timestamp regression =='
 ! grep -Fq -- '--time "$BACKUP_RUN_TIME"' "$SCRIPT"
+
+echo '== recovery safety =='
+grep -Fq -- '--require-same-os' "$SCRIPT"
+grep -Fq 'schema:3' "$SCRIPT"
+grep -Fq 'backup_profile:$profile' "$SCRIPT"
+grep -Fq 'apt-mark showmanual' "$SCRIPT"
+grep -Fq 'Recovery bloquea S3 sin TLS' "$SCRIPT"
 
 echo 'STATIC PASS'
