@@ -14,7 +14,7 @@ else
 fi
 
 echo '== version =='
-[[ "$($SCRIPT version)" == 'vps-backup v1.3.1' ]]
+[[ "$($SCRIPT version)" == 'vps-backup v1.3.2' ]]
 
 echo '== helper invariants =='
 # shellcheck disable=SC1090
@@ -40,7 +40,10 @@ if command -v systemd-analyze >/dev/null 2>&1; then
   done
 fi
 
-echo '== staging regression context =='
-nl -ba "$SCRIPT" | sed -n '1555,1585p'
+echo '== staging regression =='
+# The two declarations must stay separate under set -u.
+grep -Fq '  local dir="${STAGING_DIR}/system"' "$SCRIPT"
+grep -Fq '  local policy_json='"'"'[]'"'"' restore_hashes="${dir}/restore-hooks.sha256" restore_count=0' "$SCRIPT"
+! grep -Fq 'local dir="${STAGING_DIR}/system" policy_json=' "$SCRIPT"
 
 echo 'STATIC PASS'
