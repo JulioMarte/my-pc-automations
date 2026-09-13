@@ -3,6 +3,7 @@ set -Eeuo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # shellcheck disable=SC1091
 source "$ROOT/tests/lib.sh"
+trap 'rc=$?; write_failure_context /tmp/vps-dr-failure-context.txt; exit $rc' ERR
 trap 'docker rm -f ci-postgres >/dev/null 2>&1 || true; docker volume rm ci-pg-data >/dev/null 2>&1 || true; stop_minio; rm -rf /srv/vps-dr-ci-data /tmp/pg-restore-root; cleanup_candidate_state' EXIT
 
 install_candidate_dependencies
