@@ -14,11 +14,12 @@ else
 fi
 
 echo '== version =='
-[[ "$($SCRIPT version)" == 'vps-backup v1.3.0' ]]
+[[ "$($SCRIPT version)" == 'vps-backup v1.3.1' ]]
 
 echo '== helper invariants =='
 # shellcheck disable=SC1090
 source "$SCRIPT"
+validate_os
 validate_backup_id 'coolify-prod-01'
 ! validate_backup_id '../bad'
 validate_b2_bucket 'vps-backups'
