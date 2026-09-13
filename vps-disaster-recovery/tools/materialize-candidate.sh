@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-OUT=${1:-"$ROOT/build/vps-backup-v1.3.sh"}
+OUT=${1:-"$ROOT/build/vps-backup-v1.4.0.sh"}
 EXPECTED_V131=9e2ee8924e403e0ab4424beb6e0267d8c36673e66a902f8353ac3933838c19c9
 EXPECTED_V132=7eda0bac8d39898fbeb97997b123480b37443e2393e9d0b104425789654e5e88
+EXPECTED_V133=1a534cc0cadb6baee0508f5c916dc1554b840c2266ef2eaeafce0dfc6948563c
+EXPECTED_V140=928e43d1db62374ff17de421a0c19c9eb26642f8e90e9b36f483142208295f40
 mkdir -p "$(dirname "$OUT")"
 cat "$ROOT"/candidate/part-* | base64 -d | gzip -dc > "$OUT"
 
 grep -qx 'readonly VERSION="1.3.0"' "$OUT" || { echo 'Unexpected base candidate; refusing to patch' >&2; exit 1; }
 sed -i 's/readonly VERSION="1.3.0"/readonly APP_VERSION="1.3.1"/' "$OUT"
-sed -i 's/\${VERSION}/\${APP_VERSION}/g; s/\$VERSION/\$APP_VERSION/g' "$OUT"
+sed -i 's/${VERSION}/${APP_VERSION}/g; s/$VERSION/$APP_VERSION/g' "$OUT"
 chmod 0755 "$OUT"
 [[ "$(sha256sum "$OUT" | awk '{print $1}')" == "$EXPECTED_V131" ]] || { echo 'v1.3.1 intermediate checksum mismatch' >&2; exit 1; }
 
@@ -21,18 +23,20 @@ sed -i 's/readonly APP_VERSION="1.3.1"/readonly APP_VERSION="1.3.2"/' "$OUT"
 chmod 0755 "$OUT"
 [[ "$(sha256sum "$OUT" | awk '{print $1}')" == "$EXPECTED_V132" ]] || { echo 'v1.3.2 intermediate checksum mismatch' >&2; exit 1; }
 
-# v1.3.3: Restic backup --time accepts its documented local layout
-# (e.g. "2012-11-01 22:08:41"), not the RFC3339 UTC value used by
-# BACKUP_RUN_TIME. Normal backups do not need an artificial timestamp at all;
-# Restic's own current timestamp is authoritative and run-* tags correlate the
-# system and volume snapshots.
 count=$(grep -F -- '--time "$BACKUP_RUN_TIME"' "$OUT" | wc -l)
 (( count >= 1 )) || { echo 'Expected Restic --time override not found; refusing to patch' >&2; exit 1; }
 sed -i 's/ --time "$BACKUP_RUN_TIME"//g' "$OUT"
 sed -i 's/readonly APP_VERSION="1.3.2"/readonly APP_VERSION="1.3.3"/' "$OUT"
 chmod 0755 "$OUT"
-! grep -Fq -- '--time "$BACKUP_RUN_TIME"' "$OUT" || { echo 'Restic --time override remains after patch' >&2; exit 1; }
+[[ "$(sha256sum "$OUT" | awk '{print $1}')" == "$EXPECTED_V133" ]] || { echo 'v1.3.3 intermediate checksum mismatch' >&2; exit 1; }
 
-sha=$(sha256sum "$OUT" | awk '{print $1}')
-echo "v1.3.3 candidate SHA256: $sha" >&2
+PATCH_TMP=$(mktemp)
+trap 'rm -f "$PATCH_TMP"' EXIT
+base64 -d "$ROOT/patches/v1.4.0.patch.gz.b64" | gzip -dc > "$PATCH_TMP"
+patch --batch --forward --silent "$OUT" < "$PATCH_TMP"
+chmod 0755 "$OUT"
+actual=$(sha256sum "$OUT" | awk '{print $1}')
+[[ "$actual" == "$EXPECTED_V140" ]] || { echo "v1.4.0 checksum mismatch: $actual" >&2; exit 1; }
+grep -qx 'readonly VERSION="1.4.0"' "$OUT" || { echo 'Unexpected v1.4.0 version marker' >&2; exit 1; }
+echo "v1.4.0 candidate SHA256: $actual" >&2
 printf '%s\n' "$OUT"
