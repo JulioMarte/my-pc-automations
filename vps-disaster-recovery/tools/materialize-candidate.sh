@@ -5,6 +5,7 @@ OUT=${1:-"$ROOT/build/vps-backup-v1.4.1.sh"}
 EXPECTED_V131=9e2ee8924e403e0ab4424beb6e0267d8c36673e66a902f8353ac3933838c19c9
 EXPECTED_V132=7eda0bac8d39898fbeb97997b123480b37443e2393e9d0b104425789654e5e88
 EXPECTED_V133=1a534cc0cadb6baee0508f5c916dc1554b840c2266ef2eaeafce0dfc6948563c
+EXPECTED_V140=928e43d1db62374ff17de421a0c19c9eb26642f8e90e9b36f483142208295f40
 EXPECTED_V141=9adeb0884d4b0c2fede1e9ccae9a06254d2d96c693dbb84b7d523afd0d7c17fd
 mkdir -p "$(dirname "$OUT")"
 cat "$ROOT"/candidate/part-* | base64 -d | gzip -dc > "$OUT"
@@ -32,9 +33,20 @@ chmod 0755 "$OUT"
 
 PATCH_TMP=$(mktemp)
 trap 'rm -f "$PATCH_TMP"' EXIT
-base64 -d "$ROOT/patches/v1.4.1.patch.gz.b64" | gzip -dc > "$PATCH_TMP"
+base64 -d "$ROOT/patches/v1.4.0.patch.gz.b64" | gzip -dc > "$PATCH_TMP"
 patch --batch --forward --silent "$OUT" < "$PATCH_TMP"
 chmod 0755 "$OUT"
+[[ "$(sha256sum "$OUT" | awk '{print $1}')" == "$EXPECTED_V140" ]] || { echo 'v1.4.0 intermediate checksum mismatch' >&2; exit 1; }
+
+# v1.4.1: VERSION is a standard variable in /etc/os-release. Keeping it readonly
+# breaks validate_os when that file is sourced. Derive the fixed candidate from
+# the byte-verified v1.4.0 artifact using the same deterministic transforms used
+# to produce the locally validated v1.4.1 candidate.
+grep -qx 'readonly VERSION="1.4.0"' "$OUT" || { echo 'Expected v1.4.0 VERSION marker missing' >&2; exit 1; }
+sed -i 's/readonly VERSION="1.4.0"/readonly APP_VERSION="1.4.1"/' "$OUT"
+sed -i 's/${VERSION}/${APP_VERSION}/g; s/$VERSION/$APP_VERSION/g' "$OUT"
+chmod 0755 "$OUT"
+
 actual=$(sha256sum "$OUT" | awk '{print $1}')
 [[ "$actual" == "$EXPECTED_V141" ]] || { echo "v1.4.1 checksum mismatch: $actual" >&2; exit 1; }
 grep -qx 'readonly APP_VERSION="1.4.1"' "$OUT" || { echo 'Unexpected v1.4.1 version marker' >&2; exit 1; }
