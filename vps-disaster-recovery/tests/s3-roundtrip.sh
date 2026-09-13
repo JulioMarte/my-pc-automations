@@ -3,6 +3,7 @@ set -Eeuo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # shellcheck disable=SC1091
 source "$ROOT/tests/lib.sh"
+trap 'rc=$?; write_failure_context /tmp/vps-dr-failure-context.txt; exit $rc' ERR
 trap 'stop_minio; rm -rf /srv/vps-dr-ci-data /tmp/vps-dr-restore; cleanup_candidate_state' EXIT
 
 install_candidate_dependencies
@@ -41,7 +42,6 @@ diff -u /tmp/expected-v2.sha256 /tmp/restored-v2.sha256
 
 "$SCRIPT" check 1/1
 "$SCRIPT" dr-plan --snapshot "$second_sid"
-# dr-test in v1.3 tests latest; in this isolated fixture latest is second_sid.
 "$SCRIPT" dr-test
 
 raw_bytes=$("$SCRIPT" storage-report | awk '/Unique repository data/{gsub(/[^0-9.]/,"",$0); print $0; exit}' || true)
