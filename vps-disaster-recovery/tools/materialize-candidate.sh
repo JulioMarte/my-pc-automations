@@ -7,6 +7,6 @@ cat "$ROOT"/candidate/part-* | base64 -d | gzip -dc > "$OUT"
 chmod 0755 "$OUT"
 (
   cd "$(dirname "$OUT")"
-  printf '%s  %s\n' "$(awk '{print $1}' "$ROOT/candidate/SHA256SUMS")" "$(basename "$OUT")" | sha256sum -c -
+  printf '%s  %s\n' "$(awk '{print $1}' "$ROOT/candidate/SHA256SUMS")" "$(basename "$OUT")" | sha256sum -c - >&2
 )
 printf '%s\n' "$OUT"
