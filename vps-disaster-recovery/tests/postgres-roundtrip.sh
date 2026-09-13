@@ -30,16 +30,13 @@ rm -rf /tmp/pg-restore-root
 "$SCRIPT" restore --snapshot "$sid" --tag system --target /tmp/pg-restore-root
 [[ -s /tmp/pg-restore-root/var/lib/vps-backup/staging/workloads/docker-db/ci-postgres/SHA256SUMS ]]
 
-# Simulate data loss while preserving the reconstructable container recipe for this focused test.
 docker rm -f ci-postgres >/dev/null
 docker volume rm ci-pg-data >/dev/null
 docker volume create ci-pg-data >/dev/null
 docker run -d --name ci-postgres -e POSTGRES_PASSWORD=ci-secret -e POSTGRES_USER=ciuser -e POSTGRES_DB=app -v ci-pg-data:/var/lib/postgresql/data postgres:16 >/dev/null
 for _ in $(seq 1 60); do docker exec ci-postgres pg_isready -U ciuser -d app >/dev/null 2>&1 && break; sleep 1; done
 
-# Exercise the candidate's actual restore implementation against the restored bundle.
-# shellcheck disable=SC1090
-source "$SCRIPT"
+source_candidate_once
 restore_policy_databases /tmp/pg-restore-root
 actual=$(docker exec ci-postgres psql -U ciuser -d app -Atc "SELECT md5(string_agg(id::text||payload, ',' ORDER BY id)) FROM dr_probe;")
 [[ "$actual" == "$expected" ]]
