@@ -5,8 +5,8 @@ SCRIPT=$(bash "$ROOT/tools/materialize-candidate.sh" /tmp/vps-backup-v1.3.sh)
 apt-get update >/dev/null
 apt-get install -y --no-install-recommends ca-certificates curl bzip2 dpkg bash coreutils grep sed gawk >/dev/null
 bash -n "$SCRIPT"
-"$SCRIPT" version | grep -qx 'vps-backup v1.3.0'
-# Source-only helper tests validate the Debian-specific dpkg version comparison path.
+"$SCRIPT" version | grep -qx 'vps-backup v1.3.1'
+# Source-only helper tests validate Debian/Ubuntu os-release handling and dpkg comparison.
 # shellcheck disable=SC1090
 source "$SCRIPT"
 validate_os
