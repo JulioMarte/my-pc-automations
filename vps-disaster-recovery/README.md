@@ -18,20 +18,20 @@ MinIO is used only as the CI S3 endpoint. It exercises Restic's S3-compatible pa
 
 ## Candidate snapshot
 
-`candidate/part-*` is a gzip+base64 representation of the exact `vps-backup-v1.3.sh` candidate being evaluated. `tools/materialize-candidate.sh` reconstructs it and verifies the pinned SHA-256 before any test runs. This keeps the candidate immutable during a CI experiment.
+`candidate/part-*` contains the immutable compressed v1.3.0 base payload. `tools/materialize-candidate.sh` applies the small deterministic v1.3.1 regression fix discovered by CI (`VERSION` collided with `/etc/os-release`), then verifies the SHA-256 of the final artifact before any test runs. This keeps the exact tested candidate reproducible and auditable.
 
-Expected SHA-256:
+Expected v1.3.1 SHA-256:
 
-`119a5ee2910c360b58b241a2f286152c68cf02a3398b7cb6ad8b3cf5517d28ac`
+`9e2ee8924e403e0ab4424beb6e0267d8c36673e66a902f8353ac3933838c19c9`
 
 ## Local commands
 
 ```bash
-./tools/materialize-candidate.sh
-sudo ./tests/static.sh
-sudo ./tests/s3-roundtrip.sh
-sudo ./tests/postgres-roundtrip.sh
-sudo SIZE_MIB=256 SMALL_FILES=10000 ./tests/performance.sh
+bash ./tools/materialize-candidate.sh
+sudo bash ./tests/static.sh
+sudo bash ./tests/s3-roundtrip.sh
+sudo bash ./tests/postgres-roundtrip.sh
+sudo SIZE_MIB=256 SMALL_FILES=10000 bash ./tests/performance.sh
 ```
 
 These integration tests are destructive **only inside their CI fixture namespaces** (`/srv/vps-dr-*`, `/etc/vps-backup`, `/var/lib/vps-backup`, Docker containers/volumes prefixed `ci-`). Do not run them on a production backup host.
