@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 ROOT=${1:-/workspace/vps-disaster-recovery}
-SCRIPT=$($ROOT/tools/materialize-candidate.sh /tmp/vps-backup-v1.3.sh)
+SCRIPT=$(bash "$ROOT/tools/materialize-candidate.sh" /tmp/vps-backup-v1.3.sh)
 apt-get update >/dev/null
 apt-get install -y --no-install-recommends ca-certificates curl bzip2 dpkg bash coreutils grep sed gawk >/dev/null
 bash -n "$SCRIPT"
