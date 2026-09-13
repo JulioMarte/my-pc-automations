@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-SCRIPT=$($ROOT/tools/materialize-candidate.sh)
+SCRIPT=$(bash "$ROOT/tools/materialize-candidate.sh")
 
 echo '== bash syntax =='
 bash -n "$SCRIPT"
