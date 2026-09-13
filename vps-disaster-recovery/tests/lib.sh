@@ -6,6 +6,9 @@ MINIO_ENDPOINT=${MINIO_ENDPOINT:-http://127.0.0.1:9000}
 MINIO_USER=${MINIO_USER:-ciadmin}
 MINIO_PASSWORD=${MINIO_PASSWORD:-ci-minio-password-123456}
 TEST_BUCKET=${TEST_BUCKET:-vps-dr-ci}
+# Pinned last maintained community MinIO container. The project stopped publishing
+# community Docker Hub images in 2026; pinning avoids a mutable/broken :latest.
+MINIO_IMAGE=${MINIO_IMAGE:-quay.io/minio/minio:RELEASE.2025-09-06T17-38-46Z}
 
 wait_http() {
   local url=$1
@@ -15,13 +18,16 @@ wait_http() {
 
 start_minio() {
   docker rm -f vps-dr-minio >/dev/null 2>&1 || true
+  docker pull "$MINIO_IMAGE" >/dev/null
   docker run -d --name vps-dr-minio -p 9000:9000 \
     -e MINIO_ROOT_USER="$MINIO_USER" \
     -e MINIO_ROOT_PASSWORD="$MINIO_PASSWORD" \
-    minio/minio:latest server /data >/dev/null
+    "$MINIO_IMAGE" server /data --console-address ':9001' >/dev/null
   wait_http "$MINIO_ENDPOINT/minio/health/live"
-  docker run --rm --network host --entrypoint /bin/sh minio/mc:latest -c \
-    "mc alias set ci '$MINIO_ENDPOINT' '$MINIO_USER' '$MINIO_PASSWORD' >/dev/null && mc mb --ignore-existing ci/$TEST_BUCKET >/dev/null"
+  # The pinned official server image contains mc (its own published healthcheck
+  # used `mc ready local`). Create a dedicated alias/bucket inside the container.
+  docker exec vps-dr-minio sh -c \
+    "mc alias set ci 'http://127.0.0.1:9000' '$MINIO_USER' '$MINIO_PASSWORD' >/dev/null && mc mb --ignore-existing ci/$TEST_BUCKET >/dev/null"
 }
 
 stop_minio() { docker rm -f vps-dr-minio >/dev/null 2>&1 || true; }
