@@ -10,13 +10,14 @@ echo '== shellcheck errors =='
 if command -v shellcheck >/dev/null 2>&1; then
   shellcheck -S error -e SC1090,SC1091 "$SCRIPT"
   shellcheck -S error "$ROOT/tools/build-recovery-image.sh"
+  shellcheck -S error -e SC1090,SC1091 "$ROOT/modules/ops-integrations.sh"
 else
   echo 'shellcheck unavailable; skipping'
 fi
 
 echo '== version =='
-[[ "$($SCRIPT version)" == 'vps-backup v1.4.1' ]]
-grep -Fqx 'readonly APP_VERSION="1.4.1"' "$SCRIPT"
+[[ "$($SCRIPT version)" == 'vps-backup v1.4.2' ]]
+grep -Fqx 'readonly APP_VERSION="1.4.2"' "$SCRIPT"
 ! grep -Eq '^readonly VERSION=' "$SCRIPT"
 
 echo '== helper invariants =='
@@ -67,5 +68,14 @@ grep -Fq 'schema:3' "$SCRIPT"
 grep -Fq 'backup_profile:$profile' "$SCRIPT"
 grep -Fq 'apt-mark showmanual' "$SCRIPT"
 grep -Fq 'Recovery bloquea S3 sin TLS' "$SCRIPT"
+
+echo '== operational integrations =='
+grep -Fq 'provider) cmd_provider "$@" ;;' "$SCRIPT"
+grep -Fq 'coolify-policy) cmd_coolify_policy "$@" ;;' "$SCRIPT"
+grep -Fq 'dr_plan_ops_extension "$sid"' "$SCRIPT"
+grep -Fq 'CONTABO_REQUIRE_RECENT_RESTIC="true"' "$SCRIPT"
+grep -Fq 'COOLIFY_DB_BACKUP_AUTHORITY="vps-backup"' "$SCRIPT"
+grep -Fq 'COOLIFY_DB_NATIVE_SUPPLEMENTAL="false"' "$SCRIPT"
+grep -Fq 'coolify-native no puede declarar AUTO_DR_READY' "$SCRIPT"
 
 echo 'STATIC PASS'
