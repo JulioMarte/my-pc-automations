@@ -64,6 +64,16 @@ jobs:
         working-directory: vps-disaster-recovery
         run: sudo -E bash ./tests/docker-policy.sh
 
+  ops-integrations:
+    name: Contabo snapshots + Coolify policy regression
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create/verify/prune provider snapshot + reconcile Coolify policy
+        working-directory: vps-disaster-recovery
+        run: sudo -E bash ./tests/ops-integrations.sh
+
   s3-roundtrip:
     name: Real S3 roundtrip / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
