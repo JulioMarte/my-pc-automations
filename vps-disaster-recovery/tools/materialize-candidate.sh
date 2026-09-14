@@ -7,7 +7,7 @@ EXPECTED_V132=7eda0bac8d39898fbeb97997b123480b37443e2393e9d0b104425789654e5e88
 EXPECTED_V133=1a534cc0cadb6baee0508f5c916dc1554b840c2266ef2eaeafce0dfc6948563c
 EXPECTED_V140=928e43d1db62374ff17de421a0c19c9eb26642f8e90e9b36f483142208295f40
 EXPECTED_V141=9adeb0884d4b0c2fede1e9ccae9a06254d2d96c693dbb84b7d523afd0d7c17fd
-EXPECTED_OPS_MODULE=693bcf3e0b19c662eb09e7206473c54e63d68ce69dc353e278915b041a35068e
+EXPECTED_OPS_MODULE_GIT_BLOB=baec2ff0d15ea32a78494fbd52d38c822134368c
 MODULE="$ROOT/modules/ops-integrations.sh"
 mkdir -p "$(dirname "$OUT")"
 cat "$ROOT"/candidate/part-* | base64 -d | gzip -dc > "$OUT"
@@ -50,10 +50,13 @@ chmod 0755 "$OUT"
 actual=$(sha256sum "$OUT" | awk '{print $1}')
 [[ "$actual" == "$EXPECTED_V141" ]] || { echo "v1.4.1 checksum mismatch: $actual" >&2; exit 1; }
 
-# v1.4.2 operational integrations. Verify the module independently before
-# injecting it so a partial/corrupt module cannot silently alter the candidate.
+# v1.4.2 operational integrations. During development, verify the exact module
+# bytes using Git's content-addressed blob identity from the repository checkout.
+# The complete generated v1.4.2 receives a SHA-256 release pin once CI is green,
+# so the final artifact remains byte-for-byte reproducible outside Git as well.
 [[ -r "$MODULE" ]] || { echo 'ops integration module missing' >&2; exit 1; }
-[[ "$(sha256sum "$MODULE" | awk '{print $1}')" == "$EXPECTED_OPS_MODULE" ]] || { echo 'ops integration module checksum mismatch' >&2; exit 1; }
+command -v git >/dev/null 2>&1 || { echo 'git required while v1.4.2 module is unpinned' >&2; exit 1; }
+[[ "$(git -C "$ROOT" hash-object "$MODULE")" == "$EXPECTED_OPS_MODULE_GIT_BLOB" ]] || { echo 'ops integration module blob mismatch' >&2; exit 1; }
 bash -n "$MODULE"
 sed -i 's/readonly APP_VERSION="1.4.1"/readonly APP_VERSION="1.4.2"/' "$OUT"
 
