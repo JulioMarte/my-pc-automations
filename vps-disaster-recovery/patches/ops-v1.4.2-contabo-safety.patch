@@ -1,0 +1,108 @@
+--- ops-integrations.sh
++++ ops-integrations.sh
+@@
+ CONTABO_ENABLED="false"
+ CONTABO_INSTANCE_ID=""
+-CONTABO_SNAPSHOT_KEEP="3"
++CONTABO_SNAPSHOT_KEEP="1"
++CONTABO_SNAPSHOT_SLOT_LIMIT="2"
+ CONTABO_SNAPSHOT_PREFIX="vps-dr"
+ CONTABO_SNAPSHOT_ONCALENDAR="Sun *-*-* 06:30:00"
+ CONTABO_SNAPSHOT_MAX_AGE_HOURS="192"
++CONTABO_SNAPSHOT_VERIFY_TIMEOUT_SECONDS="300"
+ CONTABO_SNAPSHOT_REQUIRED_FOR_DR="false"
+ CONTABO_REQUIRE_RECENT_RESTIC="true"
+@@
+ load_contabo_config() {
+   CONTABO_ENABLED="false"
+   CONTABO_INSTANCE_ID=""
+-  CONTABO_SNAPSHOT_KEEP="3"
++  CONTABO_SNAPSHOT_KEEP="1"
++  CONTABO_SNAPSHOT_SLOT_LIMIT="2"
+   CONTABO_SNAPSHOT_PREFIX="vps-dr"
+   CONTABO_SNAPSHOT_ONCALENDAR="Sun *-*-* 06:30:00"
+   CONTABO_SNAPSHOT_MAX_AGE_HOURS="192"
++  CONTABO_SNAPSHOT_VERIFY_TIMEOUT_SECONDS="300"
+   CONTABO_SNAPSHOT_REQUIRED_FOR_DR="false"
+@@
+ contabo_validate_config() {
+   [[ "$CONTABO_INSTANCE_ID" =~ ^[0-9]+$ ]] || { err "CONTABO_INSTANCE_ID debe ser numérico."; return 1; }
+   [[ "$CONTABO_SNAPSHOT_KEEP" =~ ^[1-9][0-9]*$ ]] || { err "CONTABO_SNAPSHOT_KEEP debe ser >=1."; return 1; }
+-  [[ "$CONTABO_SNAPSHOT_PREFIX" =~ ^[A-Za-z0-9_-]{1,20}$ ]] || { err "CONTABO_SNAPSHOT_PREFIX debe tener 1-20 caracteres [A-Za-z0-9_-]."; return 1; }
++  [[ "$CONTABO_SNAPSHOT_SLOT_LIMIT" =~ ^[1-9][0-9]*$ ]] || { err "CONTABO_SNAPSHOT_SLOT_LIMIT debe ser >=1."; return 1; }
++  (( CONTABO_SNAPSHOT_KEEP < CONTABO_SNAPSHOT_SLOT_LIMIT )) || { err "Rotación segura requiere KEEP < SLOT_LIMIT para reservar un slot. Si tu plan solo permite 1 snapshot, usa snapshots manuales y conserva S3/Restic como DR autoritativo."; return 1; }
++  [[ "$CONTABO_SNAPSHOT_PREFIX" =~ ^[A-Za-z0-9_-]{1,16}$ ]] || { err "CONTABO_SNAPSHOT_PREFIX debe tener 1-16 caracteres para conservar el timestamp dentro del límite Contabo de 30."; return 1; }
++  [[ "$CONTABO_SNAPSHOT_VERIFY_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]] || { err "CONTABO_SNAPSHOT_VERIFY_TIMEOUT_SECONDS debe ser >0."; return 1; }
+@@
+-contabo_relevant_snapshots_json() {
++contabo_all_snapshots_json() {
+   local json
+-  json=$(contabo_api_request GET "/compute/instances/${CONTABO_INSTANCE_ID}/snapshots") || return 1
++  json=$(contabo_api_request GET "/compute/instances/${CONTABO_INSTANCE_ID}/snapshots?size=100") || return 1
++  printf '%s' "$json" | jq -c '[.data[]?] | sort_by(.createdDate // "")'
++}
++
++contabo_relevant_snapshots_json() {
++  local json
++  json=$(contabo_all_snapshots_json) || return 1
+   printf '%s' "$json" | jq -c --arg p "$CONTABO_SNAPSHOT_PREFIX" '[.data[]? | select((.name // "") | startswith($p))] | sort_by(.createdDate // "")'
+ }
++
++contabo_snapshot_wait_visible() {
++  local sid="$1" deadline response got
++  deadline=$(( $(date +%s) + CONTABO_SNAPSHOT_VERIFY_TIMEOUT_SECONDS ))
++  while (( $(date +%s) <= deadline )); do
++    if response=$(contabo_api_request GET "/compute/instances/${CONTABO_INSTANCE_ID}/snapshots/${sid}" 2>/dev/null); then
++      got=$(printf '%s' "$response" | jq -r '.data[0].snapshotId // .snapshotId // empty' 2>/dev/null || true)
++      [[ "$got" == "$sid" ]] && return 0
++    fi
++    sleep 5
++  done
++  return 1
++}
++
++contabo_snapshot_ensure_free_slot() {
++  local all total
++  all=$(contabo_all_snapshots_json) || return 1
++  total=$(printf '%s' "$all" | jq 'length')
++  (( total < CONTABO_SNAPSHOT_SLOT_LIMIT )) && return 0
++
++  # A prior interrupted rotation can leave more managed snapshots than KEEP.
++  # It is safe to prune only that excess because KEEP known-good snapshots
++  # remain before attempting the new one.
++  contabo_snapshot_prune || return 1
++  all=$(contabo_all_snapshots_json) || return 1
++  total=$(printf '%s' "$all" | jq 'length')
++  if (( total >= CONTABO_SNAPSHOT_SLOT_LIMIT )); then
++    err "No hay slot libre para snapshot Contabo (usados=$total límite=$CONTABO_SNAPSHOT_SLOT_LIMIT). No borraré el último snapshot gestionado ni snapshots manuales para hacer espacio."
++    return 1
++  fi
++}
+@@
+   contabo_validate_config || return 1
+   contabo_snapshot_preflight || return 1
++  contabo_snapshot_ensure_free_slot || return 1
+   local ts name desc body response sid verify
+@@
+   response=$(contabo_api_request POST "/compute/instances/${CONTABO_INSTANCE_ID}/snapshots" "$body") || return 1
+   sid=$(printf '%s' "$response" | jq -er '.data[0].snapshotId // empty' 2>/dev/null) || { err "Contabo no devolvió snapshotId."; return 1; }
+-  verify=$(contabo_relevant_snapshots_json) || return 1
+-  printf '%s' "$verify" | jq -e --arg sid "$sid" 'any(.snapshotId == $sid)' >/dev/null || { err "Snapshot $sid fue creado pero no aparece al verificar la lista."; return 1; }
++  contabo_snapshot_wait_visible "$sid" || { err "Snapshot $sid fue aceptado por Contabo pero no pudo verificarse en ${CONTABO_SNAPSHOT_VERIFY_TIMEOUT_SECONDS}s; NO podaré snapshots previos."; return 1; }
+@@
+ configure_contabo_interactive() {
+@@
+-  local instance prefix keep schedule client_id client_secret api_user api_password tmp tmpc choice
++  local instance prefix keep slots schedule client_id client_secret api_user api_password tmp tmpc choice
+   instance=$(prompt_default "Contabo instance ID" "${CONTABO_INSTANCE_ID:-}")
+   prefix=$(prompt_default "Prefijo de snapshots (máx. 20)" "vps-dr")
+-  keep=$(prompt_default "Snapshots gestionados a conservar" "3")
++  slots=$(prompt_default "Máximo de snapshots permitido por tu plan Contabo" "2")
++  keep=$(prompt_default "Snapshots gestionados a conservar (debe ser menor que el máximo para rotación segura)" "1")
++  warn "Contabo elimina snapshots automáticamente después de 30 días. La rotación reserva un slot libre y nunca borra el último snapshot para crear otro."
+@@
+   write_kv "$tmp" CONTABO_INSTANCE_ID "$instance"
+   write_kv "$tmp" CONTABO_SNAPSHOT_KEEP "$keep"
++  write_kv "$tmp" CONTABO_SNAPSHOT_SLOT_LIMIT "$slots"
+   write_kv "$tmp" CONTABO_SNAPSHOT_PREFIX "$prefix"
+*** End Patch
