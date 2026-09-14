@@ -38,7 +38,8 @@ CONTABO_AUTH_URL=http://127.0.0.1:9/token
 CONTABO_API_BASE_URL=http://127.0.0.1:9/v1
 BACKUP_ID=ci-ops
 MAX_BACKUP_AGE_HOURS=36
-STATE_DIR="$T/state"
+# STATE_DIR is deliberately readonly in the production candidate. The fixture
+# uses that real state path and cleanup_candidate_state removes it afterward.
 install -d -m 0700 "$STATE_DIR"
 CONTABO_STATE="$T/contabo.json"
 CONTABO_LOG="$T/contabo.log"
