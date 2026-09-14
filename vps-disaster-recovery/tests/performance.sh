@@ -43,11 +43,12 @@ growth=$((raw2-raw1))
 (( growth >= 0 ))
 (( growth < raw1 / 2 ))
 
-mkdir -p "$ROOT/results"
-cat > "$ROOT/results/performance.json" <<EOF_JSON
+RESULTS_DIR="$ROOT/results"
+mkdir -p "$RESULTS_DIR"
+cat > "$RESULTS_DIR/performance.json" <<EOF_JSON
 {"fixture_mib":$SIZE_MIB,"small_files":$SMALL_FILES,"backup1_ms":$backup1_ms,"backup2_ms":$backup2_ms,"restore_ms":$restore_ms,"repository_after_first_bytes":$raw1,"repository_after_second_bytes":$raw2,"incremental_growth_bytes":$growth}
 EOF_JSON
-cat > "$ROOT/results/performance.md" <<EOF_MD
+cat > "$RESULTS_DIR/performance.md" <<EOF_MD
 # VPS DR CI benchmark
 
 | Metric | Result |
@@ -60,7 +61,13 @@ cat > "$ROOT/results/performance.md" <<EOF_MD
 | Repo after second | ${raw2} bytes |
 | Incremental growth | ${growth} bytes |
 EOF_MD
-# Candidate sourcing sets umask 077 and this test runs as root. GitHub's
-# upload-artifact runs as the runner user, so publish only these non-secret metrics.
-chmod 0644 "$ROOT/results/performance.json" "$ROOT/results/performance.md"
-cat "$ROOT/results/performance.md"
+
+# Candidate sourcing deliberately sets umask 077 and this test runs under sudo.
+# GitHub's upload-artifact step runs as the unprivileged runner user. Transfer
+# ownership only for this non-secret benchmark directory rather than weakening
+# production permissions or changing the candidate's umask.
+chmod 0644 "$RESULTS_DIR/performance.json" "$RESULTS_DIR/performance.md"
+if [[ -n "${SUDO_UID:-}" && -n "${SUDO_GID:-}" ]]; then
+  chown -R "${SUDO_UID}:${SUDO_GID}" "$RESULTS_DIR"
+fi
+cat "$RESULTS_DIR/performance.md"
