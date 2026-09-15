@@ -12,9 +12,8 @@ T=$(mktemp -d)
 trap 'rm -rf "$T"; cleanup_candidate_state' EXIT
 
 # ---------------------------------------------------------------------------
-# Contabo: create -> verify -> prune. Never prune before the new snapshot is
-# visible. API calls are mocked but use the exact public adapter functions
-# already injected into the materialized single-file candidate.
+# Contabo: slot-safe create -> verify -> prune. Provider snapshots are an
+# accelerator only. The fixture also proves unmanaged/manual snapshots survive.
 # ---------------------------------------------------------------------------
 load_contabo_config() { :; }
 repo_exists() { return 0; }
@@ -24,9 +23,11 @@ age_hours_from_iso() { printf '0\n'; }
 
 CONTABO_ENABLED=true
 CONTABO_INSTANCE_ID=12345
-CONTABO_SNAPSHOT_KEEP=3
+CONTABO_SNAPSHOT_KEEP=2
+CONTABO_SNAPSHOT_SLOT_LIMIT=5
 CONTABO_SNAPSHOT_PREFIX=vps-dr
 CONTABO_SNAPSHOT_MAX_AGE_HOURS=192
+CONTABO_SNAPSHOT_VERIFY_TIMEOUT_SECONDS=5
 CONTABO_SNAPSHOT_REQUIRED_FOR_DR=false
 CONTABO_REQUIRE_RECENT_RESTIC=true
 CONTABO_CLIENT_ID=test-client
@@ -37,8 +38,6 @@ CONTABO_AUTH_URL=http://127.0.0.1:9/token
 CONTABO_API_BASE_URL=http://127.0.0.1:9/v1
 BACKUP_ID=ci-ops
 MAX_BACKUP_AGE_HOURS=36
-# STATE_DIR is deliberately readonly in the production candidate. The fixture
-# uses that real state path and cleanup_candidate_state removes it afterward.
 install -d -m 0700 "$STATE_DIR"
 CONTABO_STATE="$T/contabo.json"
 CONTABO_LOG="$T/contabo.log"
@@ -48,15 +47,24 @@ cat >"$CONTABO_STATE" <<'JSON'
  {"snapshotId":"snap-old-2","name":"vps-dr-20260902","createdDate":"2026-09-02T00:00:00Z"},
  {"snapshotId":"snap-old-3","name":"vps-dr-20260903","createdDate":"2026-09-03T00:00:00Z"},
  {"snapshotId":"unmanaged","name":"manual-snapshot","createdDate":"2026-08-01T00:00:00Z"}
-]}
+],"_pagination":{"totalElements":4}}
 JSON
 
 contabo_api_request() {
   local method="$1" path="$2" body="${3:-}"
   printf '%s %s\n' "$method" "$path" >>"$CONTABO_LOG"
   case "$method:$path" in
-    GET:/compute/instances/12345/snapshots)
-      cat "$CONTABO_STATE"
+    GET:/compute/instances/12345/snapshots\?size=100)
+      local n
+      n=$(jq '.data|length' "$CONTABO_STATE")
+      jq --argjson n "$n" '._pagination.totalElements=$n' "$CONTABO_STATE"
+      ;;
+    GET:/compute/instances/12345/snapshots/snap-new)
+      if jq -e 'any(.data[]; .snapshotId=="snap-new")' "$CONTABO_STATE" >/dev/null; then
+        printf '%s\n' '{"data":[{"snapshotId":"snap-new"}]}'
+      else
+        return 1
+      fi
       ;;
     POST:/compute/instances/12345/snapshots)
       local name
@@ -77,17 +85,29 @@ contabo_api_request() {
   esac
 }
 
+# With a free reserved slot, creation must happen before pruning.
 contabo_snapshot_create --prune
 [[ "$(grep -n '^POST ' "$CONTABO_LOG" | head -1 | cut -d: -f1)" -lt "$(grep -n '^DELETE ' "$CONTABO_LOG" | head -1 | cut -d: -f1)" ]]
-jq -e '[.data[] | select(.name|startswith("vps-dr"))] | length == 3' "$CONTABO_STATE" >/dev/null
+jq -e '[.data[] | select(.name|startswith("vps-dr"))] | length == 2' "$CONTABO_STATE" >/dev/null
 jq -e 'any(.data[]; .snapshotId=="snap-new")' "$CONTABO_STATE" >/dev/null
 jq -e 'any(.data[]; .snapshotId=="unmanaged")' "$CONTABO_STATE" >/dev/null
-! jq -e 'any(.data[]; .snapshotId=="snap-old-1")' "$CONTABO_STATE" >/dev/null
+! jq -e 'any(.data[]; .snapshotId=="snap-old-1" or .snapshotId=="snap-old-2")' "$CONTABO_STATE" >/dev/null
 
+# Dry-run is read-only and must not create/delete anything.
 actions_before=$(wc -l <"$CONTABO_LOG")
 contabo_snapshot_create --dry-run
 actions_after=$(wc -l <"$CONTABO_LOG")
 [[ "$actions_before" -eq "$actions_after" ]]
+
+# Unsafe policy that consumes every slot must fail closed.
+CONTABO_SNAPSHOT_KEEP=5
+CONTABO_SNAPSHOT_SLOT_LIMIT=5
+if contabo_validate_config; then
+  echo 'Contabo KEEP==SLOT_LIMIT unexpectedly passed safe-rotation validation' >&2
+  exit 1
+fi
+CONTABO_SNAPSHOT_KEEP=2
+CONTABO_SNAPSHOT_SLOT_LIMIT=5
 
 # ---------------------------------------------------------------------------
 # Coolify: automatic DR stays authoritative in vps-backup. Enforce may create a
