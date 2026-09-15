@@ -8,7 +8,9 @@ EXPECTED_V133=1a534cc0cadb6baee0508f5c916dc1554b840c2266ef2eaeafce0dfc6948563c
 EXPECTED_V140=928e43d1db62374ff17de421a0c19c9eb26642f8e90e9b36f483142208295f40
 EXPECTED_V141=9adeb0884d4b0c2fede1e9ccae9a06254d2d96c693dbb84b7d523afd0d7c17fd
 EXPECTED_OPS_MODULE_GIT_BLOB=baec2ff0d15ea32a78494fbd52d38c822134368c
+EXPECTED_CONTABO_SAFETY_GIT_BLOB=01094a1eb828517ccd826a10359e3810b20d9d9a
 MODULE="$ROOT/modules/ops-integrations.sh"
+SAFETY_MODULE="$ROOT/modules/ops-contabo-safety.sh"
 mkdir -p "$(dirname "$OUT")"
 cat "$ROOT"/candidate/part-* | base64 -d | gzip -dc > "$OUT"
 
@@ -50,24 +52,29 @@ chmod 0755 "$OUT"
 actual=$(sha256sum "$OUT" | awk '{print $1}')
 [[ "$actual" == "$EXPECTED_V141" ]] || { echo "v1.4.1 checksum mismatch: $actual" >&2; exit 1; }
 
-# v1.4.2 operational integrations. During development, verify the exact module
-# bytes using Git's content-addressed blob identity from the repository checkout.
-# The complete generated v1.4.2 receives a SHA-256 release pin once CI is green,
-# so the final artifact remains byte-for-byte reproducible outside Git as well.
+# v1.4.2 operational integrations. Both source modules are pinned by Git blob
+# identity. The safety overlay is injected after the operational module so its
+# stricter Contabo functions deterministically override the older definitions.
 [[ -r "$MODULE" ]] || { echo 'ops integration module missing' >&2; exit 1; }
-command -v git >/dev/null 2>&1 || { echo 'git required while v1.4.2 module is unpinned' >&2; exit 1; }
+[[ -r "$SAFETY_MODULE" ]] || { echo 'Contabo safety module missing' >&2; exit 1; }
+command -v git >/dev/null 2>&1 || { echo 'git required while v1.4.2 modules are content-addressed by Git blob' >&2; exit 1; }
 [[ "$(git -C "$ROOT" hash-object "$MODULE")" == "$EXPECTED_OPS_MODULE_GIT_BLOB" ]] || { echo 'ops integration module blob mismatch' >&2; exit 1; }
+[[ "$(git -C "$ROOT" hash-object "$SAFETY_MODULE")" == "$EXPECTED_CONTABO_SAFETY_GIT_BLOB" ]] || { echo 'Contabo safety module blob mismatch' >&2; exit 1; }
 bash -n "$MODULE"
+bash -n "$SAFETY_MODULE"
 sed -i 's/readonly APP_VERSION="1.4.1"/readonly APP_VERSION="1.4.2"/' "$OUT"
 
-# Insert module before show_help/main so all functions are defined before main
+# Insert modules before show_help/main so all functions are defined before main
 # dispatch executes. Fail if the anchor disappears instead of silently emitting
 # a script without provider/backup-policy support.
-awk -v module="$MODULE" '
+awk -v module="$MODULE" -v safety="$SAFETY_MODULE" '
   BEGIN { inserted=0 }
   /^show_help\(\) \{/ && !inserted {
     while ((getline line < module) > 0) print line
     close(module)
+    print ""
+    while ((getline line < safety) > 0) print line
+    close(safety)
     print ""
     inserted=1
   }
@@ -136,14 +143,14 @@ awk '
 mv "$TMP_OUT" "$OUT"
 chmod 0755 "$OUT"
 
-# v1.4.2 is intentionally emitted with its calculated SHA during this first CI
-# iteration. Once the matrix is green the observed SHA is pinned here and in
-# candidate/SHA256SUMS, restoring the byte-for-byte release gate.
+# The complete candidate SHA is printed on every build. It is pinned as a final
+# release checksum only after the complete matrix has passed on these exact bytes.
 actual=$(sha256sum "$OUT" | awk '{print $1}')
 grep -qx 'readonly APP_VERSION="1.4.2"' "$OUT" || { echo 'Unexpected v1.4.2 version marker' >&2; exit 1; }
 ! grep -Eq '^readonly VERSION=' "$OUT" || { echo 'Unsafe VERSION constant would collide with /etc/os-release' >&2; exit 1; }
 grep -Fq 'provider) cmd_provider "$@" ;;' "$OUT" || { echo 'provider dispatch missing' >&2; exit 1; }
 grep -Fq 'coolify-policy) cmd_coolify_policy "$@" ;;' "$OUT" || { echo 'Coolify policy dispatch missing' >&2; exit 1; }
 grep -Fq 'dr_plan_ops_extension "$sid"' "$OUT" || { echo 'DR operations extension missing' >&2; exit 1; }
+grep -Fq 'CONTABO_SNAPSHOT_SLOT_LIMIT="2"' "$OUT" || { echo 'Contabo safety overlay missing' >&2; exit 1; }
 echo "v1.4.2 candidate SHA256: $actual" >&2
 printf '%s\n' "$OUT"
