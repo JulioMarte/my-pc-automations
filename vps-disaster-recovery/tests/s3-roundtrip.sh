@@ -13,7 +13,7 @@ install -d /srv/vps-dr-ci-data
 printf 'generation=1\n' > /srv/vps-dr-ci-data/state.txt
 dd if=/dev/urandom of=/srv/vps-dr-ci-data/random.bin bs=1M count=16 status=none
 for i in $(seq 1 2000); do printf 'small-file-%s-%s\n' "$i" "$RANDOM" > "/srv/vps-dr-ci-data/file-$i.txt"; done
-sha256sum /srv/vps-dr-ci-data/* | sort > /tmp/expected-v1.sha256
+(cd /srv/vps-dr-ci-data && sha256sum * | sort) > /tmp/expected-v1.sha256
 
 write_ci_config ci-roundtrip ci-roundtrip /srv/vps-dr-ci-data false
 init_repo
@@ -27,7 +27,7 @@ first_sid=$(cat /var/lib/vps-backup/state/last_backup_snapshot_id)
 printf 'generation=2\n' > /srv/vps-dr-ci-data/state.txt
 for i in $(seq 1 20); do printf 'changed-%s-%s\n' "$i" "$RANDOM" >> "/srv/vps-dr-ci-data/file-$i.txt"; done
 printf 'new file\n' > /srv/vps-dr-ci-data/new.txt
-sha256sum /srv/vps-dr-ci-data/* | sort > /tmp/expected-v2.sha256
+(cd /srv/vps-dr-ci-data && sha256sum * | sort) > /tmp/expected-v2.sha256
 
 start_ns=$(date +%s%N)
 "$SCRIPT" backup
