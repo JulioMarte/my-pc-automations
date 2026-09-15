@@ -3,6 +3,12 @@ set -Eeuo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 SCRIPT=$(bash "$ROOT/tools/materialize-candidate.sh")
 
+echo '== pinned release candidate =='
+expected_sha=$(awk 'NF{print $1; exit}' "$ROOT/candidate/RELEASE_SHA256")
+actual_sha=$(sha256sum "$SCRIPT" | awk '{print $1}')
+[[ "$expected_sha" =~ ^[0-9a-f]{64}$ ]]
+[[ "$actual_sha" == "$expected_sha" ]]
+
 echo '== bash syntax =='
 bash -n "$SCRIPT"
 
