@@ -40,7 +40,10 @@ Requirements: curl, sha256sum, qemu-img, virt-customize, python3.
 For --upload/--presign: aws CLI.
 
 Security model:
-  - The image contains vps-backup and recovery prerequisites only.
+  - The image contains the pinned vps-backup recovery engine only.
+  - The official Ubuntu cloud image already supplies cloud-init; recovery-bootstrap
+    installs runtime dependencies after boot. Image customization is intentionally
+    offline so the builder does not depend on libguestfs network access.
   - It NEVER embeds S3 keys, Restic passwords, Coolify APP_KEY, SSH private keys or API tokens.
   - Supply recovery secrets after boot or through one-time cloud-init/user-data.
 HELP
@@ -99,18 +102,22 @@ cat > "$marker" <<MARKER
 vps-recovery-image=1
 built_at=$(date --iso-8601=seconds)
 base_url=$BASE_IMAGE_URL
+base_sha256=$actual
 vps_backup_sha256=$(sha256sum "$VPS_BACKUP_SCRIPT" | awk '{print $1}')
+customization=offline
 MARKER
 
-# The image remains generic. cloud-init is retained so a provider can inject
-# SSH keys and one-time user-data. Host identity and SSH host keys are reset.
+# Deliberately do not use --install or --network here. The trusted Ubuntu cloud
+# image already contains cloud-init. recovery-bootstrap installs ca-certificates,
+# curl, jq, rsync and Restic after the VM gets its provider network. Keeping image
+# construction offline makes it deterministic and avoids libguestfs/passt network
+# failures on CI/build hosts.
 virt-customize -a "$OUTPUT" \
   --copy-in "$VPS_BACKUP_SCRIPT:/usr/local/sbin" \
   --copy-in "$marker:/etc" \
   --run-command "mv /usr/local/sbin/$(basename "$VPS_BACKUP_SCRIPT") /usr/local/sbin/vps-backup" \
   --chmod '0755:/usr/local/sbin/vps-backup' \
-  --install 'ca-certificates,curl,jq,rsync,cloud-init,qemu-guest-agent' \
-  --run-command 'systemctl enable qemu-guest-agent.service || true' \
+  --run-command 'test -x /usr/bin/cloud-init' \
   --run-command 'cloud-init clean --logs --seed || true' \
   --run-command 'rm -f /etc/ssh/ssh_host_* || true' \
   --run-command 'truncate -s 0 /etc/machine-id || true' \
