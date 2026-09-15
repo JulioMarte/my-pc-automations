@@ -10,7 +10,8 @@ echo '== shellcheck errors =='
 if command -v shellcheck >/dev/null 2>&1; then
   shellcheck -S error -e SC1090,SC1091 "$SCRIPT"
   shellcheck -S error "$ROOT/tools/build-recovery-image.sh"
-  shellcheck -S error -e SC1090,SC1091 "$ROOT/modules/ops-integrations.sh"
+  shellcheck -S error -s bash -e SC1090,SC1091 "$ROOT/modules/ops-integrations.sh"
+  shellcheck -S error -s bash -e SC1090,SC1091 "$ROOT/modules/ops-contabo-safety.sh"
 else
   echo 'shellcheck unavailable; skipping'
 fi
@@ -74,6 +75,13 @@ grep -Fq 'provider) cmd_provider "$@" ;;' "$SCRIPT"
 grep -Fq 'coolify-policy) cmd_coolify_policy "$@" ;;' "$SCRIPT"
 grep -Fq 'dr_plan_ops_extension "$sid"' "$SCRIPT"
 grep -Fq 'CONTABO_REQUIRE_RECENT_RESTIC="true"' "$SCRIPT"
+grep -Fq 'CONTABO_SNAPSHOT_KEEP="1"' "$SCRIPT"
+grep -Fq 'CONTABO_SNAPSHOT_SLOT_LIMIT="2"' "$SCRIPT"
+grep -Fq 'CONTABO_SNAPSHOT_VERIFY_TIMEOUT_SECONDS="300"' "$SCRIPT"
+grep -Fq 'Rotación segura requiere KEEP < SLOT_LIMIT' "$SCRIPT"
+grep -Fq '/snapshots?size=100' "$SCRIPT"
+grep -Fq 'contabo_snapshot_wait_visible "$sid"' "$SCRIPT"
+grep -Fq 'no rotaré con inventario paginado incompleto' "$SCRIPT"
 grep -Fq 'COOLIFY_DB_BACKUP_AUTHORITY="vps-backup"' "$SCRIPT"
 grep -Fq 'COOLIFY_DB_NATIVE_SUPPLEMENTAL="false"' "$SCRIPT"
 grep -Fq 'coolify-native no puede declarar AUTO_DR_READY' "$SCRIPT"
