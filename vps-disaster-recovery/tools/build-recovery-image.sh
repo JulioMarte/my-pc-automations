@@ -107,12 +107,10 @@ vps_backup_sha256=$(sha256sum "$VPS_BACKUP_SCRIPT" | awk '{print $1}')
 customization=offline
 MARKER
 
-# Deliberately do not use --install or --network here. The trusted Ubuntu cloud
-# image already contains cloud-init. recovery-bootstrap installs ca-certificates,
-# curl, jq, rsync and Restic after the VM gets its provider network. Keeping image
-# construction offline makes it deterministic and avoids libguestfs/passt network
-# failures on CI/build hosts.
-virt-customize -a "$OUTPUT" \
+# Networking is enabled by default in virt-customize. Explicitly disable it so
+# image construction is truly offline and works on restricted CI/build hosts
+# where libguestfs' passt backend is unavailable. No option below needs network.
+virt-customize --no-network -a "$OUTPUT" \
   --copy-in "$VPS_BACKUP_SCRIPT:/usr/local/sbin" \
   --copy-in "$marker:/etc" \
   --run-command "mv /usr/local/sbin/$(basename "$VPS_BACKUP_SCRIPT") /usr/local/sbin/vps-backup" \
