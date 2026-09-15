@@ -7,15 +7,14 @@ source "$ROOT/tests/lib.sh"
 install_candidate_dependencies
 cleanup_candidate_state
 source_candidate_once
-# shellcheck disable=SC1091
-source "$ROOT/modules/ops-integrations.sh"
 
 T=$(mktemp -d)
 trap 'rm -rf "$T"; cleanup_candidate_state' EXIT
 
 # ---------------------------------------------------------------------------
 # Contabo: create -> verify -> prune. Never prune before the new snapshot is
-# visible. API calls are mocked but use the exact public adapter functions.
+# visible. API calls are mocked but use the exact public adapter functions
+# already injected into the materialized single-file candidate.
 # ---------------------------------------------------------------------------
 load_contabo_config() { :; }
 repo_exists() { return 0; }
