@@ -49,5 +49,13 @@ mkdir -p "$ROOT/results"
 cat > "$ROOT/results/s3-roundtrip.json" <<EOF_JSON
 {"first_backup_ms":$first_ms,"second_backup_ms":$second_ms,"first_snapshot":"$first_sid","second_snapshot":"$second_sid","repository_report_numeric":"${raw_bytes:-unknown}"}
 EOF_JSON
+# The test runs under sudo with the product's secure umask. Artifacts are
+# non-secret CI metrics, so make only this directory/file readable by the
+# unprivileged Actions uploader without weakening production permissions.
+chmod 0755 "$ROOT/results"
+chmod 0644 "$ROOT/results/s3-roundtrip.json"
+if [[ -n "${SUDO_UID:-}" && -n "${SUDO_GID:-}" ]]; then
+  chown "$SUDO_UID:$SUDO_GID" "$ROOT/results" "$ROOT/results/s3-roundtrip.json" || true
+fi
 
 echo "ROUNDTRIP PASS first=${first_ms}ms second=${second_ms}ms"
