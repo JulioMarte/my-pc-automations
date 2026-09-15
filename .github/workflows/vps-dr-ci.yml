@@ -1,0 +1,170 @@
+name: VPS Disaster Recovery CI
+
+on:
+  pull_request:
+    paths:
+      - 'vps-disaster-recovery/**'
+      - '.github/workflows/vps-dr-ci.yml'
+  push:
+    branches:
+      - main
+      - 'feat/vps-disaster-recovery-ci'
+    paths:
+      - 'vps-disaster-recovery/**'
+      - '.github/workflows/vps-dr-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vps-dr-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static:
+    name: Static / Ubuntu 24.04
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install static tooling
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Materialize and verify candidate
+        working-directory: vps-disaster-recovery
+        run: bash ./tools/materialize-candidate.sh
+      - name: Static + calendar tests
+        working-directory: vps-disaster-recovery
+        run: bash ./tests/static.sh
+
+  debian-smoke:
+    name: Debian ${{ matrix.debian }} smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        debian: ['12', '13']
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run in clean Debian container
+        run: |
+          docker run --rm \
+            -v "$PWD:/workspace:ro" \
+            "debian:${{ matrix.debian }}-slim" \
+            bash /workspace/vps-disaster-recovery/tests/debian-smoke.sh /workspace/vps-disaster-recovery
+
+  docker-policy:
+    name: Docker policy fail-closed regression
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unknown attached volume must fail; classified ignore must pass
+        working-directory: vps-disaster-recovery
+        run: sudo -E bash ./tests/docker-policy.sh
+
+  ops-integrations:
+    name: Contabo snapshots + Coolify policy regression
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create/verify/prune provider snapshot + reconcile Coolify policy
+        working-directory: vps-disaster-recovery
+        run: sudo -E bash ./tests/ops-integrations.sh
+
+  s3-roundtrip:
+    name: Real S3 roundtrip / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Backup -> MinIO S3 -> restore -> checksum -> restic check
+        working-directory: vps-disaster-recovery
+        run: sudo -E bash ./tests/s3-roundtrip.sh
+      - name: Upload roundtrip metrics/logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s3-roundtrip-${{ matrix.os }}
+          path: |
+            vps-disaster-recovery/results/*.json
+            /tmp/perf-*.log
+            /tmp/vps-dr-failure-context.txt
+          if-no-files-found: warn
+          retention-days: 14
+
+  postgres-roundtrip:
+    name: PostgreSQL 16 destruction/recovery
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Candidate PostgreSQL backup + destroy + restore + checksum
+        working-directory: vps-disaster-recovery
+        run: sudo -E bash ./tests/postgres-roundtrip.sh
+
+  mariadb-roundtrip:
+    name: MariaDB 11.4 destruction/recovery
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Candidate MariaDB backup + destroy + restore + checksum
+        working-directory: vps-disaster-recovery
+        run: sudo -E bash ./tests/mariadb-roundtrip.sh
+
+  performance:
+    name: Performance / dedup benchmark
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Mixed-data benchmark
+        working-directory: vps-disaster-recovery
+        env:
+          SIZE_MIB: '256'
+          SMALL_FILES: '10000'
+        run: sudo -E bash ./tests/performance.sh
+      - name: Publish benchmark artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vps-dr-performance
+          path: |
+            vps-disaster-recovery/results/performance.json
+            vps-disaster-recovery/results/performance.md
+            /tmp/vps-dr-failure-context.txt
+          if-no-files-found: warn
+          retention-days: 30
+
+  recovery-image-qemu:
+    name: QCOW2 boot + same-OS S3 disaster recovery
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install QEMU/libguestfs recovery tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 qemu-utils libguestfs-tools cloud-image-utils socat openssl
+      - name: Build image -> boot -> cloud-init -> TLS S3 recovery -> checksum
+        working-directory: vps-disaster-recovery
+        run: sudo -E bash ./tests/recovery-image-qemu.sh
+      - name: Upload recovery drill logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vps-dr-qemu-recovery
+          path: |
+            vps-disaster-recovery/results/recovery-image-qemu.json
+            vps-disaster-recovery/results/recovery-bootstrap-qemu.log
+            vps-disaster-recovery/results/qemu-console.log
+            /tmp/vps-dr-failure-context.txt
+          if-no-files-found: warn
+          retention-days: 30

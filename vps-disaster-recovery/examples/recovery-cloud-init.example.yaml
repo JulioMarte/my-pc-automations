@@ -1,0 +1,25 @@
+#cloud-config
+# SECURITY: this example places one-time recovery credentials in provider user-data.
+# Prefer SSH + interactive recovery when your provider retains metadata indefinitely.
+# Rotate the S3 key after disaster recovery.
+
+write_files:
+  - path: /root/vps-recovery.env
+    owner: root:root
+    permissions: '0600'
+    content: |
+      VPS_RECOVERY_PROVIDER=backblaze
+      VPS_RECOVERY_S3_ENDPOINT=https://s3.REGION.backblazeb2.com
+      VPS_RECOVERY_S3_REGION=REGION
+      VPS_RECOVERY_S3_BUCKET=YOUR_BUCKET
+      VPS_RECOVERY_S3_PREFIX=YOUR_BACKUP_PREFIX
+      VPS_RECOVERY_BACKUP_ID=YOUR_BACKUP_ID
+      VPS_RECOVERY_S3_ACCESS_KEY=REPLACE_ME
+      VPS_RECOVERY_S3_SECRET_KEY=REPLACE_ME
+      VPS_RECOVERY_RESTIC_PASSWORD=REPLACE_ME
+
+runcmd:
+  - [ bash, -lc, 'set -a; source /root/vps-recovery.env; set +a; /usr/local/sbin/vps-backup recovery-bootstrap --require-same-os --non-interactive --execute' ]
+  - [ bash, -lc, 'shred -u /root/vps-recovery.env 2>/dev/null || rm -f /root/vps-recovery.env' ]
+
+final_message: "VPS recovery bootstrap finished. Verify applications before DNS cutover."
