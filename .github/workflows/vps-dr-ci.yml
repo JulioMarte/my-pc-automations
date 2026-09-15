@@ -142,3 +142,29 @@ jobs:
             /tmp/vps-dr-failure-context.txt
           if-no-files-found: warn
           retention-days: 30
+
+  recovery-image-qemu:
+    name: QCOW2 boot + same-OS S3 disaster recovery
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install QEMU/libguestfs recovery tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 qemu-utils libguestfs-tools cloud-image-utils socat openssl
+      - name: Build image -> boot -> cloud-init -> TLS S3 recovery -> checksum
+        working-directory: vps-disaster-recovery
+        run: sudo -E bash ./tests/recovery-image-qemu.sh
+      - name: Upload recovery drill logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vps-dr-qemu-recovery
+          path: |
+            vps-disaster-recovery/results/recovery-image-qemu.json
+            vps-disaster-recovery/results/recovery-bootstrap-qemu.log
+            vps-disaster-recovery/results/qemu-console.log
+            /tmp/vps-dr-failure-context.txt
+          if-no-files-found: warn
+          retention-days: 30
