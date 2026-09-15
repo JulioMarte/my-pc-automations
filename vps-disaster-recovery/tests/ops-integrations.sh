@@ -93,11 +93,14 @@ jq -e 'any(.data[]; .snapshotId=="snap-new")' "$CONTABO_STATE" >/dev/null
 jq -e 'any(.data[]; .snapshotId=="unmanaged")' "$CONTABO_STATE" >/dev/null
 ! jq -e 'any(.data[]; .snapshotId=="snap-old-1" or .snapshotId=="snap-old-2")' "$CONTABO_STATE" >/dev/null
 
-# Dry-run is read-only and must not create/delete anything.
-actions_before=$(wc -l <"$CONTABO_LOG")
+# Dry-run may perform read-only GETs to inspect capacity, but must never POST or
+# DELETE provider state.
+post_before=$(grep -c '^POST ' "$CONTABO_LOG" || true)
+delete_before=$(grep -c '^DELETE ' "$CONTABO_LOG" || true)
 contabo_snapshot_create --dry-run
-actions_after=$(wc -l <"$CONTABO_LOG")
-[[ "$actions_before" -eq "$actions_after" ]]
+post_after=$(grep -c '^POST ' "$CONTABO_LOG" || true)
+delete_after=$(grep -c '^DELETE ' "$CONTABO_LOG" || true)
+[[ "$post_before" -eq "$post_after" && "$delete_before" -eq "$delete_after" ]]
 
 # Unsafe policy that consumes every slot must fail closed.
 CONTABO_SNAPSHOT_KEEP=5
