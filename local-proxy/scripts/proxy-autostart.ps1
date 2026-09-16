@@ -126,7 +126,7 @@ function Stop-StaleProcesses {
     $stalePid = 0
     if (-not [int]::TryParse($line.Trim(), [ref]$stalePid)) { continue }
     $process = Get-CimInstance Win32_Process -Filter "ProcessId = $stalePid" -ErrorAction SilentlyContinue
-    if ($process -and $process.Name -eq 'node.exe' -and $process.CommandLine -match 'dist[\\/](exit|gateway)\.js') {
+    if ($process -and $process.Name -eq 'node.exe' -and $process.CommandLine -match '(src|dist)[\\/](exit|gateway)\.js') {
       Write-Log "deteniendo instancia previa pid=$stalePid"
       Stop-Process -Id $stalePid -Force -ErrorAction SilentlyContinue
     }
