@@ -19,6 +19,7 @@ import {
 } from './router.ts';
 import { Registry, startTimer, elapsedSeconds, type Counter } from './metrics.ts';
 import { createLogger, parseLogLevel, parseLogFormat, type Logger } from './logger.ts';
+import { ConnectionLimiter } from './limits.ts';
 
 const RETRYABLE_STATUS = new Set([407, 502, 503, 504]);
 const HTTP_TIMEOUTS = { headersTimeout: 10000, requestTimeout: 30000, keepAliveTimeout: 10000 };
@@ -46,6 +47,8 @@ export interface GatewayConfig {
   healthTargets?: HealthTarget[];
   healthTimeoutMs?: number;
   maxConnections?: number;
+  maxConnectionsPerUser?: number;
+  limiter?: ConnectionLimiter;
   authLimiter?: AuthLimiter;
   authMaxFailures?: number;
   authWindowMs?: number;
@@ -203,6 +206,7 @@ export function createGateway(config: GatewayConfig = {}) {
     healthTargets,
     healthTimeoutMs = 10000,
     maxConnections = 0,
+    maxConnectionsPerUser = 0,
     authLimiter,
     authMaxFailures = 10,
     authWindowMs = 60000,
@@ -228,6 +232,9 @@ export function createGateway(config: GatewayConfig = {}) {
   const requestDuration = registry.histogram('localproxy_request_duration_seconds', 'Duracion de peticion', undefined, ['protocol']);
   const connectDuration = registry.histogram('localproxy_connect_duration_seconds', 'Duracion de establecimiento de tunel', undefined, ['exit']);
   const uptimeGauge = registry.gauge('localproxy_uptime_seconds', 'Uptime del proceso');
+  const userConnections = registry.gauge('localproxy_user_connections', 'Conexiones activas por usuario', ['user']);
+  const userLimitRejections = registry.counter('localproxy_user_limit_rejections_total', 'Rechazos por limite de conexiones por usuario', ['user']);
+  const globalLimitDrops = registry.counter('localproxy_global_limit_drops_total', 'Conexiones descartadas por el limite global del servidor');
   const buildInfo = registry.gauge('localproxy_build_info', 'Info de build', ['version', 'role']);
   buildInfo.set(1, { version: version ?? 'unknown', role: 'gateway' });
 
@@ -242,8 +249,9 @@ export function createGateway(config: GatewayConfig = {}) {
   }
 
   const authenticate = createAuthenticator(users);
-  const limiter: AuthLimiter =
+  const authRateLimiter: AuthLimiter =
     authLimiter ?? createAuthLimiter({ maxFailures: authMaxFailures, windowMs: authWindowMs, blockMs: authBlockMs });
+  const limiter = config.limiter ?? new ConnectionLimiter({ max: maxConnectionsPerUser });
   const targets: HealthTarget[] =
     healthTargets && healthTargets.length ? healthTargets : [healthTarget];
   const checking = new Set<string>();
@@ -253,6 +261,25 @@ export function createGateway(config: GatewayConfig = {}) {
     sockets.add(socket);
     socket.on('close', () => sockets.delete(socket));
   };
+
+  function admit(user: string): boolean {
+    if (limiter.acquire(user)) {
+      userConnections.inc({ user });
+      return true;
+    }
+    userLimitRejections.inc({ user });
+    return false;
+  }
+
+  function trackUser(user: string, target: { on(event: 'close', listener: () => void): void }): void {
+    let released = false;
+    target.on('close', () => {
+      if (released) return;
+      released = true;
+      limiter.release(user);
+      userConnections.dec({ user });
+    });
+  }
 
   function reject407(response: http.ServerResponse): void {
     response.writeHead(407, { 'proxy-authenticate': 'Basic realm="local-proxy"' });
@@ -294,18 +321,18 @@ export function createGateway(config: GatewayConfig = {}) {
     const credentials = decodeBasic(header);
     const username = credentials ? credentials.username : '';
     const key = `${normalizeAddress(remoteAddress)}|${username}`;
-    if (!limiter.allowed(key)) {
+    if (!authRateLimiter.allowed(key)) {
       authBlocked.inc();
       return { parsed: null, key, limited: true };
     }
     if (!credentials) return { parsed: null, key, limited: false };
     const parsed = authenticate(credentials.username, credentials.password);
     if (!parsed) {
-      limiter.recordFailure(key);
+      authRateLimiter.recordFailure(key);
       authFailures.inc();
       return { parsed: null, key, limited: false };
     }
-    limiter.recordSuccess(key);
+    authRateLimiter.recordSuccess(key);
     return { parsed, key, limited: false };
   }
 
@@ -498,6 +525,12 @@ export function createGateway(config: GatewayConfig = {}) {
       reject407(response);
       return;
     }
+    const user = outcome.parsed.base;
+    if (!admit(user)) {
+      reject429(response);
+      return;
+    }
+    trackUser(user, response);
     // Solo las peticiones proxied cuentan como trafico (no /healthz, /readyz, /__stats, /metrics).
     const started = startTimer();
     response.on('finish', () => {
@@ -518,6 +551,12 @@ export function createGateway(config: GatewayConfig = {}) {
       reject407Socket(clientSocket);
       return;
     }
+    const user = outcome.parsed.base;
+    if (!admit(user)) {
+      reject429Socket(clientSocket);
+      return;
+    }
+    trackUser(user, clientSocket);
     const { host: targetHost, port: targetPort } = parseTarget(request.url ?? '');
     openTunnel(outcome.parsed, targetHost, targetPort)
       .then(({ exit, remote }) => {
@@ -566,6 +605,12 @@ export function createGateway(config: GatewayConfig = {}) {
       reject407Socket(clientSocket);
       return;
     }
+    const user = outcome.parsed.base;
+    if (!admit(user)) {
+      reject429Socket(clientSocket);
+      return;
+    }
+    trackUser(user, clientSocket);
     const exit = pool.candidates(outcome.parsed)[0];
     if (!exit) {
       reject503Socket(clientSocket);
@@ -600,28 +645,35 @@ export function createGateway(config: GatewayConfig = {}) {
     // El callback auth no recibe el socket; la IP se aplica en connect().
     auth: (username, password) => {
       const key = `${''}|${username}`;
-      if (!limiter.allowed(key)) {
+      if (!authRateLimiter.allowed(key)) {
         requestsTotal.inc({ protocol: 'socks5', code: 'error' });
         return false;
       }
       const parsed = authenticate(username, password);
       if (!parsed) {
-        limiter.recordFailure(key);
+        authRateLimiter.recordFailure(key);
         requestsTotal.inc({ protocol: 'socks5', code: 'error' });
         return false;
       }
-      limiter.recordSuccess(key);
+      authRateLimiter.recordSuccess(key);
       return true;
     },
     connect: async ({ username, password, host: targetHost, port: targetPort, client }) => {
       try {
         const key = `${normalizeAddress(client.remoteAddress)}|${username}`;
-        if (!limiter.allowed(key)) throw new Error('demasiados intentos');
+        if (!authRateLimiter.allowed(key)) throw new Error('demasiados intentos');
         const parsed = authenticate(username, password);
         if (!parsed) {
-          limiter.recordFailure(key);
+          authRateLimiter.recordFailure(key);
           throw new Error('no autorizado');
         }
+        const user = parsed.base;
+        if (!admit(user)) {
+          const error = new Error('limite de conexiones') as NodeJS.ErrnoException;
+          error.code = 'EACCES';
+          throw error;
+        }
+        trackUser(user, client);
         const { exit, remote } = await openTunnel(parsed, targetHost, targetPort);
         requestsTotal.inc({ protocol: 'socks5', code: 'ok' });
         const meter = createMeter({ exit, label: 'socks5', statsFile, bytes: bytesTotal });
@@ -636,6 +688,10 @@ export function createGateway(config: GatewayConfig = {}) {
       }
     },
   });
+
+  // Node emite 'drop' cuando se supera maxConnections del servidor.
+  httpServer.on('drop', () => globalLimitDrops.inc());
+  socksServer.on('drop', () => globalLimitDrops.inc());
 
   async function healthCheck(exit: Exit): Promise<void> {
     if (checking.has(exit.name)) return;
@@ -737,7 +793,7 @@ export function createGateway(config: GatewayConfig = {}) {
     socksServer.maxConnections = maxConnections;
   }
 
-  return { httpServer, socksServer, pool, users, start, close, stats: statsPayload };
+  return { httpServer, socksServer, pool, users, limiter, start, close, stats: statsPayload };
 }
 
 export function watchExits(file: string, pool: ExitPool, logger: Logger = console): fs.FSWatcher | null {
@@ -813,6 +869,7 @@ export function runGateway(): void {
     healthTargets: healthTargets.length ? healthTargets : undefined,
     healthTimeoutMs: envNumber('HEALTH_TIMEOUT_MS', 10000),
     maxConnections: envNumber('MAX_CONNECTIONS', 0),
+    maxConnectionsPerUser: envNumber('MAX_CONNECTIONS_PER_USER', 0),
     metricsToken: envString('METRICS_TOKEN', ''),
     version,
     logger,

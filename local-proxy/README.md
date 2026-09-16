@@ -118,7 +118,8 @@ compila `src/*.ts` a `dist/`.
 | `HEALTH_TARGETS` | Lista de destinos de health check separada por comas, p. ej. `api.ipify.org:443,www.google.com:443` (tiene prioridad sobre `HEALTH_TARGET`) |
 | `HEALTH_TARGET` | Fallback de un solo destino si `HEALTH_TARGETS` está vacío (`api.ipify.org:443`) |
 | `HEALTH_TIMEOUT_MS` | Timeout del health check (10 s) |
-| `MAX_CONNECTIONS` | Límite de conexiones simultáneas del gateway (0 = sin límite) |
+| `MAX_CONNECTIONS` | Límite de conexiones simultáneas del gateway (0 = sin límite). Al superarlo, Node descarta la conexión |
+| `MAX_CONNECTIONS_PER_USER` | Límite de conexiones simultáneas por **usuario base/tenant** (0 = ilimitado). Aplica al nombre base, así que `agent-session-x` y `agent-exit-home` comparten la cuota de `agent`. Al superarlo: HTTP `429` con `Retry-After` y, en SOCKS5, conexión rechazada (REP `0x02`) |
 | `STATS_TOKEN` | **Obligatorio** para leer `/__stats` (por `?token=` o `Authorization: Bearer`); si queda vacío, `/__stats` responde 403 |
 | `EXITS_FILE` / `STATS_FILE` | Rutas de configuración y métricas (relativas al proyecto o absolutas) |
 | `LOG_LEVEL` | Nivel mínimo de log: `debug`, `info`, `warn` o `error` (`info` por defecto) |
@@ -616,7 +617,8 @@ Muchas apps (curl, Python `requests`, Go) usan `HTTP_PROXY`/`HTTPS_PROXY` solas.
 - Las sesiones están acotadas (máximo 10000) y se limpian por TTL.
 - Códigos de estado: `503` + `Retry-After` cuando no hay exits usables; `504` si el exit
   agota el tiempo; `502` para otros fallos de upstream; `429` si un cliente queda bloqueado
-  temporalmente por demasiados fallos de autenticación.
+  temporalmente por demasiados fallos de autenticación **o** si supera su
+  `MAX_CONNECTIONS_PER_USER` (en SOCKS5 el límite por usuario rechaza con REP `0x02`).
 - Al guardar `exits.json` el gateway lo recarga solo (hot reload, también en Windows) sin
   perder salud, contadores ni sesiones de exits que siguen existiendo.
 
@@ -670,6 +672,9 @@ Si defines `METRICS_TOKEN`, añade `?token=<METRICS_TOKEN>` (o la cabecera
 | `requests_total` | `protocol` (`http`/`connect`/`socks5`), `code` (HTTP status o `ok`/`error` en SOCKS) | Peticiones atendidas |
 | `bytes_total` | `direction` (`up`/`down`), `exit` | Bytes transferidos |
 | `active_connections` | `protocol` | Conexiones activas |
+| `user_connections` | `user` (usuario base) | Conexiones activas por usuario base (gauge) |
+| `user_limit_rejections_total` | `user` (usuario base) | Conexiones rechazadas por superar `MAX_CONNECTIONS_PER_USER` |
+| `global_limit_drops_total` | - | Conexiones descartadas por superar `MAX_CONNECTIONS` (global) |
 | `auth_failures_total` / `auth_blocked_total` | - | Fallos de auth y clientes bloqueados temporalmente |
 | `upstream_errors_total` | `kind` (`no_exits` o el status numérico) | Errores al conectar al exit |
 | `exit_healthy` | `exit` | Salud del exit (1/0) |
@@ -685,8 +690,9 @@ Si defines `METRICS_TOKEN`, añade `?token=<METRICS_TOKEN>` (o la cabecera
 `bytes_total{direction}`, `active_connections`, `blocked_total{reason}`
 (`reason="ssrf"` para bloqueos SSRF), `uptime_seconds` y `build_info{version,role}`.
 
-Las etiquetas son deliberadamente acotadas (no hay etiquetas por host ni por usuario) para
-controlar la cardinalidad.
+Las etiquetas son deliberadamente acotadas (no hay etiquetas por host) para controlar la
+cardinalidad. La etiqueta `user` se acota a los usuarios base de `PROXY_USERS` (las
+variantes `-session-...`, `-exit-...`, etc. no crean series nuevas).
 
 **Logs**: por defecto cada evento es un objeto JSON en una línea con `ts`, `level`, `msg` y
 campos de contexto (`role`, `name`, `exit`, etc.). Los secretos (`authorization`,
@@ -701,7 +707,7 @@ campos de contexto (`role`, `name`, `exit`, etc.). Los secretos (`authorization`
 | Síntoma | Causa probable | Qué hacer |
 |---|---|---|
 | `407 Proxy Authentication Required` | Usuario o clave mal escritos | Revisa `PROXY_USERS` en `.env` y reinicia el gateway. El usuario base no lleva `-exit-...` |
-| `429 Too Many Requests` | Demasiados fallos de auth seguidos desde ese cliente | Espera (viene con `Retry-After`) y corrige las credenciales |
+| `429 Too Many Requests` | Demasiados fallos de auth seguidos desde ese cliente, **o** alcanzaste tu límite de conexiones concurrentes por usuario (`MAX_CONNECTIONS_PER_USER`) | Si es auth: espera (viene con `Retry-After`) y corrige las credenciales. Si es el límite por usuario: cierra conexiones o súbelo en `.env` (`MAX_CONNECTIONS_PER_USER`; `0` = ilimitado) y reinicia el gateway |
 | `502 Bad Gateway` | No hay exits sanos o el destino no responde | Mira `/__stats`; revisa que Tailscale esté arriba en el exit |
 | `503 Service Unavailable` | No hay ningún exit usable | Consulta `GET /readyz`; revisa salud y `exits.json` |
 | `403 Forbidden` en un destino | El nuevo bloqueo SSRF rechaza loopback/privadas/link-local/CGNAT/metadata o el puerto 25 | Es esperado; para pruebas locales pon `EXIT_BLOCK_PRIVATE=false` |

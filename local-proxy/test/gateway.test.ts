@@ -3,7 +3,17 @@ import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
 import { ExitPool } from '../src/router.ts';
-import { startGateway, httpGet, httpGetThroughProxy } from './helpers.ts';
+import {
+  closeServer,
+  waitFor,
+  startOrigin,
+  startExit,
+  startGateway,
+  httpGet,
+  httpGetThroughProxy,
+  connectThroughProxy,
+  socks5Connect,
+} from './helpers.ts';
 
 let counter = 0;
 function statsFile(): string {
@@ -160,4 +170,154 @@ test('gateway: localproxy_build_info incluye rol y version', async (t) => {
   });
   const response = await httpGet({ port: httpPort, path: '/metrics' });
   assert.match(response.body, /localproxy_build_info\{role="gateway",version="9\.9\.9"\} 1/);
+});
+
+test('gateway: limite por usuario en CONNECT comparte cupo por usuario base', async (t) => {
+  const origin = await startOrigin();
+  const exit = await startExit({ name: 'exit-a' });
+  const { gateway, httpPort } = await startGateway({
+    users: new Map([
+      ['agent', 'clave'],
+      ['otro', 'clave'],
+    ]),
+    pool: new ExitPool([{ name: 'exit-a', host: '127.0.0.1', port: exit.port }]),
+    maxConnectionsPerUser: 1,
+    statsFile: statsFile(),
+    healthIntervalMs: 0,
+  });
+  t.after(async () => {
+    await gateway.close();
+    await closeServer(origin.server);
+    await closeServer(exit.server);
+  });
+  const first = await connectThroughProxy({
+    proxyPort: httpPort,
+    target: `127.0.0.1:${origin.port}`,
+    username: 'agent',
+    password: 'clave',
+  });
+  await assert.rejects(
+    connectThroughProxy({
+      proxyPort: httpPort,
+      target: `127.0.0.1:${origin.port}`,
+      username: 'agent-session-b',
+      password: 'clave',
+    }),
+    /CONNECT respondio 429/,
+  );
+  const other = await connectThroughProxy({
+    proxyPort: httpPort,
+    target: `127.0.0.1:${origin.port}`,
+    username: 'otro',
+    password: 'clave',
+  });
+  assert.equal(other.destroyed, false);
+  first.destroy();
+  other.destroy();
+});
+
+test('gateway: al cerrar el tunel CONNECT se libera el cupo', async (t) => {
+  const origin = await startOrigin();
+  const exit = await startExit({ name: 'exit-a' });
+  const { gateway, httpPort } = await startGateway({
+    users: new Map([['agent', 'clave']]),
+    pool: new ExitPool([{ name: 'exit-a', host: '127.0.0.1', port: exit.port }]),
+    maxConnectionsPerUser: 1,
+    statsFile: statsFile(),
+    healthIntervalMs: 0,
+  });
+  t.after(async () => {
+    await gateway.close();
+    await closeServer(origin.server);
+    await closeServer(exit.server);
+  });
+  const first = await connectThroughProxy({
+    proxyPort: httpPort,
+    target: `127.0.0.1:${origin.port}`,
+    username: 'agent',
+    password: 'clave',
+  });
+  assert.equal(gateway.limiter.count('agent'), 1);
+  first.destroy();
+  await waitFor(() => gateway.limiter.count('agent') === 0);
+  const second = await connectThroughProxy({
+    proxyPort: httpPort,
+    target: `127.0.0.1:${origin.port}`,
+    username: 'agent',
+    password: 'clave',
+  });
+  assert.equal(second.destroyed, false);
+  second.destroy();
+});
+
+test('gateway: limite por usuario en SOCKS5 devuelve REP 0x02', async (t) => {
+  const origin = await startOrigin();
+  const exit = await startExit({ name: 'exit-a' });
+  const { gateway, socksPort } = await startGateway({
+    users: new Map([['agent', 'clave']]),
+    pool: new ExitPool([{ name: 'exit-a', host: '127.0.0.1', port: exit.port }]),
+    maxConnectionsPerUser: 1,
+    statsFile: statsFile(),
+    healthIntervalMs: 0,
+  });
+  t.after(async () => {
+    await gateway.close();
+    await closeServer(origin.server);
+    await closeServer(exit.server);
+  });
+  const first = await socks5Connect({
+    proxyPort: socksPort,
+    targetHost: 'localhost',
+    targetPort: origin.port,
+    username: 'agent',
+    password: 'clave',
+  });
+  await assert.rejects(
+    socks5Connect({
+      proxyPort: socksPort,
+      targetHost: 'localhost',
+      targetPort: origin.port,
+      username: 'agent',
+      password: 'clave',
+    }),
+    /SOCKS5 connect respondio 2/,
+  );
+  first.destroy();
+});
+
+test('gateway: metricas de limite por usuario', async (t) => {
+  const origin = await startOrigin();
+  const exit = await startExit({ name: 'exit-a' });
+  const { gateway, httpPort } = await startGateway({
+    users: new Map([['agent', 'clave']]),
+    pool: new ExitPool([{ name: 'exit-a', host: '127.0.0.1', port: exit.port }]),
+    maxConnectionsPerUser: 1,
+    statsFile: statsFile(),
+    healthIntervalMs: 0,
+  });
+  t.after(async () => {
+    await gateway.close();
+    await closeServer(origin.server);
+    await closeServer(exit.server);
+  });
+  const first = await connectThroughProxy({
+    proxyPort: httpPort,
+    target: `127.0.0.1:${origin.port}`,
+    username: 'agent',
+    password: 'clave',
+  });
+  await assert.rejects(
+    connectThroughProxy({
+      proxyPort: httpPort,
+      target: `127.0.0.1:${origin.port}`,
+      username: 'agent-session-b',
+      password: 'clave',
+    }),
+    /CONNECT respondio 429/,
+  );
+  const response = await httpGet({ port: httpPort, path: '/metrics' });
+  assert.equal(response.status, 200);
+  assert.match(response.body, /localproxy_user_limit_rejections_total\{user="agent"\} 1/);
+  assert.match(response.body, /localproxy_user_connections\{user="agent"\} 1/);
+  first.destroy();
 });
