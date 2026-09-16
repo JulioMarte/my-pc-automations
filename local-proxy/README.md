@@ -811,6 +811,105 @@ body grande, CONNECT, SOCKS5 con DNS remoto, WebSocket/Upgrade, IPv6, stats y 40
 
 ---
 
+## Tailscale ACLs
+
+La red se protege con una politica de Tailscale **deny-by-default** (lo que no se acepta
+explicitamente, se deniega). El archivo versionado vive en
+[`tailscale/acl.hujson`](tailscale/acl.hujson) y este es el modelo:
+
+| Origen | Destino | Puertos | Regla |
+|---|---|---|---|
+| Clientes sin tag (`autogroup:member`) | gateway (`tag:proxy-gateway`) | `8888` (HTTP), `1080` (SOCKS5) | aceptar |
+| gateway (`tag:proxy-gateway`) | exits (`tag:proxy-exit`) | `8899` | aceptar |
+| Operador (`autogroup:owner` / su login) y gateway | SSH por clave de los VPS y del gateway | `2222`, `22` | aceptar |
+| Clientes | exits (`tag:proxy-exit`) | `8899` | **denegar** (por omision) |
+
+Nadie mas puede alcanzar los exits en `8899`: ni los clientes ni otros peers. Esto se
+suma a `EXIT_ALLOW=100.110.109.28` y a las credenciales por exit, asi que hay tres capas
+independientes.
+
+### Aplicar la politica
+
+1. Abre la consola de administracion: https://login.tailscale.com/admin/acls
+2. Pega el contenido de `tailscale/acl.hujson`.
+3. Usa la pestana **Preview** y el panel de **Tests** (la consola ejecuta los `tests`
+   declarados en el archivo) **antes** de guardar. Si algun test falla, la consola
+   rechaza el cambio y no lo aplica.
+4. Guarda. La politica se distribuye a los dispositivos en segundos.
+
+Alternativa por API (requiere un API key/OAuth con el scope `policy_file`):
+
+```bash
+curl -X POST "https://api.tailscale.com/api/v2/tailnet/-/acl" \
+  -u "tskey-api-...:" \
+  -H "Content-Type: application/hujson" \
+  --data-binary @tailscale/acl.hujson
+```
+
+### Etiquetar los dispositivos
+
+Los tags agrupan dispositivos de servicio y permiten escribir reglas por rol. Solo
+`autogroup:admin` puede aplicarlos (asi esta definido en `tagOwners`).
+
+- En los VPS (exits): `sudo tailscale up --advertise-tags=tag:proxy-exit`
+- En la maquina Windows del gateway: `tailscale up --advertise-tags=tag:proxy-gateway`
+
+Puedes combinarlo con otras flags si hiciera falta. Tambien puedes etiquetar desde la
+consola en **Machines -> Edit tags** (requiere ser Owner/Admin/Network admin).
+
+> Importante: al etiquetar un dispositivo, deja de tener identidad de usuario. Un
+> dispositivo etiquetado **no** pertenece a `autogroup:member` ni a los dispositivos del
+> login del operador. Por eso la regla SSH incluye `tag:proxy-gateway`: la maquina
+> Windows desde la que el operador entra por SSH queda cubierta aunque este etiquetada.
+> Ademas, los dispositivos etiquetados tienen la **expiracion de clave desactivada**
+> por defecto, lo cual es recomendado para servidores.
+
+### MagicDNS y nombres
+
+Se recomienda activar **MagicDNS** (consola -> **DNS** -> **Enable MagicDNS**) para usar
+nombres (`vmi2741977`, `julio-marte`, ...) en lugar de las IP `100.x`. En el archivo ACL
+los nombres se declaran en la seccion `hosts`, porque los nombres de MagicDNS no son
+validos directamente como host en `dst`; asi las reglas se leen por nombre y siguen
+siendo validas aunque cambie la IP.
+
+### Endurecer los exits con --shields-up
+
+En los exits (que solo reciben conexiones del gateway) puedes activar `--shields-up`
+para bloquear conexiones entrantes no solicitadas:
+
+```bash
+sudo tailscale up --shields-up
+```
+
+No rompe el proxy: el gateway inicia la conexion saliente hacia el exit en `8899`, y
+`--shields-up` solo bloquea entrantes que el dispositivo no haya solicitado. Es una
+defensa extra; no sustituye a la ACL ni a `EXIT_ALLOW`.
+
+### Advertencia de seguridad
+
+Un error en la ACL puede dejarte fuera del tailnet o de los VPS. Antes de guardar:
+
+- Usa **Preview** y **Tests** de la consola; no guardes a ciegas.
+- El **Owner** del tailnet siempre conserva acceso a la consola de administracion, asi
+  que la via de recuperacion no es la propia ACL: entra a
+  https://login.tailscale.com/admin/acls y corrige.
+- Ten a mano un acceso alternativo a los VPS (consola del proveedor, SSH por IP publica
+  o VNC) por si la regla de SSH quedara mal.
+- Aplica los cambios en una ventana en la que puedas recuperarte.
+- El SSH por clave sobre la IP del tailnet depende de la regla SSH de `acls` (TCP
+  `22`/`2222`), **no** de Tailscale SSH. El archivo omite la seccion `ssh` a proposito:
+  eso desactiva Tailscale SSH y no afecta al SSH por clave.
+
+Fuentes: [ACLs](https://tailscale.com/kb/1018/acls),
+[sintaxis del policy file](https://tailscale.com/kb/1337/policy-syntax) (incluye
+[`tests`](https://tailscale.com/kb/1337/policy-syntax#tests)),
+[tags](https://tailscale.com/kb/1068/acl-tags),
+[expiracion de clave](https://tailscale.com/kb/1028/key-expiry),
+[MagicDNS](https://tailscale.com/kb/1081/magicdns) y
+[`tailscale up` (`--shields-up`, `--advertise-tags`)](https://tailscale.com/kb/1241/tailscale-up).
+
+---
+
 ## Seguridad
 
 1. `GATEWAY_HOST` y `EXIT_HOST` deben ser la **IP de Tailscale** (`100.x`), nunca `0.0.0.0`.
@@ -819,7 +918,8 @@ body grande, CONNECT, SOCKS5 con DNS remoto, WebSocket/Upgrade, IPv6, stats y 40
    filtra, revocarla no afecta a los demás (menor *blast radius*).
 3. Define `EXIT_ALLOW` con la IP del gateway para que el exit rechace cualquier otro peer.
 4. En la ACL de Tailscale, limita los puertos `8888`, `1080` y `8899` solo a los
-   dispositivos/usuarios que los necesitan.
+   dispositivos/usuarios que los necesitan. La politica versionada esta en
+   [`tailscale/acl.hujson`](tailscale/acl.hujson); ver [Tailscale ACLs](#tailscale-acls).
 5. **Nunca** expongas esto con `tailscale funnel` ni abras puertos en el router.
 6. `exits.json`, `.env` y `stats.jsonl` están en `.gitignore`: no se suben a git.
 7. Las claves se comparan en tiempo constante (`crypto.timingSafeEqual`).

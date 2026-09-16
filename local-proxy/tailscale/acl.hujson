@@ -1,0 +1,138 @@
+// Tailnet policy file (ACL) para local-proxy.
+//
+// Modelo deny-by-default: todo lo que no se acepta aqui, se deniega.
+//   - Clientes sin tag (autogroup:member) -> gateway :8888/:1080
+//   - Gateway (tag:proxy-gateway)        -> exits (tag:proxy-exit) :8899
+//   - Nadie mas                          -> exits :8899
+//   - Operador (autogroup:owner) y gateway -> SSH por clave de los VPS y del gateway
+//
+// Sintaxis HuJSON (JSON con comentarios // y comas finales permitidas).
+// Referencias:
+//   - ACLs:      https://tailscale.com/kb/1018/acls
+//   - Sintaxis:  https://tailscale.com/kb/1337/policy-syntax
+//   - Tags:      https://tailscale.com/kb/1068/acl-tags
+//   - Tests:     https://tailscale.com/kb/1337/policy-syntax#tests
+//   - Key expiry:https://tailscale.com/kb/1028/key-expiry
+//
+// Aplicar SIEMPRE con la pestana Preview/Tests de la consola antes de guardar:
+//   https://login.tailscale.com/admin/acls
+//
+// ASSUMPTION: sustituye "juliomarte19955@" por el login completo del operador
+// (p. ej. usuario@dominio.com) si la consola lo rechaza. En las reglas se incluye
+// tambien autogroup:owner, que resuelve al dueno del tailnet sin depender del login.
+{
+  // 1. Tags: solo autogroup:admin puede aplicarlos a los dispositivos.
+  "tagOwners": {
+    "tag:proxy-gateway": ["autogroup:admin"],
+    "tag:proxy-exit": ["autogroup:admin"],
+  },
+
+  // 2. Nombres legibles -> IP de Tailscale, para escribir reglas por nombre.
+  //    Los nombres de MagicDNS NO son validos como host en `dst`; hay que
+  //    declararlos aqui en `hosts`.
+  "hosts": {
+    "julio-marte": "100.110.109.28",
+    "vmi2741977": "100.112.184.84",
+    "vmi3456423": "100.70.33.2",
+    "tor-itm-03": "100.94.73.3",
+    "v60-thinq-5g": "100.98.227.53",
+  },
+
+  // 3. Reglas de red. Se evaluan en orden y gana la primera que matchea.
+  "acls": [
+    // 3a. Clientes sin tag -> gateway, SOLO en los puertos del proxy.
+    {
+      "action": "accept",
+      "src": ["autogroup:member"],
+      "dst": [
+        "tag:proxy-gateway:8888",
+        "tag:proxy-gateway:1080",
+      ],
+    },
+
+    // 3b. Gateway -> exits, SOLO en 8899.
+    {
+      "action": "accept",
+      "src": ["tag:proxy-gateway"],
+      "dst": ["tag:proxy-exit:8899"],
+    },
+
+    // 3c. SSH por clave (TCP 22/2222) a los VPS y al gateway.
+    //     - autogroup:owner cubre al dueno del tailnet (robusto ante el login).
+    //     - juliomarte19955@ cubre los dispositivos SIN tag del operador.
+    //     - tag:proxy-gateway cubre la maquina Windows etiquetada (julio-marte).
+    //     Si la consola rechaza el login corto, deja solo autogroup:owner.
+    {
+      "action": "accept",
+      "src": [
+        "juliomarte19955@",
+        "autogroup:owner",
+        "tag:proxy-gateway",
+      ],
+      "dst": [
+        "vmi2741977:2222",
+        "vmi3456423:22",
+        "julio-marte:22",
+      ],
+    },
+  ],
+
+  // 4. Tailscale SSH: NO se usa. El operador entra por SSH con clave sobre la IP
+  //    del tailnet, y eso lo cubre la regla 3c de `acls` (TCP 22/2222). Omitir
+  //    la seccion `ssh` desactiva Tailscale SSH y NO afecta al SSH por clave.
+  //    Si algun dia quieres Tailscale SSH, descomenta este bloque (ojo: el `dst`
+  //    de `ssh` solo admite tags/autogroups/usuarios, no hosts ni IPs):
+  //
+  // "ssh": [
+  //   {
+  //     "action": "check",
+  //     "src": ["autogroup:owner"],
+  //     "dst": ["tag:proxy-gateway", "tag:proxy-exit"],
+  //     "users": ["autogroup:nonroot"],
+  //     "checkPeriod": "12h",
+  //   },
+  // ],
+
+  // 5. Tests de la politica. La consola los corre antes de guardar y rechaza el
+  //    cambio si alguno falla.
+  "tests": [
+    {
+      // Un cliente sin tag alcanza el gateway en los puertos del proxy.
+      "src": "autogroup:owner",
+      "accept": [
+        "tag:proxy-gateway:8888",
+        "tag:proxy-gateway:1080",
+      ],
+    },
+    {
+      // Un cliente sin tag NO alcanza los exits directamente.
+      "src": "autogroup:owner",
+      "deny": ["tag:proxy-exit:8899"],
+    },
+    {
+      // El gateway alcanza los exits en 8899.
+      "src": "tag:proxy-gateway",
+      "accept": ["tag:proxy-exit:8899"],
+    },
+    {
+      // El gateway NO puede usar el gateway como proxy (no hay regla).
+      "src": "tag:proxy-gateway",
+      "deny": ["tag:proxy-gateway:8888"],
+    },
+    {
+      // Un exit NO alcanza a otro exit en 8899.
+      "src": "tag:proxy-exit",
+      "deny": ["tag:proxy-exit:8899"],
+    },
+    {
+      // El operador alcanza el SSH de los VPS.
+      "src": "autogroup:owner",
+      "accept": ["vmi2741977:2222", "vmi3456423:22"],
+    },
+    {
+      // El gateway etiquetado tambien alcanza el SSH de los VPS.
+      "src": "tag:proxy-gateway",
+      "accept": ["vmi2741977:2222", "vmi3456423:22"],
+    },
+  ],
+}
