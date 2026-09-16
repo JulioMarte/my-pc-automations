@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
 import net from 'node:net';
-import { loadEnv, envString, envNumber, envList } from './env.ts';
+import { loadEnv, watchEnv, envString, envNumber, envList } from './env.ts';
 import { connectViaHttpProxy, forwardHttp, pipeUpgrade, upgradeHeaders, basic, ProxyError } from './upstream.ts';
 import { createSocks5Server } from './socks5.ts';
 import {
@@ -218,6 +218,9 @@ export function createGateway(config: GatewayConfig = {}) {
     version,
   } = config;
 
+  let currentStatsToken = statsToken;
+  let currentMetricsToken = metricsToken;
+
   const registry = metricsRegistry ?? new Registry();
   const requestsTotal = registry.counter('localproxy_requests_total', 'Peticiones atendidas por protocolo y codigo', ['protocol', 'code']);
   const bytesTotal = registry.counter('localproxy_bytes_total', 'Bytes transferidos', ['direction', 'exit']);
@@ -337,7 +340,7 @@ export function createGateway(config: GatewayConfig = {}) {
   }
 
   function statsAuthorized(request: http.IncomingMessage): boolean {
-    if (!statsToken) return false;
+    if (!currentStatsToken) return false;
     let query = '';
     try {
       const url = new URL(request.url ?? '/', 'http://localhost');
@@ -345,17 +348,17 @@ export function createGateway(config: GatewayConfig = {}) {
     } catch {
       query = '';
     }
-    if (query && safeEqual(query, statsToken)) return true;
+    if (query && safeEqual(query, currentStatsToken)) return true;
     const header = request.headers.authorization ?? '';
     if (header.startsWith('Bearer ')) {
       const token = header.slice(7).trim();
-      return token.length > 0 && safeEqual(token, statsToken);
+      return token.length > 0 && safeEqual(token, currentStatsToken);
     }
     return false;
   }
 
   function metricsAuthorized(request: http.IncomingMessage): boolean {
-    if (!metricsToken) return true;
+    if (!currentMetricsToken) return true;
     let query = '';
     try {
       const url = new URL(request.url ?? '/', 'http://localhost');
@@ -363,11 +366,11 @@ export function createGateway(config: GatewayConfig = {}) {
     } catch {
       query = '';
     }
-    if (query && safeEqual(query, metricsToken)) return true;
+    if (query && safeEqual(query, currentMetricsToken)) return true;
     const header = request.headers.authorization ?? '';
     if (header.startsWith('Bearer ')) {
       const token = header.slice(7).trim();
-      return token.length > 0 && safeEqual(token, metricsToken);
+      return token.length > 0 && safeEqual(token, currentMetricsToken);
     }
     return false;
   }
@@ -565,7 +568,7 @@ export function createGateway(config: GatewayConfig = {}) {
     if (pathname === '/__stats') {
       if (!statsAuthorized(request)) {
         response.writeHead(403, { 'content-type': 'application/json' });
-        response.end(JSON.stringify({ error: statsToken ? 'no autorizado' : 'stats deshabilitado' }));
+        response.end(JSON.stringify({ error: currentStatsToken ? 'no autorizado' : 'stats deshabilitado' }));
         return;
       }
       response.writeHead(200, { 'content-type': 'application/json' });
@@ -825,6 +828,17 @@ export function createGateway(config: GatewayConfig = {}) {
     });
   }
 
+  // Recarga en caliente: muta el Map de usuarios (el authenticator lo comparte) y los tokens.
+  function reload(next: { users?: Map<string, string>; statsToken?: string; metricsToken?: string }): void {
+    if (next.users) {
+      users.clear();
+      for (const [key, value] of next.users) users.set(key, value);
+      logger.info?.('usuarios recargados', { count: users.size });
+    }
+    if (next.statsToken !== undefined) currentStatsToken = next.statsToken;
+    if (next.metricsToken !== undefined) currentMetricsToken = next.metricsToken;
+  }
+
   Object.assign(httpServer, HTTP_TIMEOUTS);
   // net.Server no consume estos timeouts, se asignan por uniformidad.
   Object.assign(socksServer, HTTP_TIMEOUTS);
@@ -833,7 +847,7 @@ export function createGateway(config: GatewayConfig = {}) {
     socksServer.maxConnections = maxConnections;
   }
 
-  return { httpServer, socksServer, pool, users, limiter, start, close, stats: statsPayload };
+  return { httpServer, socksServer, pool, users, limiter, start, close, reload, stats: statsPayload };
 }
 
 export function watchExits(file: string, pool: ExitPool, logger: Logger = console): fs.FSWatcher | null {
@@ -932,6 +946,18 @@ export function runGateway(): void {
       logger.info?.('SOCKS5 escuchando', { url: `socks5://${host}:${addresses.socksPort}` });
       logger.info?.('exits configurados', { exits: exits.length, users: users.size });
       watchExits(exitsFile, pool, logger);
+      watchEnv(
+        resolveFile('.env'),
+        (values) => {
+          const next: { users?: Map<string, string>; statsToken?: string; metricsToken?: string } = {};
+          if (values.PROXY_USERS !== undefined) next.users = parseUsers(values.PROXY_USERS);
+          if (values.STATS_TOKEN !== undefined) next.statsToken = values.STATS_TOKEN;
+          if (values.METRICS_TOKEN !== undefined) next.metricsToken = values.METRICS_TOKEN;
+          if (Object.keys(next).length === 0) return;
+          gateway.reload(next);
+        },
+        logger,
+      );
     })
     .catch((error: unknown) => {
       logger.error?.('no pude escuchar', { host, error: errorMessage(error) });

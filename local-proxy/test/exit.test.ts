@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isBlockedHost } from '../src/exit.ts';
+import { isBlockedHost, type ExitServer } from '../src/exit.ts';
 import {
   startExit,
   startOrigin,
@@ -208,6 +208,44 @@ test('exit: compatibilidad legacy con user/pass sigue autenticando', async (t) =
     password: 'mala',
   });
   assert.equal(bad.status, 407);
+});
+
+test('exit: reloadCredentials rota las credenciales en caliente', async (t) => {
+  const origin = await startOrigin();
+  const exit = await startExit({ name: 'exit-a', users: [{ user: 'a', pass: '1' }] });
+  t.after(async () => {
+    await closeServer(origin.server);
+    await closeServer(exit.server);
+  });
+  const valid = await httpGetThroughProxy({
+    proxyPort: exit.port,
+    targetUrl: `${origin.url}/`,
+    username: 'a',
+    password: '1',
+  });
+  assert.equal(valid.status, 200);
+  const rejected = await httpGetThroughProxy({
+    proxyPort: exit.port,
+    targetUrl: `${origin.url}/`,
+    username: 'b',
+    password: '2',
+  });
+  assert.equal(rejected.status, 407);
+  (exit.server as ExitServer).reloadCredentials([{ user: 'b', pass: '2' }]);
+  const rotated = await httpGetThroughProxy({
+    proxyPort: exit.port,
+    targetUrl: `${origin.url}/`,
+    username: 'b',
+    password: '2',
+  });
+  assert.equal(rotated.status, 200);
+  const stale = await httpGetThroughProxy({
+    proxyPort: exit.port,
+    targetUrl: `${origin.url}/`,
+    username: 'a',
+    password: '1',
+  });
+  assert.equal(stale.status, 407);
 });
 
 test('exit: localproxy_auth_failures_total incrementa tras un 407', async (t) => {

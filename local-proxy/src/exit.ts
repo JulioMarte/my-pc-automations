@@ -3,7 +3,7 @@ import http from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
 import { URL } from 'node:url';
-import { loadEnv, envString, envNumber, envBool, envList } from './env.ts';
+import { loadEnv, watchEnv, envString, envNumber, envBool, envList } from './env.ts';
 import { createLogger, parseLogLevel, parseLogFormat, type Logger } from './logger.ts';
 import { Registry } from './metrics.ts';
 import { parseCredentials, safeEqual, type Credential } from './router.ts';
@@ -23,6 +23,10 @@ export interface ExitServerOptions {
   metricsToken?: string;
   logger?: Logger;
   version?: string;
+}
+
+export interface ExitServer extends http.Server {
+  reloadCredentials(next: Credential[]): void;
 }
 
 // Rangos IPv4 bloqueados: [base, prefijo].
@@ -167,7 +171,7 @@ function isMetricsRequest(url: string | undefined): boolean {
   return value === '/metrics' || value.startsWith('/metrics?');
 }
 
-export function createExitServer(options: ExitServerOptions = {}): http.Server {
+export function createExitServer(options: ExitServerOptions = {}): ExitServer {
   const {
     name = 'exit',
     user = '',
@@ -417,7 +421,14 @@ export function createExitServer(options: ExitServerOptions = {}): http.Server {
     upstream.on('error', () => requestsTotal.inc({ code: '502' }));
   });
 
-  return server;
+  // Rota credenciales en caliente mutando el mismo array que usa authorized().
+  const reloadCredentials = (next: Credential[]): void => {
+    credentials.length = 0;
+    for (const credential of next) credentials.push(credential);
+  };
+  (server as ExitServer).reloadCredentials = reloadCredentials;
+
+  return server as ExitServer;
 }
 
 const isMain = process.argv[1] !== undefined && path.resolve(process.argv[1]) === import.meta.filename;
@@ -477,6 +488,24 @@ export function runExit(): void {
     logger.error?.(`no pude escuchar en ${host}:${port}: ${error.message}`);
     process.exit(1);
   });
+  // Recarga de credenciales en caliente: solo si el .env trae las claves relevantes.
+  watchEnv(
+    path.join(import.meta.dirname, '..', '.env'),
+    (values) => {
+      if (
+        values.EXIT_USERS === undefined &&
+        values.EXIT_USER === undefined &&
+        values.EXIT_PASS === undefined
+      ) {
+        return;
+      }
+      const next = parseCredentials(values.EXIT_USERS ?? '');
+      if (values.EXIT_USER) next.push({ user: values.EXIT_USER, pass: values.EXIT_PASS ?? '' });
+      server.reloadCredentials(next);
+      logger.info?.('credenciales recargadas', { count: next.length });
+    },
+    logger,
+  );
 }
 
 if (isMain) runExit();

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
-import { ExitPool } from '../src/router.ts';
+import { ExitPool, parseUsers } from '../src/router.ts';
 import {
   closeServer,
   waitFor,
@@ -283,6 +283,59 @@ test('gateway: limite por usuario en SOCKS5 devuelve REP 0x02', async (t) => {
     /SOCKS5 connect respondio 2/,
   );
   first.destroy();
+});
+
+test('gateway: reload({ users }) reemplaza las credenciales en caliente', async (t) => {
+  const origin = await startOrigin();
+  const exit = await startExit({ name: 'exit-a' });
+  const { gateway, httpPort } = await startGateway({
+    users: new Map([['agent', 'secret']]),
+    pool: new ExitPool([{ name: 'exit-a', host: '127.0.0.1', port: exit.port }]),
+    healthIntervalMs: 0,
+    statsFile: statsFile(),
+  });
+  t.after(async () => {
+    await gateway.close();
+    await closeServer(origin.server);
+    await closeServer(exit.server);
+  });
+  const before = await httpGetThroughProxy({
+    proxyPort: httpPort,
+    targetUrl: `${origin.url}/`,
+    username: 'agent',
+    password: 'secret',
+  });
+  assert.equal(before.status, 200);
+  gateway.reload({ users: parseUsers('otro:clave') });
+  const stale = await httpGetThroughProxy({
+    proxyPort: httpPort,
+    targetUrl: `${origin.url}/`,
+    username: 'agent',
+    password: 'secret',
+  });
+  assert.equal(stale.status, 407);
+  const fresh = await httpGetThroughProxy({
+    proxyPort: httpPort,
+    targetUrl: `${origin.url}/`,
+    username: 'otro',
+    password: 'clave',
+  });
+  assert.equal(fresh.status, 200);
+});
+
+test('gateway: reload({ statsToken }) habilita /__stats en caliente', async (t) => {
+  const { gateway, httpPort } = await startGateway({
+    pool: new ExitPool([]),
+    healthIntervalMs: 0,
+    statsFile: statsFile(),
+  });
+  t.after(async () => {
+    await gateway.close();
+  });
+  assert.equal((await httpGet({ port: httpPort, path: '/__stats' })).status, 403);
+  gateway.reload({ statsToken: 'tok' });
+  assert.equal((await httpGet({ port: httpPort, path: '/__stats' })).status, 403);
+  assert.equal((await httpGet({ port: httpPort, path: '/__stats?token=tok' })).status, 200);
 });
 
 test('gateway: metricas de limite por usuario', async (t) => {
