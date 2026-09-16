@@ -18,13 +18,14 @@ if command -v shellcheck >/dev/null 2>&1; then
   shellcheck -S error "$ROOT/tools/build-recovery-image.sh"
   shellcheck -S error -s bash -e SC1090,SC1091 "$ROOT/modules/ops-integrations.sh"
   shellcheck -S error -s bash -e SC1090,SC1091 "$ROOT/modules/ops-contabo-safety.sh"
+  shellcheck -S error -s bash -e SC1090,SC1091 "$ROOT/modules/same-os-recovery.sh"
 else
   echo 'shellcheck unavailable; skipping'
 fi
 
 echo '== version =='
-[[ "$($SCRIPT version)" == 'vps-backup v1.4.2' ]]
-grep -Fqx 'readonly APP_VERSION="1.4.2"' "$SCRIPT"
+[[ "$($SCRIPT version)" == 'vps-backup v1.4.3' ]]
+grep -Fqx 'readonly APP_VERSION="1.4.3"' "$SCRIPT"
 ! grep -Eq '^readonly VERSION=' "$SCRIPT"
 
 echo '== helper invariants =='
@@ -75,6 +76,12 @@ grep -Fq 'schema:3' "$SCRIPT"
 grep -Fq 'backup_profile:$profile' "$SCRIPT"
 grep -Fq 'apt-mark showmanual' "$SCRIPT"
 grep -Fq 'Recovery bloquea S3 sin TLS' "$SCRIPT"
+grep -Fq 'recover_same_os_portable "$sid"' "$SCRIPT"
+grep -Fq 'same_os_recovery_verify_os' "$SCRIPT"
+grep -Fq "--exclude='/netplan/***'" "$SCRIPT"
+grep -Fq "--exclude='/ssh/ssh_host_*'" "$SCRIPT"
+grep -Fq '/var/lib/docker|/var/lib/docker/*' "$SCRIPT"
+! grep -Fq 'Recovery automático genérico de rootfs todavía no es seguro' "$SCRIPT"
 
 echo '== operational integrations =='
 grep -Fq 'provider) cmd_provider "$@" ;;' "$SCRIPT"
