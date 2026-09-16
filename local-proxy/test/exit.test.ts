@@ -113,6 +113,124 @@ test('exit: /metrics exige token cuando esta configurado', async (t) => {
   assert.equal((await httpGet({ port: exit.port, path: '/metrics?token=tok' })).status, 200);
 });
 
+test('exit: users multiples autentican y proxya con cada credencial', async (t) => {
+  const origin = await startOrigin();
+  const exit = await startExit({
+    name: 'exit-a',
+    users: [
+      { user: 'a', pass: '1' },
+      { user: 'b', pass: '2' },
+    ],
+  });
+  t.after(async () => {
+    await closeServer(origin.server);
+    await closeServer(exit.server);
+  });
+  const validas: ReadonlyArray<readonly [string, string]> = [
+    ['a', '1'],
+    ['b', '2'],
+  ];
+  for (const [username, password] of validas) {
+    const response = await httpGetThroughProxy({
+      proxyPort: exit.port,
+      targetUrl: `${origin.url}/`,
+      username,
+      password,
+    });
+    assert.equal(response.status, 200, `${username}:${password} deberia autenticar`);
+    assert.equal(response.body, 'origin-ok');
+  }
+  const invalidas: ReadonlyArray<readonly [string, string]> = [
+    ['a', '2'],
+    ['b', '1'],
+    ['', ''],
+  ];
+  for (const [username, password] of invalidas) {
+    const response = await httpGetThroughProxy({
+      proxyPort: exit.port,
+      targetUrl: `${origin.url}/`,
+      username,
+      password,
+    });
+    assert.equal(response.status, 407, `${username}:${password} deberia rechazarse`);
+  }
+});
+
+test('exit: rotacion sin downtime acepta ambas claves del mismo usuario', async (t) => {
+  const origin = await startOrigin();
+  const exit = await startExit({
+    name: 'exit-a',
+    users: [
+      { user: 'a', pass: 'old' },
+      { user: 'a', pass: 'new' },
+    ],
+  });
+  t.after(async () => {
+    await closeServer(origin.server);
+    await closeServer(exit.server);
+  });
+  for (const password of ['old', 'new']) {
+    const response = await httpGetThroughProxy({
+      proxyPort: exit.port,
+      targetUrl: `${origin.url}/`,
+      username: 'a',
+      password,
+    });
+    assert.equal(response.status, 200, `clave ${password} deberia seguir valida`);
+  }
+  const stale = await httpGetThroughProxy({
+    proxyPort: exit.port,
+    targetUrl: `${origin.url}/`,
+    username: 'a',
+    password: 'otra',
+  });
+  assert.equal(stale.status, 407);
+});
+
+test('exit: compatibilidad legacy con user/pass sigue autenticando', async (t) => {
+  const origin = await startOrigin();
+  const exit = await startExit({ name: 'exit-a', user: 'legacy', pass: 'pw' });
+  t.after(async () => {
+    await closeServer(origin.server);
+    await closeServer(exit.server);
+  });
+  const ok = await httpGetThroughProxy({
+    proxyPort: exit.port,
+    targetUrl: `${origin.url}/`,
+    username: 'legacy',
+    password: 'pw',
+  });
+  assert.equal(ok.status, 200);
+  const bad = await httpGetThroughProxy({
+    proxyPort: exit.port,
+    targetUrl: `${origin.url}/`,
+    username: 'legacy',
+    password: 'mala',
+  });
+  assert.equal(bad.status, 407);
+});
+
+test('exit: localproxy_auth_failures_total incrementa tras un 407', async (t) => {
+  const origin = await startOrigin();
+  const exit = await startExit({ name: 'exit-a', users: [{ user: 'a', pass: '1' }] });
+  t.after(async () => {
+    await closeServer(origin.server);
+    await closeServer(exit.server);
+  });
+  const rejected = await httpGetThroughProxy({
+    proxyPort: exit.port,
+    targetUrl: `${origin.url}/`,
+    username: 'a',
+    password: 'mala',
+  });
+  assert.equal(rejected.status, 407);
+  const metrics = await httpGet({ port: exit.port, path: '/metrics' });
+  assert.equal(metrics.status, 200);
+  const match = metrics.body.match(/^localproxy_auth_failures_total (\d+)$/m);
+  assert.ok(match, 'deberia existir la metrica de fallos de auth');
+  assert.ok(Number(match[1]) >= 1);
+});
+
 test('exit: URL absoluta a /metrics se proxya al origen, no colisiona con las metricas', async (t) => {
   const origin = await startOrigin();
   const exit = await startExit({ name: 'exit-a', blockPrivate: false });

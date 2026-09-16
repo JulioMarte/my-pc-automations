@@ -104,7 +104,8 @@ compila `src/*.ts` a `dist/`.
 | Variable | Descripción |
 |---|---|
 | `EXIT_NAME` / `EXIT_HOST` / `EXIT_PORT` | Nombre, IP de Tailscale y puerto del exit en **esa** máquina |
-| `EXIT_USER` / `EXIT_PASS` | Credenciales que el exit exige al gateway (recomendado) |
+| `EXIT_USER` / `EXIT_PASS` | Credenciales que el exit exige al gateway (recomendado; fallback de una sola credencial) |
+| `EXIT_USERS` | Varias credenciales del exit a la vez: `usuario:clave,usuario2:clave2`. Permite rotar sin downtime (overlap); `EXIT_USER`/`EXIT_PASS` se siguen sumando como fallback |
 | `EXIT_ALLOW` | Lista de IPs exactas (coma) autorizadas a conectar al exit; vacío = todas (ACL de Tailscale). No soporta CIDR |
 | `EXIT_CONNECT_TIMEOUT_MS` | Timeout al conectar al destino desde el exit (15 s) |
 | `EXIT_BLOCK_PRIVATE` | Bloquea SSRF a loopback/privadas/link-local/CGNAT/metadata y puerto 25 (`true` por defecto; `false` solo para pruebas locales) |
@@ -134,6 +135,35 @@ compila `src/*.ts` a `dist/`.
   { "name": "vps",  "location": "us-east",      "host": "100.112.184.84", "port": 8899, "user": "exituser", "pass": "exitpass" }
 ]
 ```
+
+### Rotación de credenciales
+
+Cada exit puede aceptar **varias credenciales** a la vez vía `EXIT_USERS`, lo que permite
+rotar **sin cortar el servicio** (overlap): se agrega la nueva conservando la vieja, se
+verifica, se cambia en `exits.json` (que el gateway recarga en caliente) y recién entonces
+se quita la vieja. Runbook de 5 pasos:
+
+1. **Superponer en el exit**: en el `.env` del exit agrega la credencial nueva a
+   `EXIT_USERS` **conservando la actual**, p. ej.
+   `EXIT_USERS=exit-home:claveVieja,exit-home:claveNueva`, y reinicia el exit.
+2. **Verificar el exit**: desde la máquina del gateway (la única autorizada por
+   `EXIT_ALLOW`), `curl -x http://exit-home:claveNueva@100.x.x.x:8899 https://api.ipify.org`.
+3. **Actualizar `exits.json`**: cambia `user`/`pass` de ese exit; el gateway recarga el
+   archivo solo (hot reload), sin reiniciar.
+4. **Verificar por el gateway**: fuerza ese exit con
+   `curl -x http://USUARIO-exit-home:CLAVE@100.110.109.28:8888 https://api.ipify.org`.
+5. **Quitar la vieja**: deja solo la credencial nueva en `EXIT_USERS` y reinicia el exit.
+
+El helper `scripts/rotate-cred.ts` genera la clave, imprime el runbook y (con `--apply`)
+actualiza `exits.json`:
+
+```bash
+node scripts/rotate-cred.ts home               # dry-run: imprime el runbook, no toca archivos
+node scripts/rotate-cred.ts home --user nuevo  # rota también el usuario
+node scripts/rotate-cred.ts home --apply       # paso 3: actualiza exits.json (hot reload)
+```
+
+> Los valores que imprime son **secretos**: no los dejes en el historial ni en logs.
 
 Arranque (desarrollo, corre `.ts` directo con el *type stripping* de Node):
 
@@ -754,7 +784,9 @@ body grande, CONNECT, SOCKS5 con DNS remoto, WebSocket/Upgrade, IPv6, stats y 40
 ## Seguridad
 
 1. `GATEWAY_HOST` y `EXIT_HOST` deben ser la **IP de Tailscale** (`100.x`), nunca `0.0.0.0`.
-2. Usa credenciales distintas para `PROXY_USERS` y `EXIT_USER/PASS`, largas y aleatorias.
+2. Usa credenciales distintas para `PROXY_USERS` y `EXIT_USERS` (o `EXIT_USER/PASS`), largas
+   y aleatorias. Cada exit debe tener su **propia** credencial, no compartida: si una se
+   filtra, revocarla no afecta a los demás (menor *blast radius*).
 3. Define `EXIT_ALLOW` con la IP del gateway para que el exit rechace cualquier otro peer.
 4. En la ACL de Tailscale, limita los puertos `8888`, `1080` y `8899` solo a los
    dispositivos/usuarios que los necesitan.

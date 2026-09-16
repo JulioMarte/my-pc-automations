@@ -6,13 +6,14 @@ import { URL } from 'node:url';
 import { loadEnv, envString, envNumber, envBool, envList } from './env.ts';
 import { createLogger, parseLogLevel, parseLogFormat, type Logger } from './logger.ts';
 import { Registry } from './metrics.ts';
-import { safeEqual } from './router.ts';
+import { parseCredentials, safeEqual, type Credential } from './router.ts';
 import { stripHopByHop, pipeUpgrade } from './upstream.ts';
 
 export interface ExitServerOptions {
   name?: string;
   user?: string;
   pass?: string;
+  users?: Credential[];
   allowFrom?: string[];
   connectTimeoutMs?: number;
   blockPrivate?: boolean;
@@ -183,9 +184,13 @@ export function createExitServer(options: ExitServerOptions = {}): http.Server {
 
   const startedAt = Date.now();
   const allowed = new Set(allowFrom.map(normalizeAddress));
+  // Lista de credenciales validas; el modo legacy user/pass se suma al final.
+  const credentials: Credential[] = [...(options.users ?? [])];
+  if (user) credentials.push({ user, pass: pass ?? '' });
 
   const registry = options.metrics ?? new Registry();
   const requestsTotal = registry.counter('localproxy_requests_total', 'Peticiones atendidas', ['code']);
+  const authFailures = registry.counter('localproxy_auth_failures_total', 'Fallos de autenticacion');
   const bytesTotal = registry.counter('localproxy_bytes_total', 'Bytes transferidos', ['direction']);
   const activeConnections = registry.gauge('localproxy_active_connections', 'Conexiones activas');
   const blockedTotal = registry.counter('localproxy_blocked_total', 'Destinos bloqueados', ['reason']);
@@ -205,14 +210,22 @@ export function createExitServer(options: ExitServerOptions = {}): http.Server {
   function authorized(request: http.IncomingMessage): boolean {
     const remote = normalizeAddress(request.socket.remoteAddress);
     if (allowed.size && !allowed.has(remote)) return false;
-    if (!user) return true;
+    if (credentials.length === 0) return true;
     const header = String(request.headers['proxy-authorization'] ?? '');
     if (!header.startsWith('Basic ')) return false;
     const decoded = Buffer.from(header.slice(6), 'base64').toString();
     const index = decoded.indexOf(':');
     if (index === -1) return false;
-    if (!safeEqual(decoded.slice(0, index), user)) return false;
-    return safeEqual(decoded.slice(index + 1), pass);
+    const decodedUser = decoded.slice(0, index);
+    const decodedPass = decoded.slice(index + 1);
+    // Se comparan todas las credenciales sin salir antes: no revela cual coincidio.
+    let matched = false;
+    for (const cred of credentials) {
+      const userOk = safeEqual(decodedUser, cred.user);
+      const passOk = safeEqual(decodedPass, cred.pass);
+      if (userOk && passOk) matched = true;
+    }
+    return matched;
   }
 
   const server = http.createServer((request: http.IncomingMessage, response: http.ServerResponse) => {
@@ -238,6 +251,7 @@ export function createExitServer(options: ExitServerOptions = {}): http.Server {
     // Solo las peticiones proxied cuentan como trafico (no /__health ni /metrics).
     response.on('finish', () => requestsTotal.inc({ code: String(response.statusCode) }));
     if (!authorized(request)) {
+      authFailures.inc();
       response.writeHead(407, { 'proxy-authenticate': 'Basic realm="exit"' });
       response.end();
       return;
@@ -300,6 +314,7 @@ export function createExitServer(options: ExitServerOptions = {}): http.Server {
 
   server.on('connect', (request: http.IncomingMessage, clientSocket: net.Socket, head: Buffer) => {
     if (!authorized(request)) {
+      authFailures.inc();
       requestsTotal.inc({ code: '407' });
       clientSocket.write(
         'HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="exit"\r\n\r\n',
@@ -353,6 +368,7 @@ export function createExitServer(options: ExitServerOptions = {}): http.Server {
 
   server.on('upgrade', (request: http.IncomingMessage, clientSocket: net.Socket, head: Buffer) => {
     if (!authorized(request)) {
+      authFailures.inc();
       requestsTotal.inc({ code: '407' });
       clientSocket.write(
         'HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="exit"\r\n\r\n',
@@ -417,6 +433,8 @@ export function runExit(): void {
   const host = envString('EXIT_HOST', '127.0.0.1');
   const port = envNumber('EXIT_PORT', 8899);
   const user = envString('EXIT_USER');
+  const users = parseCredentials(envString('EXIT_USERS'));
+  const credentialsCount = users.length + (user ? 1 : 0);
   const allowFrom = envList('EXIT_ALLOW');
   const logger = createLogger({
     level: parseLogLevel(envString('LOG_LEVEL', 'info')),
@@ -431,6 +449,7 @@ export function runExit(): void {
     name,
     user,
     pass: envString('EXIT_PASS'),
+    users,
     allowFrom,
     connectTimeoutMs: envNumber('EXIT_CONNECT_TIMEOUT_MS', 15000),
     blockPrivate: envBool('EXIT_BLOCK_PRIVATE', true),
@@ -449,12 +468,13 @@ export function runExit(): void {
     process.exit(1);
   });
   server.listen(port, host, () => {
-    const auth = user ? ' (con auth)' : '';
+    const auth = credentialsCount ? ' (con auth)' : '';
     const allow = allowFrom.length ? ` allow=${allowFrom.join(',')}` : '';
-    logger.info?.(`HTTP proxy escuchando en ${host}:${port}${auth}${allow}`, {
+    logger.info?.(`HTTP proxy escuchando en ${host}:${port}${auth}${allow} credentials=${credentialsCount}`, {
       host,
       port,
-      auth: Boolean(user),
+      auth: credentialsCount > 0,
+      credentials: credentialsCount,
       allow: allowFrom,
     });
   });

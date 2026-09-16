@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseUser, parseUsers, createAuthenticator, createAuthLimiter, ExitPool } from '../src/router.ts';
+import { parseUser, parseUsers, parseCredentials, createAuthenticator, createAuthLimiter, ExitPool } from '../src/router.ts';
 
 test('parseUser: base, session, rotate, exit y loc', () => {
   assert.deepEqual(parseUser('julio'), { base: 'julio' });
@@ -18,6 +18,38 @@ test('parseUsers: acepta ":" dentro del password', () => {
   const auth = createAuthenticator(users);
   assert.equal(auth('julio', 'pa:ss')?.base, 'julio');
   assert.equal(auth('julio', 'pa'), null);
+});
+
+test('parseCredentials: vacio o undefined devuelve lista vacia', () => {
+  assert.deepEqual(parseCredentials(undefined), []);
+  assert.deepEqual(parseCredentials(''), []);
+});
+
+test('parseCredentials: acepta una o varias credenciales', () => {
+  assert.deepEqual(parseCredentials('a:1'), [{ user: 'a', pass: '1' }]);
+  assert.deepEqual(parseCredentials('a:1,b:2'), [
+    { user: 'a', pass: '1' },
+    { user: 'b', pass: '2' },
+  ]);
+});
+
+test('parseCredentials: conserva usuario repetido con distinta clave (rotacion)', () => {
+  assert.deepEqual(parseCredentials('a:1,a:2'), [
+    { user: 'a', pass: '1' },
+    { user: 'a', pass: '2' },
+  ]);
+});
+
+test('parseCredentials: acepta ":" dentro del password', () => {
+  assert.deepEqual(parseCredentials('a:1:2'), [{ user: 'a', pass: '1:2' }]);
+});
+
+test('parseCredentials: ignora entradas malformadas', () => {
+  assert.deepEqual(parseCredentials('sinclave,:x,,a:1'), [{ user: 'a', pass: '1' }]);
+});
+
+test('parseCredentials: recorta espacios del usuario', () => {
+  assert.deepEqual(parseCredentials(' a :1'), [{ user: 'a', pass: '1' }]);
 });
 
 test('authenticator: acepta solo credenciales validas', () => {
@@ -96,6 +128,26 @@ test('ExitPool: reload conserva salud y limpia sesiones huerfanas', () => {
   assert.equal(pool.sessions.size, 1);
   pool.reload([{ name: 'b', host: 'h', port: 2 }]);
   assert.equal(pool.sessions.size, 0);
+});
+
+test('ExitPool: reload actualiza la credencial y conserva salud/fallos/circuito', () => {
+  const pool = new ExitPool([{ name: 'a', host: 'h', port: 1, user: 'viejo', pass: 'p1' }]);
+  const a = pool.exits[0]!;
+  pool.recordFailure(a);
+  pool.recordFailure(a);
+  pool.recordFailure(a);
+  assert.equal(a.healthy, false);
+  assert.equal(a.failures, 3);
+  assert.equal(a.circuit, 'open');
+  pool.reload([{ name: 'a', host: 'h2', port: 2, user: 'nuevo', pass: 'p2' }]);
+  const updated = pool.exits.find((exit) => exit.name === 'a')!;
+  assert.equal(updated.user, 'nuevo');
+  assert.equal(updated.pass, 'p2');
+  assert.equal(updated.host, 'h2');
+  assert.equal(updated.port, 2);
+  assert.equal(updated.healthy, false);
+  assert.equal(updated.failures, 3);
+  assert.equal(updated.circuit, 'open');
 });
 
 test('ExitPool: circuit breaker abre tras 3 fallos y medio-abre tras el backoff', () => {
