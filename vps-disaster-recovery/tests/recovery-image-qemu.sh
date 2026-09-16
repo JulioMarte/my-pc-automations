@@ -94,7 +94,7 @@ $CA_INDENTED
 runcmd:
   - [ sh, -c, 'update-ca-certificates >/dev/null 2>&1' ]
   - [ sh, -c, 'rm -rf /srv/vps-dr-qemu-source' ]
-  - [ bash, -lc, 'printf "RECOVER-ci-qemu\\n" | env VPS_RECOVERY_S3_ACCESS_KEY="$MINIO_USER" VPS_RECOVERY_S3_SECRET_KEY="$MINIO_PASSWORD" VPS_RECOVERY_RESTIC_PASSWORD="ci-restic-password-please-change" /usr/local/sbin/vps-backup recovery-bootstrap --non-interactive --require-same-os --execute --snapshot "$SID" --provider s3 --endpoint https://10.0.2.2:9443 --region us-east-1 --bucket "$TEST_BUCKET" --prefix ci-qemu --backup-id ci-qemu --bucket-lookup path > /var/tmp/recovery-bootstrap.log 2>&1' ]
+  - [ bash, -lc, 'set +e; printf "RECOVER-ci-qemu\\n" | env VPS_RECOVERY_S3_ACCESS_KEY="$MINIO_USER" VPS_RECOVERY_S3_SECRET_KEY="$MINIO_PASSWORD" VPS_RECOVERY_RESTIC_PASSWORD="ci-restic-password-please-change" /usr/local/sbin/vps-backup recovery-bootstrap --non-interactive --require-same-os --execute --snapshot "$SID" --provider s3 --endpoint https://10.0.2.2:9443 --region us-east-1 --bucket "$TEST_BUCKET" --prefix ci-qemu --backup-id ci-qemu --bucket-lookup path > /var/tmp/recovery-bootstrap.log 2>&1; rc=\$?; printf "%s\\n" "\$rc" > /var/tmp/recovery-bootstrap.rc; sync; exit 0' ]
   - [ bash, -lc, 'test -f /srv/vps-dr-qemu-source/marker.txt && sha256sum /srv/vps-dr-qemu-source/marker.txt > /var/tmp/recovered-marker.sha256' ]
   - [ bash, -lc, '/usr/local/sbin/vps-backup version > /var/tmp/vps-backup-version.txt' ]
   - [ bash, -lc, 'test -s /etc/machine-id' ]
@@ -129,6 +129,21 @@ QEMU_RC=$?
 set -e
 [[ $QEMU_RC -eq 0 ]] || { echo "QEMU exited rc=$QEMU_RC" >&2; tail -n 250 "$T/qemu-console.log" >&2; exit 1; }
 
+# Always extract guest-side diagnostics before validating success markers. This
+# makes a failed recovery actionable instead of losing the only useful log when
+# cloud-init continues to poweroff after an runcmd failure.
+mkdir -p "$ROOT/results"
+virt-cat -a "$IMAGE" /var/tmp/recovery-bootstrap.log > "$ROOT/results/recovery-bootstrap-qemu.log" 2>/dev/null || true
+virt-cat -a "$IMAGE" /var/log/cloud-init-output.log > "$ROOT/results/cloud-init-output-qemu.log" 2>/dev/null || true
+virt-cat -a "$IMAGE" /var/log/cloud-init.log > "$ROOT/results/cloud-init-qemu.log" 2>/dev/null || true
+cp "$T/qemu-console.log" "$ROOT/results/qemu-console.log"
+RECOVERY_RC=$(virt-cat -a "$IMAGE" /var/tmp/recovery-bootstrap.rc 2>/dev/null | tr -d '\r\n' || true)
+if [[ "$RECOVERY_RC" != 0 ]]; then
+  echo "guest recovery-bootstrap failed rc=${RECOVERY_RC:-missing}" >&2
+  [[ -s "$ROOT/results/recovery-bootstrap-qemu.log" ]] && tail -n 250 "$ROOT/results/recovery-bootstrap-qemu.log" >&2 || true
+  exit 1
+fi
+
 [[ "$(virt-cat -a "$IMAGE" /var/tmp/vps-dr-qemu-pass)" == PASS ]]
 [[ "$(virt-cat -a "$IMAGE" /var/tmp/vps-backup-version.txt | tr -d '\r\n')" == 'vps-backup v1.4.2' ]]
 RECOVERED_SHA=$(virt-cat -a "$IMAGE" /var/tmp/recovered-marker.sha256 | awk '{print $1}')
@@ -136,14 +151,11 @@ RECOVERED_SHA=$(virt-cat -a "$IMAGE" /var/tmp/recovered-marker.sha256 | awk '{pr
 [[ -n "$(virt-cat -a "$IMAGE" /etc/machine-id | tr -d '\r\n')" ]]
 virt-ls -a "$IMAGE" /etc/ssh | grep -Eq '^ssh_host_.*_key$'
 
-mkdir -p "$ROOT/results"
-virt-cat -a "$IMAGE" /var/tmp/recovery-bootstrap.log > "$ROOT/results/recovery-bootstrap-qemu.log"
-cp "$T/qemu-console.log" "$ROOT/results/qemu-console.log"
 cat > "$ROOT/results/recovery-image-qemu.json" <<EOF_JSON
 {"snapshot":"$SID","candidate_sha256":"$(sha256sum "$SCRIPT" | awk '{print $1}')","source_sha256":"$SOURCE_SHA","restored_sha256":"$RECOVERED_SHA","qemu":"PASS","cloud_init":"PASS","same_os_recovery":"PASS"}
 EOF_JSON
 chmod 0755 "$ROOT/results"
-chmod 0644 "$ROOT/results/recovery-bootstrap-qemu.log" "$ROOT/results/qemu-console.log" "$ROOT/results/recovery-image-qemu.json"
+chmod 0644 "$ROOT/results/recovery-bootstrap-qemu.log" "$ROOT/results/cloud-init-output-qemu.log" "$ROOT/results/cloud-init-qemu.log" "$ROOT/results/qemu-console.log" "$ROOT/results/recovery-image-qemu.json"
 if [[ -n "${SUDO_UID:-}" && -n "${SUDO_GID:-}" ]]; then
   chown -R "$SUDO_UID:$SUDO_GID" "$ROOT/results" || true
 fi
