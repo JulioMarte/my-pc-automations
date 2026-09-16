@@ -16,7 +16,8 @@ feat/<feature>  --(tests + verificacion OK)-->  dev  --(PR + review)-->  main
 ### Reglas obligatorias
 
 1. **Nunca** commitear ni hacer push directo a `main`.
-2. Cada cambio: rama propia desde `dev` -> implementar -> probar -> merge a `dev`.
+2. **Antes de editar, crear la rama** (`git checkout -b <tipo>/<nombre>` desde `dev`).
+   Nunca editar ni commitear directo en `dev`. Luego: implementar -> probar -> merge a `dev`.
 3. **`dev` -> `main`** solo con **PR para review/aprobacion**, o si el usuario lo
    pide explicitamente. **Nunca** mergear a `main` por iniciativa propia.
 4. **No** hacer `push` a `origin` salvo que el usuario lo pida.
@@ -32,16 +33,28 @@ feat/<feature>  --(tests + verificacion OK)-->  dev  --(PR + review)-->  main
   tooling (`bun src/gateway.ts`, `bun test`, `bun --watch`).
 - Comandos:
   - `npm run typecheck` - comprobacion de tipos (`tsc --noEmit`).
-  - `npm test` - tests (`node --test` sobre `.ts`).
+  - `npm test` - tests (`node --test` sobre `.ts`; ~108 tests).
   - `npm run build` - compila a `dist/`.
   - `npm run dev:gateway` / `npm run dev:exit` - desarrollo con `--watch`.
-- Endpoints: gateway `GET /healthz`, `GET /readyz`, `GET /__stats?token=`;
-  exit `GET /__health`.
-- **Despliegue (Windows)**: reiniciar la tarea `local-proxy-autostart` (lanza desde
-  `dist/`) y verificar `/healthz` + `/readyz`. El watchdog `local-proxy-watchdog`
-  sondea la salud cada 2 min. Script elevado opcional: `scripts/deploy-windows.ps1`.
-- **Despliegue (VPS)**: copiar `dist/` + `package.json` + `scripts/exit-daemon.sh`,
-  matar el proceso viejo y ejecutar el daemon; verifica `/__health`.
+- Endpoints:
+  - Gateway: `GET /healthz` (liveness), `GET /readyz` (readiness),
+    `GET /__stats?token=` (requiere `STATS_TOKEN`), `GET /metrics` (Prometheus;
+    `METRICS_TOKEN` opcional).
+  - Exit: `GET /__health` (liveness), `GET /metrics`.
+- **Recarga en caliente**: el gateway recarga `PROXY_USERS`/`STATS_TOKEN`/`METRICS_TOKEN`
+  y el exit `EXIT_USERS` al guardar `.env` (sin reiniciar). Puertos, timeouts,
+  `SESSION_TTL_MS`, `MAX_CONNECTIONS*`, `EXIT_BLOCK_PRIVATE` y logs requieren reinicio.
+- **Credenciales de exit**: una por exit; rotacion sin downtime con `EXIT_USERS` (solape)
+  y `scripts/rotate-cred.ts`. Ver "Rotacion de credenciales" en el README.
+- **Despliegue (Windows)**: `npm run build` y reiniciar la tarea `local-proxy-autostart`
+  (lanza desde `dist/`); verificar `/healthz` + `/readyz`. El watchdog
+  `local-proxy-watchdog` sondea la salud cada 2 min. Script elevado opcional:
+  `scripts/deploy-windows.ps1`.
+- **Despliegue (VPS)**: copiar `dist/` + `package.json` + `scripts/` y ejecutar
+  `scripts/restart-exit.sh` (mata solo el exit y lo relanza); verifica `/__health`.
+  Evita `pkill` con el patron en la linea de comandos (se auto-mata).
+- **Tailscale ACLs**: politica versionada en `tailscale/acl.hujson` (**no aplicada**; ver
+  el orden seguro de aplicacion en el README).
 
 ## Idioma y estilo
 

@@ -27,7 +27,7 @@ facilidad de auditar. El código vive en **TypeScript ESM** (`src/`) y se compil
 protocolos en el **exit**, gost es el reemplazo natural de `src/exit.ts`:
 
 ```bash
-gost -L "http://exituser:exitpass@100.110.109.28:8899"
+gost -L "http://USUARIO:CLAVE@100.110.109.28:8899"
 ```
 
 ### Runtime: Node.js en producción, Bun para desarrollo
@@ -70,6 +70,22 @@ deliberadamente agnóstico: `bun src/gateway.ts` funciona.
   DNS leaks**.
 - Si un exit falla, el gateway **reintenta con el siguiente sano** (hasta agotar los
   candidatos). El failover también cubre respuestas `407/502/503/504` del exit.
+
+---
+
+## Estado actual (snapshot 2026-09-16)
+
+- **Gateway + exit `home`**: `100.110.109.28` (Windows). Tareas SYSTEM
+  `local-proxy-autostart` (arranque) y `local-proxy-watchdog` (sonda cada 2 min).
+- **Exits**: `vps-01` `100.112.184.84` (us-ny) y `vps-02` `100.70.33.2` (us-mo), con el
+  daemon por cron (`@reboot` + keepalive cada 2 min).
+- **Desplegado y verificado**: TypeScript ESM; hardening P0 (SSRF, timeouts, health,
+  circuit breaker, rate-limit); `/metrics` + logs JSON; límites por usuario; **credenciales
+  únicas por exit**; failover de WebSocket/Upgrade; recarga en caliente de `.env`.
+- **Credenciales**: rotadas a `exit-home` / `exit-vps-01` / `exit-vps-02`; la clave
+  compartida anterior ya no autentica (devuelve `407`).
+- **Pendiente**: aplicar la política de Tailscale ACLs (versionada, **no aplicada**) y el
+  resto del roadmap.
 
 ---
 
@@ -131,10 +147,13 @@ compila `src/*.ts` a `dist/`.
 
 ```json
 [
-  { "name": "home", "location": "do-santiago", "host": "100.110.109.28", "port": 8899, "user": "exituser", "pass": "exitpass" },
-  { "name": "vps",  "location": "us-east",      "host": "100.112.184.84", "port": 8899, "user": "exituser", "pass": "exitpass" }
+  { "name": "home", "location": "do-santiago", "host": "100.110.109.28", "port": 8899, "user": "exit-home",   "pass": "cambia-esto-home" },
+  { "name": "vps",  "location": "us-east",      "host": "100.112.184.84", "port": 8899, "user": "exit-vps-01", "pass": "cambia-esto-vps-01" }
 ]
 ```
+
+> Cada exit debería tener su **propia** credencial (ver "Rotación de credenciales"): así una
+> fuga en un exit no compromete los demás.
 
 ### Recarga en caliente (.env)
 
@@ -768,7 +787,7 @@ campos de contexto (`role`, `name`, `exit`, etc.). Los secretos (`authorization`
 | `407 Proxy Authentication Required` | Usuario o clave mal escritos | Revisa `PROXY_USERS` en `.env` (se recarga solo). El usuario base no lleva `-exit-...` |
 | Cambié `PROXY_USERS` (o `EXIT_USERS`) y no aplica | La recarga es perezosa (~1 s) y solo afecta peticiones/conexiones **nuevas** | Espera un momento; las conexiones ya abiertas siguen con las credenciales anteriores |
 | `429 Too Many Requests` | Demasiados fallos de auth seguidos desde ese cliente, **o** alcanzaste tu límite de conexiones concurrentes por usuario (`MAX_CONNECTIONS_PER_USER`) | Si es auth: espera (viene con `Retry-After`) y corrige las credenciales. Si es el límite por usuario: cierra conexiones o súbelo en `.env` (`MAX_CONNECTIONS_PER_USER`; `0` = ilimitado) y reinicia el gateway |
-| `502 Bad Gateway` | No hay exits sanos o el destino no responde | Mira `/__stats`; revisa que Tailscale esté arriba en el exit |
+| `502 Bad Gateway` | El exit no pudo conectar con el destino (o **todos** los exits candidatos fallaron) | Comprueba que el destino sea alcanzable desde el exit; mira `/metrics` (`localproxy_upstream_errors_total`) |
 | `503 Service Unavailable` | No hay ningún exit usable | Consulta `GET /readyz`; revisa salud y `exits.json` |
 | `403 Forbidden` en un destino | El nuevo bloqueo SSRF rechaza loopback/privadas/link-local/CGNAT/metadata o el puerto 25 | Es esperado; para pruebas locales pon `EXIT_BLOCK_PRIVATE=false` |
 | `403` al pedir `/__stats` | `STATS_TOKEN` vacío (stats deshabilitadas) o token incorrecto | Define `STATS_TOKEN` en `.env` y reinicia el gateway; usa `?token=...` o `Authorization: Bearer` |
@@ -982,20 +1001,29 @@ Fuentes: [ACLs](https://tailscale.com/kb/1018/acls),
 
 ---
 
-## Rama de trabajo
+## Ramas y despliegue
 
-La migración a TypeScript ESM y el hardening viven en la rama
-`feat/local-proxy-ts-hardening`; **`main` está intacta**. Para desplegar esta rama hay que
+El trabajo se integra en **`dev`** (rama de integración y trabajo diario); **`main`** es el
+release candidate y solo recibe merges desde `dev` mediante PR (está protegida en GitHub).
+Todo lo desplegado (hardening, métricas, límites, credenciales por exit, failover de
+upgrade, recarga en caliente) está en `dev` y en producción. Para desplegar cambios hay que
 **recompilar (`npm run build`) y reiniciar el servicio** (el runner/watchdog y el daemon
-lanzan desde `dist/`, no desde `src/`).
+lanzan desde `dist/`, no desde `src/`). En Windows: reiniciar `local-proxy-autostart`; en
+los VPS: `scripts/restart-exit.sh`.
 
 ---
 
 ## Roadmap sugerido
 
-- Cuotas por usuario/día (el límite global de conexiones concurrentes ya existe vía
-  `MAX_CONNECTIONS`).
-- Watchdog que reviva el supervisor de Windows si muere (auto-reparable).
-- Panel web mínimo para ver `/__stats` desde el móvil.
+- **Aplicar la política de Tailscale ACLs** (versionada en `tailscale/acl.hujson`; **aún no
+  aplicada**; ver "Tailscale ACLs" para el orden seguro en dos fases).
+- **Connection draining** en el gateway (dejar terminar los túneles en vuelo antes de
+  reiniciar, en vez de cortarlos).
+- **Consistent hashing** para las sesiones sticky (menos reasignaciones al cambiar exits).
+- **Alertas** sobre las métricas `localproxy_*` (exits no sanos, tasa de 5xx, latencia p95).
+- Cuotas por usuario/día (el límite global y por usuario ya existen).
+- Panel web mínimo para ver `/__stats`/`/metrics` desde el móvil.
 - Exit opcional con gost para UDP/QUIC y más protocolos.
 - Soporte de `PROXY protocol` y de exits SOCKS5 (no solo HTTP).
+- Supervisión como **servicio real** (NSSM/WinSW en Windows, `systemd --user` en Linux) en
+  vez de Task Scheduler + cron.
