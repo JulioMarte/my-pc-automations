@@ -17,9 +17,8 @@
 // Aplicar SIEMPRE con la pestana Preview/Tests de la consola antes de guardar:
 //   https://login.tailscale.com/admin/acls
 //
-// ASSUMPTION: sustituye "juliomarte19955@" por el login completo del operador
-// (p. ej. usuario@dominio.com) si la consola lo rechaza. En las reglas se incluye
-// tambien autogroup:owner, que resuelve al dueno del tailnet sin depender del login.
+// Login del operador verificado con `tailscale status --json`: juliomarte19955@gmail.com.
+// En las reglas se incluye tambien autogroup:owner, que resuelve al dueno del tailnet.
 {
   // 1. Tags: solo autogroup:admin puede aplicarlos a los dispositivos.
   "tagOwners": {
@@ -59,13 +58,12 @@
 
     // 3c. SSH por clave (TCP 22/2222) a los VPS y al gateway.
     //     - autogroup:owner cubre al dueno del tailnet (robusto ante el login).
-    //     - juliomarte19955@ cubre los dispositivos SIN tag del operador.
+    //     - juliomarte19955@gmail.com cubre los dispositivos SIN tag del operador.
     //     - tag:proxy-gateway cubre la maquina Windows etiquetada (julio-marte).
-    //     Si la consola rechaza el login corto, deja solo autogroup:owner.
     {
       "action": "accept",
       "src": [
-        "juliomarte19955@",
+        "juliomarte19955@gmail.com",
         "autogroup:owner",
         "tag:proxy-gateway",
       ],
