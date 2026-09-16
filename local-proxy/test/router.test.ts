@@ -60,14 +60,46 @@ test('authenticator: acepta solo credenciales validas', () => {
   assert.equal(auth('', ''), null);
 });
 
-test('ExitPool: rota exits sanos en orden', () => {
+test('ExitPool: P2C prioriza el exit menos cargado', () => {
   const pool = new ExitPool([
     { name: 'a', host: 'h', port: 1 },
     { name: 'b', host: 'h', port: 2 },
   ]);
-  assert.equal(pool.candidates({ base: 'u' })[0]?.name, 'a');
+  const a = pool.exits.find((exit) => exit.name === 'a')!;
+  const b = pool.exits.find((exit) => exit.name === 'b')!;
+  a.active = 5;
+  b.active = 0;
   assert.equal(pool.candidates({ base: 'u' })[0]?.name, 'b');
+  a.active = 0;
+  b.active = 5;
   assert.equal(pool.candidates({ base: 'u' })[0]?.name, 'a');
+});
+
+test('ExitPool: P2C con carga igual reparte entre ambos', () => {
+  const pool = new ExitPool([
+    { name: 'a', host: 'h', port: 1 },
+    { name: 'b', host: 'h', port: 2 },
+  ]);
+  const firsts = new Set<string>();
+  for (let index = 0; index < 50; index += 1) {
+    const first = pool.candidates({ base: 'u' })[0];
+    if (first) firsts.add(first.name);
+  }
+  assert.deepEqual([...firsts].sort(), ['a', 'b']);
+});
+
+test('ExitPool: reload conserva active y stats lo expone', () => {
+  const pool = new ExitPool([{ name: 'a', host: 'h', port: 1 }]);
+  const a = pool.exits[0]!;
+  a.active = 3;
+  pool.reload([
+    { name: 'a', host: 'h', port: 1 },
+    { name: 'b', host: 'h', port: 2 },
+  ]);
+  assert.equal(pool.exits.find((exit) => exit.name === 'a')!.active, 3);
+  const stats = pool.stats();
+  assert.equal(stats.exits.find((exit) => exit.name === 'a')!.active, 3);
+  assert.equal(stats.exits.find((exit) => exit.name === 'b')!.active, 0);
 });
 
 test('ExitPool: sticky mantiene el exit y expira con TTL', async () => {

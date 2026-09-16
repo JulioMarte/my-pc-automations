@@ -18,6 +18,32 @@ function Log([string]$Message) {
 
 Log 'deploy: inicio'
 
+# Drenado best-effort ANTES de detener: pide al gateway que deje terminar los tuneles en
+# vuelo (POST /__drain). Si STATS_TOKEN esta vacio o el gateway no responde, se ignora.
+$envFile = Join-Path $root '.env'
+$gatewayHost = $null
+$gatewayPort = $null
+$statsToken = $null
+if (Test-Path -LiteralPath $envFile) {
+  foreach ($line in Get-Content -LiteralPath $envFile) {
+    if ($line -match '^\s*GATEWAY_HOST\s*=\s*(.+?)\s*$') { $gatewayHost = $Matches[1].Trim() }
+    if ($line -match '^\s*GATEWAY_HTTP_PORT\s*=\s*(.+?)\s*$') { $gatewayPort = $Matches[1].Trim() }
+    if ($line -match '^\s*STATS_TOKEN\s*=\s*(.+?)\s*$') { $statsToken = $Matches[1].Trim() }
+  }
+}
+if ($statsToken -and $gatewayHost -and $gatewayPort) {
+  $drainUrl = "http://{0}:{1}/__drain?token={2}" -f $gatewayHost, $gatewayPort, $statsToken
+  Log 'drain: POST /__drain (best-effort)'
+  try {
+    Invoke-WebRequest -Uri $drainUrl -Method Post -TimeoutSec 3 -UseBasicParsing | Out-Null
+    Log 'drain: ok'
+  } catch {
+    Log ("drain: ignorado ({0})" -f $_.Exception.Message)
+  }
+} else {
+  Log 'drain: omitido (STATS_TOKEN/GATEWAY_HOST/GATEWAY_HTTP_PORT vacios)'
+}
+
 Stop-ScheduledTask -TaskName 'local-proxy-autostart' -ErrorAction SilentlyContinue
 Stop-ScheduledTask -TaskName 'local-proxy-watchdog' -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 2

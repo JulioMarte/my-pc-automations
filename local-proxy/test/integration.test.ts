@@ -109,9 +109,10 @@ test('Rotacion: alterna entre exits sanos', async (t) => {
   const origin = await startOrigin();
   const exitA = await startExit({ name: 'exit-a' });
   const exitB = await startExit({ name: 'exit-b' });
+  const pool = new ExitPool([exitConfig('exit-a', exitA.port), exitConfig('exit-b', exitB.port)]);
   const { gateway, httpPort } = await startGateway({
     users: new Map([['julio', 'clave']]),
-    pool: new ExitPool([exitConfig('exit-a', exitA.port), exitConfig('exit-b', exitB.port)]),
+    pool,
     statsFile: statsFile(),
     healthIntervalMs: 0,
   });
@@ -121,7 +122,12 @@ test('Rotacion: alterna entre exits sanos', async (t) => {
     await closeServer(exitA.server);
     await closeServer(exitB.server);
   });
+  const a = pool.exits.find((exit) => exit.name === 'exit-a')!;
+  const b = pool.exits.find((exit) => exit.name === 'exit-b')!;
   for (let index = 0; index < 4; index += 1) {
+    // Fuerza el orden P2C: el menos cargado es siempre el primero.
+    a.active = index % 2 === 0 ? 0 : 100;
+    b.active = index % 2 === 0 ? 100 : 0;
     const response = await httpGetThroughProxy({
       proxyPort: httpPort,
       targetUrl: `${origin.url}/`,
@@ -210,6 +216,9 @@ test('Failover: si el primer exit falla usa el siguiente', async (t) => {
     await closeServer(exitA.server);
     await closeServer(exitB.server);
   });
+  // Fuerza a que exit-a sea el primer candidato para probar el failover.
+  pool.exits.find((exit) => exit.name === 'exit-a')!.active = 0;
+  pool.exits.find((exit) => exit.name === 'exit-b')!.active = 100;
   const response = await httpGetThroughProxy({
     proxyPort: httpPort,
     targetUrl: `${origin.url}/`,
@@ -396,6 +405,9 @@ test('Failover: CONNECT usa el siguiente exit si el primero falla', async (t) =>
     await closeServer(exitA.server);
     await closeServer(exitB.server);
   });
+  // Fuerza a que exit-a sea el primer candidato para probar el failover.
+  pool.exits.find((exit) => exit.name === 'exit-a')!.active = 0;
+  pool.exits.find((exit) => exit.name === 'exit-b')!.active = 100;
   const socket = await connectThroughProxy({
     proxyPort: httpPort,
     target: `127.0.0.1:${origin.port}`,
@@ -429,6 +441,9 @@ test('Failover: SOCKS5 usa el siguiente exit si el primero falla', async (t) => 
     await closeServer(exitA.server);
     await closeServer(exitB.server);
   });
+  // Fuerza a que exit-a sea el primer candidato para probar el failover.
+  pool.exits.find((exit) => exit.name === 'exit-a')!.active = 0;
+  pool.exits.find((exit) => exit.name === 'exit-b')!.active = 100;
   const socket = await socks5Connect({
     proxyPort: socksPort,
     targetHost: 'localhost',
@@ -576,6 +591,10 @@ test('Sticky: expira el TTL y elige un exit nuevo', async (t) => {
     await closeServer(exitA.server);
     await closeServer(exitB.server);
   });
+  const a = pool.exits.find((exit) => exit.name === 'exit-a')!;
+  const b = pool.exits.find((exit) => exit.name === 'exit-b')!;
+  a.active = 0;
+  b.active = 100;
   const first = await httpGetThroughProxy({
     proxyPort: httpPort,
     targetUrl: `${origin.url}/`,
@@ -584,6 +603,9 @@ test('Sticky: expira el TTL y elige un exit nuevo', async (t) => {
   });
   assert.equal(first.headers['x-exit-name'], 'exit-a');
   await new Promise((resolve) => setTimeout(resolve, 150));
+  // Sesion expirada: el menos cargado pasa a ser exit-b.
+  a.active = 100;
+  b.active = 0;
   const second = await httpGetThroughProxy({
     proxyPort: httpPort,
     targetUrl: `${origin.url}/`,
@@ -725,9 +747,10 @@ test('rotate: ignora la sesion guardada y elige otra salida', async (t) => {
   const origin = await startOrigin();
   const exitA = await startExit({ name: 'exit-a' });
   const exitB = await startExit({ name: 'exit-b' });
+  const pool = new ExitPool([exitConfig('exit-a', exitA.port), exitConfig('exit-b', exitB.port)]);
   const { gateway, httpPort } = await startGateway({
     users: new Map([['julio', 'clave']]),
-    pool: new ExitPool([exitConfig('exit-a', exitA.port), exitConfig('exit-b', exitB.port)]),
+    pool,
     statsFile: statsFile(),
     healthIntervalMs: 0,
   });
@@ -737,6 +760,10 @@ test('rotate: ignora la sesion guardada y elige otra salida', async (t) => {
     await closeServer(exitA.server);
     await closeServer(exitB.server);
   });
+  const a = pool.exits.find((exit) => exit.name === 'exit-a')!;
+  const b = pool.exits.find((exit) => exit.name === 'exit-b')!;
+  a.active = 0;
+  b.active = 100;
   const first = await httpGetThroughProxy({
     proxyPort: httpPort,
     targetUrl: `${origin.url}/`,
@@ -744,6 +771,9 @@ test('rotate: ignora la sesion guardada y elige otra salida', async (t) => {
     password: 'clave',
   });
   assert.equal(first.headers['x-exit-name'], 'exit-a');
+  // rotate ignora la sesion y vuelve a elegir por carga.
+  a.active = 100;
+  b.active = 0;
   const rotated = await httpGetThroughProxy({
     proxyPort: httpPort,
     targetUrl: `${origin.url}/`,

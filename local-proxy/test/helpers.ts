@@ -102,6 +102,7 @@ interface HttpGetThroughProxyOptions {
   method?: string;
   headers?: http.OutgoingHttpHeaders;
   body?: string;
+  agent?: http.Agent;
 }
 
 function httpGetThroughProxy({
@@ -112,6 +113,7 @@ function httpGetThroughProxy({
   method = 'GET',
   headers = {},
   body,
+  agent,
 }: HttpGetThroughProxyOptions): Promise<ProxyResponse> {
   return new Promise((resolve, reject) => {
     const request = http.request(
@@ -120,6 +122,7 @@ function httpGetThroughProxy({
         port: proxyPort,
         method,
         path: targetUrl,
+        agent,
         headers: {
           host: new URL(targetUrl).host,
           'proxy-authorization': basic(username, password),
@@ -269,12 +272,14 @@ async function freePort(): Promise<number> {
 interface HttpGetOptions {
   port: number;
   path: string;
+  method?: string;
   headers?: http.OutgoingHttpHeaders;
+  agent?: http.Agent;
 }
 
-function httpGet({ port, path: requestPath, headers = {} }: HttpGetOptions): Promise<ProxyResponse> {
+function httpGet({ port, path: requestPath, method = 'GET', headers = {}, agent }: HttpGetOptions): Promise<ProxyResponse> {
   return new Promise((resolve, reject) => {
-    const request = http.request({ host: '127.0.0.1', port, path: requestPath, headers }, (response) => {
+    const request = http.request({ host: '127.0.0.1', port, path: requestPath, method, headers, agent }, (response) => {
       let body = '';
       response.on('data', (chunk: Buffer) => {
         body += chunk;

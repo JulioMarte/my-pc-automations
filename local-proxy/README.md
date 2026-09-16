@@ -126,10 +126,12 @@ compila `src/*.ts` a `dist/`.
 | `EXIT_CONNECT_TIMEOUT_MS` | Timeout al conectar al destino desde el exit (15 s) |
 | `EXIT_BLOCK_PRIVATE` | Bloquea SSRF a loopback/privadas/link-local/CGNAT/metadata y puerto 25 (`true` por defecto; `false` solo para pruebas locales) |
 | `EXIT_IDLE_TIMEOUT_MS` | Cierra túneles CONNECT inactivos (0 = desactivado) |
+| `EXIT_SHUTDOWN_GRACE_MS` | Tiempo máximo que el exit deja terminar los túneles en vuelo al recibir `SIGINT`/`SIGTERM` (5 s por defecto) |
 | `GATEWAY_HOST` | IP de Tailscale de la máquina del gateway (**nunca 0.0.0.0**) |
 | `GATEWAY_HTTP_PORT` / `GATEWAY_SOCKS_PORT` | Puertos del gateway (8888 / 1080) |
 | `PROXY_USERS` | Usuarios de los clientes: `usuario:clave,otro:clave2` |
 | `SESSION_TTL_MS` | Duración de una sesión sticky (10 min por defecto) |
+| `SHUTDOWN_GRACE_MS` | Tiempo máximo que el gateway deja terminar los túneles en vuelo al drenar (`SIGINT`/`SIGTERM` o `POST /__drain`; 10 s por defecto) |
 | `CONNECT_TIMEOUT_MS` | Timeout del gateway al conectar al exit (20 s) |
 | `HEALTH_INTERVAL_MS` | Frecuencia de health checks (60 s; `0` los desactiva) |
 | `HEALTH_TARGETS` | Lista de destinos de health check separada por comas, p. ej. `api.ipify.org:443,www.google.com:443` (tiene prioridad sobre `HEALTH_TARGET`) |
@@ -176,6 +178,23 @@ Sigue requiriendo **reinicio** (no se recarga en caliente): puertos
 `HEALTH_TARGETS`/`HEALTH_TARGET`, `SESSION_TTL_MS`, `MAX_CONNECTIONS`,
 `MAX_CONNECTIONS_PER_USER`, `EXIT_BLOCK_PRIVATE`, `EXIT_IDLE_TIMEOUT_MS`, `EXIT_ALLOW` y
 `LOG_LEVEL`/`LOG_FORMAT`.
+
+### Reinicio sin cortar (draining)
+
+Al recibir `SIGINT`/`SIGTERM` (Ctrl+C, parada del servicio) o un `POST /__drain`
+(administrativo, requiere `STATS_TOKEN`), el gateway entra en **drenado**: `/readyz` pasa a
+`503`, las peticiones de proxy **nuevas** reciben `503` + `Retry-After`, y los túneles
+**en vuelo** siguen funcionando hasta `SHUTDOWN_GRACE_MS` (10000 ms por defecto) antes de
+cerrarse. Así un reinicio deja terminar las descargas y conexiones activas en lugar de
+cortarlas.
+
+```bash
+# pide el drenado antes de reiniciar (el gateway deja de aceptar tráfico nuevo)
+curl -X POST "http://100.110.109.28:8888/__drain?token=$STATS_TOKEN"
+```
+
+El exit aplica el mismo drenado en `SIGINT`/`SIGTERM`, con `EXIT_SHUTDOWN_GRACE_MS`
+(5000 ms por defecto).
 
 ### Rotación de credenciales
 
@@ -693,6 +712,9 @@ Muchas apps (curl, Python `requests`, Go) usan `HTTP_PROXY`/`HTTPS_PROXY` solas.
   (p. ej. gost), esa marca no existe y un `502/503/504` del origen puede reintentarse en
   otro exit; es inofensivo pero puede marcar un exit como no sano temporalmente.
 - Las sesiones están acotadas (máximo 10000) y se limpian por TTL.
+- La **selección de exit** usa **P2C (Power-of-Two-Choices)**: de dos exits sanos elegidos al
+  azar, asigna la sesión al **menos cargado** (carga = túneles activos), en lugar del
+  round-robin anterior. Las **sesiones sticky** y la rotación por `SESSION_TTL_MS` no cambian.
 - Códigos de estado: `503` + `Retry-After` cuando no hay exits usables; `504` si el exit
   agota el tiempo; `502` para otros fallos de upstream; `429` si un cliente queda bloqueado
   temporalmente por demasiados fallos de autenticación **o** si supera su
@@ -709,7 +731,8 @@ Endpoints del gateway (en el puerto HTTP del proxy, acceso directo, no a través
 | Endpoint | Auth | Devuelve |
 |---|---|---|
 | `GET /healthz` | ninguna | Liveness: `200` siempre que el proceso esté vivo |
-| `GET /readyz` | ninguna | Readiness: `200` si hay ≥1 exit usable, `503` si no |
+| `GET /readyz` | ninguna | Readiness: `200` si hay ≥1 exit usable y el gateway no está drenando, `503` si no |
+| `POST /__drain` | `?token=<STATS_TOKEN>` o `Authorization: Bearer <STATS_TOKEN>` | Inicia el drenado: `/readyz` → `503`, nuevas peticiones de proxy `503` + `Retry-After`; los túneles en vuelo terminan hasta `SHUTDOWN_GRACE_MS` |
 | `GET /__stats` | `?token=<STATS_TOKEN>` o `Authorization: Bearer <STATS_TOKEN>` | Exits, salud, conexiones, bytes y sesiones activas |
 | `GET /metrics` | ninguna si `METRICS_TOKEN` está vacío; si no, `?token=<METRICS_TOKEN>` o `Authorization: Bearer <METRICS_TOKEN>` | Métricas en formato Prometheus (`text/plain; version=0.0.4`), antes de la auth y solo por ruta relativa |
 
@@ -985,6 +1008,10 @@ Fuentes: [ACLs](https://tailscale.com/kb/1018/acls),
 - `stats.jsonl` crece sin límite: rótalo tú (logrotate / borrado periódico).
 - Al apagar con Ctrl+C puede perderse la última línea de stats de una conexión recién
   cerrada (el archivo se escribe de forma asíncrona).
+- El runner de Windows detiene los procesos con `Stop-Process -Force`, que no es una señal
+  capturable: **no** hay drenado elegante salvo que se llame antes a `POST /__drain`
+  (`scripts/deploy-windows.ps1` lo intenta de forma best-effort). Aun con drenado, los
+  **WebSockets** de larga vida se cortan al agotarse `SHUTDOWN_GRACE_MS`.
 - Las sesiones y los contadores viven en memoria: reiniciar el gateway pierde las sesiones
   sticky (los clientes obtienen una nueva salida) y reinicia las estadísticas acumuladas;
   `stats.jsonl` sí sobrevive.
@@ -1017,9 +1044,6 @@ los VPS: `scripts/restart-exit.sh`.
 
 - **Aplicar la política de Tailscale ACLs** (versionada en `tailscale/acl.hujson`; **aún no
   aplicada**; ver "Tailscale ACLs" para el orden seguro en dos fases).
-- **Connection draining** en el gateway (dejar terminar los túneles en vuelo antes de
-  reiniciar, en vez de cortarlos).
-- **Consistent hashing** para las sesiones sticky (menos reasignaciones al cambiar exits).
 - **Alertas** sobre las métricas `localproxy_*` (exits no sanos, tasa de 5xx, latencia p95).
 - Cuotas por usuario/día (el límite global y por usuario ya existen).
 - Panel web mínimo para ver `/__stats`/`/metrics` desde el móvil.

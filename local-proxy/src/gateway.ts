@@ -58,6 +58,7 @@ export interface GatewayConfig {
   metrics?: Registry;
   metricsToken?: string;
   version?: string;
+  shutdownGraceMs?: number;
 }
 
 export interface GatewayAddresses {
@@ -164,6 +165,7 @@ function createMeter({ exit, label, statsFile, bytes }: { exit: Exit; label: str
   let down = 0;
   let finished = false;
   exit.connections += 1;
+  exit.active += 1;
   return {
     countUp: (chunk: Buffer): void => {
       up += chunk.length;
@@ -178,6 +180,7 @@ function createMeter({ exit, label, statsFile, bytes }: { exit: Exit; label: str
     done: (): void => {
       if (finished) return;
       finished = true;
+      if (exit.active > 0) exit.active -= 1;
       const line = `${JSON.stringify({
         at: new Date().toISOString(),
         exit: exit.name,
@@ -216,6 +219,7 @@ export function createGateway(config: GatewayConfig = {}) {
     metrics: metricsRegistry,
     metricsToken = '',
     version,
+    shutdownGraceMs = 10000,
   } = config;
 
   let currentStatsToken = statsToken;
@@ -560,7 +564,7 @@ export function createGateway(config: GatewayConfig = {}) {
         response.end();
         return;
       }
-      const ready = pool.healthyExits().length > 0;
+      const ready = !draining && pool.healthyExits().length > 0;
       response.writeHead(ready ? 200 : 503, { 'content-type': 'application/json' });
       response.end(JSON.stringify({ ready }));
       return;
@@ -584,6 +588,24 @@ export function createGateway(config: GatewayConfig = {}) {
       syncGauges();
       response.writeHead(200, { 'content-type': 'text/plain; version=0.0.4; charset=utf-8' });
       response.end(registry.render());
+      return;
+    }
+    if (pathname === '/__drain' && request.method === 'POST') {
+      if (!statsAuthorized(request)) {
+        response.writeHead(403, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ error: currentStatsToken ? 'no autorizado' : 'stats deshabilitado' }));
+        return;
+      }
+      response.writeHead(202, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ draining: true, graceMs: shutdownGraceMs }));
+      setImmediate(() => {
+        void close({ graceMs: shutdownGraceMs });
+      });
+      return;
+    }
+    if (draining) {
+      response.writeHead(503, { 'retry-after': '5', connection: 'close' });
+      response.end('drenando');
       return;
     }
     const outcome = authorize(request.headers['proxy-authorization'], request.socket.remoteAddress);
@@ -627,6 +649,10 @@ export function createGateway(config: GatewayConfig = {}) {
       return;
     }
     trackUser(user, clientSocket);
+    if (draining) {
+      reject503Socket(clientSocket);
+      return;
+    }
     const { host: targetHost, port: targetPort } = parseTarget(request.url ?? '');
     openTunnel(outcome.parsed, targetHost, targetPort)
       .then(({ exit, remote }) => {
@@ -681,6 +707,10 @@ export function createGateway(config: GatewayConfig = {}) {
       return;
     }
     trackUser(user, clientSocket);
+    if (draining) {
+      reject503Socket(clientSocket);
+      return;
+    }
     forwardUpgradeWithFailover(request, clientSocket, head, outcome.parsed);
   });
 
@@ -759,6 +789,8 @@ export function createGateway(config: GatewayConfig = {}) {
   }
 
   let closed = false;
+  let draining = false;
+  let closing: Promise<void> | null = null;
   let healthTimer: NodeJS.Timeout | null = null;
   const staggerTimers = new Set<NodeJS.Timeout>();
 
@@ -810,13 +842,16 @@ export function createGateway(config: GatewayConfig = {}) {
     return { httpPort: portOf(httpServer, httpPort), socksPort: portOf(socksServer, socksPort) };
   }
 
-  function close(): Promise<void> {
+  function close(options: { graceMs?: number } = {}): Promise<void> {
+    if (closing) return closing;
     closed = true;
+    draining = true;
     if (healthTimer) clearTimeout(healthTimer);
     for (const timer of staggerTimers) clearTimeout(timer);
     staggerTimers.clear();
     clearInterval(sweepTimer);
-    return new Promise((resolve) => {
+    const graceMs = Math.max(0, options.graceMs ?? 0);
+    const serversClosed = new Promise<void>((resolve) => {
       let pending = 2;
       const done = (): void => {
         pending -= 1;
@@ -824,8 +859,26 @@ export function createGateway(config: GatewayConfig = {}) {
       };
       httpServer.close(done);
       socksServer.close(done);
+    });
+    const drained = new Promise<void>((resolve) => {
+      if (graceMs <= 0) {
+        resolve();
+        return;
+      }
+      const deadline = Date.now() + graceMs;
+      const tick = (): void => {
+        if (sockets.size === 0 || Date.now() >= deadline) {
+          resolve();
+          return;
+        }
+        setTimeout(tick, 200).unref?.();
+      };
+      tick();
+    });
+    closing = Promise.all([serversClosed, drained]).then(() => {
       for (const socket of sockets) socket.destroy();
     });
+    return closing;
   }
 
   // Recarga en caliente: muta el Map de usuarios (el authenticator lo comparte) y los tokens.
@@ -847,7 +900,19 @@ export function createGateway(config: GatewayConfig = {}) {
     socksServer.maxConnections = maxConnections;
   }
 
-  return { httpServer, socksServer, pool, users, limiter, start, close, reload, stats: statsPayload };
+  return {
+    httpServer,
+    socksServer,
+    pool,
+    users,
+    limiter,
+    start,
+    close,
+    drain: () => close({ graceMs: shutdownGraceMs }),
+    isDraining: () => draining,
+    reload,
+    stats: statsPayload,
+  };
 }
 
 export function watchExits(file: string, pool: ExitPool, logger: Logger = console): fs.FSWatcher | null {
@@ -908,6 +973,7 @@ export function runGateway(): void {
   const users = parseUsers(envString('PROXY_USERS'));
   const pool = new ExitPool(exits, { sessionTtlMs: envNumber('SESSION_TTL_MS', 600000) });
   const healthTargets = envList('HEALTH_TARGETS').map((entry) => parseHealthTarget(entry));
+  const shutdownGraceMs = envNumber('SHUTDOWN_GRACE_MS', 10000);
   const version = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version as string;
   const gateway = createGateway({
     host,
@@ -926,6 +992,7 @@ export function runGateway(): void {
     maxConnectionsPerUser: envNumber('MAX_CONNECTIONS_PER_USER', 0),
     metricsToken: envString('METRICS_TOKEN', ''),
     version,
+    shutdownGraceMs,
     logger,
   });
 
@@ -967,10 +1034,10 @@ export function runGateway(): void {
 
   const shutdown = (): void => {
     logger.info?.('cerrando...');
-    gateway.close().then(() => {
+    gateway.close({ graceMs: shutdownGraceMs }).then(() => {
       setTimeout(() => process.exit(0), 100);
     });
-    setTimeout(() => process.exit(0), 2000).unref();
+    setTimeout(() => process.exit(0), shutdownGraceMs + 2000).unref();
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);

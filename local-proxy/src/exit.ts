@@ -484,6 +484,25 @@ export function runExit(): void {
       allow: allowFrom,
     });
   });
+  // Apagado ordenado: deja de aceptar y drena las conexiones vivas hasta la gracia.
+  const graceMs = envNumber('EXIT_SHUTDOWN_GRACE_MS', 5000);
+  let shuttingDown = false;
+  const shutdown = (signal: string): void => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    logger.info?.('cerrando (drenando)', { signal, graceMs });
+    const timer = setTimeout(() => {
+      server.closeAllConnections?.();
+      process.exit(0);
+    }, graceMs);
+    timer.unref?.();
+    server.close(() => {
+      clearTimeout(timer);
+      process.exit(0);
+    });
+  };
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
   server.on('error', (error) => {
     logger.error?.(`no pude escuchar en ${host}:${port}: ${error.message}`);
     process.exit(1);
