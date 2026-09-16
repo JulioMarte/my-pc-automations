@@ -102,6 +102,26 @@ export function parseUsers(text: unknown): Map<string, string> {
   );
 }
 
+export interface Credential {
+  user: string;
+  pass: string;
+}
+
+// Lista de credenciales (a diferencia de parseUsers, admite usuario repetido con
+// distinta clave, necesario para rotar sin downtime).
+export function parseCredentials(text: unknown): Credential[] {
+  return String(text ?? '')
+    .split(',')
+    .map((entry): Credential | null => {
+      const index = entry.indexOf(':');
+      if (index === -1) return null;
+      const user = entry.slice(0, index).trim();
+      if (!user) return null;
+      return { user, pass: entry.slice(index + 1) };
+    })
+    .filter((credential): credential is Credential => credential !== null);
+}
+
 export function decodeBasic(header: unknown): { username: string; password: string } | null {
   if (!header || !String(header).startsWith('Basic ')) return null;
   const decoded = Buffer.from(String(header).slice(6), 'base64').toString();
