@@ -21,13 +21,23 @@ Se investigaron las alternativas maduras (docs primarias, sept. 2026) antes de d
 
 **Conclusión:** la semántica estilo proveedor (sesión sticky, rotación, `exit`, `loc`) es el
 producto, y ninguna herramienta la trae de fábrica. El gateway custom está justificado. Se
-eligió **Node puro sin dependencias npm** por consistencia con el repo, cero binarios y
-facilidad de auditar (~600 LOC). Si algún día necesitas UDP o más protocolos en el **exit**,
-gost es el reemplazo natural de `src/exit.js`:
+eligió **Node.js sin dependencias de runtime** por consistencia con el repo, cero binarios y
+facilidad de auditar. El código vive en **TypeScript ESM** (`src/`) y se compila a `dist/` con
+`tsc` (TypeScript y `@types/node` son solo devDependencies). Si algún día necesitas UDP o más
+protocolos en el **exit**, gost es el reemplazo natural de `src/exit.ts`:
 
 ```bash
 gost -L "http://exituser:exitpass@100.110.109.28:8899"
 ```
+
+### Runtime: Node.js en producción, Bun para desarrollo
+
+Producción se queda en **Node.js**, no Bun: el gateway depende de túneles HTTP `CONNECT`
+(socket crudo) y corre en Windows, y `Bun.serve` no soporta `CONNECT` (necesita la capa de
+compatibilidad `node:http`, corregida recién en Bun 1.4.0, con crashes abiertos en Windows,
+sin LTS y con problemas recientes de *HTTP smuggling*). Bun sí se soporta como runtime de
+**desarrollo/herramientas** (TS nativo, `bun test`, `bun --watch`) y el código es
+deliberadamente agnóstico: `bun src/gateway.ts` funciona.
 
 ---
 
@@ -65,7 +75,9 @@ gost -L "http://exituser:exitpass@100.110.109.28:8899"
 
 ## Requisitos
 
-- Node.js 20+ en todas las máquinas (sin dependencias npm).
+- Node.js **22.18+** en todas las máquinas (recomendado Node 24; sin dependencias de runtime).
+  El *type stripping* de Node permite correr `.ts` directo en desarrollo; en producción se
+  ejecuta el build de `dist/` (`npm run build`).
 - Tailscale instalado y activo en todas las máquinas.
 - Puertos permitidos entre las máquinas por la ACL de Tailscale.
 - Firewall local: permite Node (o los puertos `8888`, `1080`, `8899`) en la interfaz de
@@ -80,7 +92,12 @@ gost -L "http://exituser:exitpass@100.110.109.28:8899"
 cd local-proxy
 cp .env.example .env
 cp exits.example.json exits.json
+npm install
+npm run build
 ```
+
+`npm install` solo trae devDependencies (`typescript`, `@types/node`); `npm run build`
+compila `src/*.ts` a `dist/`.
 
 `.env` (valores reales):
 
@@ -90,15 +107,19 @@ cp exits.example.json exits.json
 | `EXIT_USER` / `EXIT_PASS` | Credenciales que el exit exige al gateway (recomendado) |
 | `EXIT_ALLOW` | Lista de IPs exactas (coma) autorizadas a conectar al exit; vacío = todas (ACL de Tailscale). No soporta CIDR |
 | `EXIT_CONNECT_TIMEOUT_MS` | Timeout al conectar al destino desde el exit (15 s) |
+| `EXIT_BLOCK_PRIVATE` | Bloquea SSRF a loopback/privadas/link-local/CGNAT/metadata y puerto 25 (`true` por defecto; `false` solo para pruebas locales) |
+| `EXIT_IDLE_TIMEOUT_MS` | Cierra túneles CONNECT inactivos (0 = desactivado) |
 | `GATEWAY_HOST` | IP de Tailscale de la máquina del gateway (**nunca 0.0.0.0**) |
 | `GATEWAY_HTTP_PORT` / `GATEWAY_SOCKS_PORT` | Puertos del gateway (8888 / 1080) |
 | `PROXY_USERS` | Usuarios de los clientes: `usuario:clave,otro:clave2` |
 | `SESSION_TTL_MS` | Duración de una sesión sticky (10 min por defecto) |
 | `CONNECT_TIMEOUT_MS` | Timeout del gateway al conectar al exit (20 s) |
 | `HEALTH_INTERVAL_MS` | Frecuencia de health checks (60 s; `0` los desactiva) |
-| `HEALTH_TARGET` | Destino del health check (`api.ipify.org:443`) |
+| `HEALTH_TARGETS` | Lista de destinos de health check separada por comas, p. ej. `api.ipify.org:443,www.google.com:443` (tiene prioridad sobre `HEALTH_TARGET`) |
+| `HEALTH_TARGET` | Fallback de un solo destino si `HEALTH_TARGETS` está vacío (`api.ipify.org:443`) |
 | `HEALTH_TIMEOUT_MS` | Timeout del health check (10 s) |
-| `STATS_TOKEN` | Token opcional para `/__stats?token=...` (además de la auth normal) |
+| `MAX_CONNECTIONS` | Límite de conexiones simultáneas del gateway (0 = sin límite) |
+| `STATS_TOKEN` | **Obligatorio** para leer `/__stats` (por `?token=` o `Authorization: Bearer`); si queda vacío, `/__stats` responde 403 |
 | `EXITS_FILE` / `STATS_FILE` | Rutas de configuración y métricas (relativas al proyecto o absolutas) |
 
 `exits.json` (en el gateway):
@@ -110,15 +131,34 @@ cp exits.example.json exits.json
 ]
 ```
 
-Arranque:
+Arranque (desarrollo, corre `.ts` directo con el *type stripping* de Node):
 
 ```bash
 # en cada máquina que aporta salida:
-npm run exit
+npm run exit            # o npm run dev:exit (con --watch)
 
 # en la máquina siempre encendida:
-npm run gateway
+npm run gateway         # o npm run dev:gateway (con --watch)
 ```
+
+Producción (corre el build de `dist/`; ejecuta `npm run build` antes de desplegar):
+
+```bash
+npm run start:exit      # node dist/exit.js
+npm start               # node dist/gateway.js
+```
+
+| Script | Qué hace |
+|---|---|
+| `npm run build` | Compila `src/*.ts` → `dist/` con `tsc` |
+| `npm run typecheck` | `tsc --noEmit` (chequeo de tipos sin generar build) |
+| `npm run gateway` / `exit` | Corre `src/gateway.ts` / `src/exit.ts` directo |
+| `npm run dev:gateway` / `dev:exit` | Igual, con `node --watch` |
+| `npm start` / `start:exit` | Corre el build: `dist/gateway.js` / `dist/exit.js` |
+| `npm run bun:gateway` / `bun:exit` | Bun corre los mismos `.ts` (soporte de desarrollo) |
+| `npm test` | Tests con el runner nativo (`node --test`) |
+| `npm run test:bun` | Tests con `bun test` (opcional) |
+| `npm run autostart:install` / `autostart:run` / `autostart:uninstall` | Supervisión en Windows |
 
 ### Arranque automático
 
@@ -132,9 +172,16 @@ npm run autostart:uninstall    # elimina las tareas y detiene los procesos
 
 Esto crea dos tareas:
 - `local-proxy-autostart`: al iniciar sesión, corre `scripts/proxy-autostart.ps1`, que
-  espera a Tailscale, arranca `exit` y `gateway`, y los reinicia si mueren (cada 5 s).
-- `local-proxy-watchdog`: cada 2 minutos comprueba que el runner siga vivo; si murió, lo
-  relanza (`scripts/proxy-watchdog.ps1`).
+  espera a Tailscale y **lanza `exit` y `gateway` desde `dist/`** (compila con
+  `npm run build` si falta la build). Reinicia cada rol con **backoff exponencial con
+  jitter** y, además de detectar procesos muertos, hace una **sonda TCP por rol** para
+  reiniciar un proceso colgado (vivo pero que ya no acepta conexiones).
+- `local-proxy-watchdog`: cada 2 minutos **sonda el servicio real** (`GET /healthz` en el
+  gateway y `/__health` en el exit) y reinicia si está poco sano, no solo si falta el
+  proceso (`scripts/proxy-watchdog.ps1`).
+
+> El runner y el watchdog **requieren la build**: si no existe `dist/`, el runner la genera
+> con `npm run build` antes de arrancar.
 
 **Windows — con admin (arranca al ENCENDER la PC, sin login):** recomendado para que
 sobreviva reinicios aunque nadie inicie sesión. Se ejecuta **una vez** como administrador:
@@ -160,15 +207,20 @@ Para arrancar solo un rol: `npm run autostart:install -- -Roles exit`.
 **Linux (VPS sin sudo)** — el repo incluye `scripts/exit-daemon.sh`:
 
 ```bash
-# copia src/, package.json, scripts/exit-daemon.sh y crea .env con EXIT_HOST de esa máquina
+# copia src/, dist/, package.json, scripts/exit-daemon.sh y crea .env con EXIT_HOST de esa máquina
 mkdir -p ~/local-proxy/scripts
-scp -r src package.json tu-usuario@vps:local-proxy/
+scp -r src dist package.json tu-usuario@vps:local-proxy/
 scp scripts/exit-daemon.sh vps:local-proxy/scripts/
 ssh vps 'chmod +x ~/local-proxy/scripts/exit-daemon.sh'
 
 # arranque + keepalive cada 2 minutos (sin systemd ni root)
 ssh vps "( crontab -l 2>/dev/null; echo '@reboot \$HOME/local-proxy/scripts/exit-daemon.sh >> \$HOME/local-proxy/cron.log 2>&1'; echo '*/2 * * * * \$HOME/local-proxy/scripts/exit-daemon.sh >> \$HOME/local-proxy/cron.log 2>&1' ) | crontab -"
 ```
+
+El daemon **lanza `dist/exit.js`**: si `dist/` no existe en el VPS, corre `npm run build`
+allí (o copia `dist/` desde tu máquina). Sonda `GET /__health`, usa `flock` para evitar
+carreras entre `@reboot` y el keepalive, y aplica backoff exponencial persistido en
+`exit.state`.
 
 Si no hay Node instalado y no tienes sudo, el daemon busca también en
 `~/.local/node*/bin/node` (instalación por tarball oficial en el home).
@@ -545,8 +597,12 @@ Muchas apps (curl, Python `requests`, Go) usan `HTTP_PROXY`/`HTTPS_PROXY` solas.
 
 ## Salud, failover y recarga en caliente
 
-- Cada `HEALTH_INTERVAL_MS` el gateway abre un `CONNECT` de prueba a `HEALTH_TARGET` por
-  cada exit. Dos fallos consecutivos marcan el exit como no sano; un éxito lo recupera.
+- Cada `HEALTH_INTERVAL_MS` el gateway abre un `CONNECT` de prueba por cada exit, contra
+  los destinos de `HEALTH_TARGETS` (o `HEALTH_TARGET` si aquella está vacía), con **jitter**
+  e **histéresis**: 2 fallos consecutivos marcan el exit como no sano y 2 éxitos lo
+  recuperan.
+- Cada exit tiene un **circuit breaker**: se abre tras 3 fallos consecutivos, pasa a
+  *half-open* tras un backoff con jitter y se cierra en el primer éxito.
 - Si el exit elegido falla (conexión, timeout o `407/502/503/504` **generado por el exit**),
   el gateway prueba el siguiente candidato. En HTTP plano solo reintenta métodos sin cuerpo
   (`GET`/`HEAD`) para no reenviar bodies; CONNECT y SOCKS5 siempre reintentan.
@@ -554,6 +610,10 @@ Muchas apps (curl, Python `requests`, Go) usan `HTTP_PROXY`/`HTTPS_PROXY` solas.
   el header `x-exit-name` a las respuestas que reenvía. Si usas otro software como exit
   (p. ej. gost), esa marca no existe y un `502/503/504` del origen puede reintentarse en
   otro exit; es inofensivo pero puede marcar un exit como no sano temporalmente.
+- Las sesiones están acotadas (máximo 10000) y se limpian por TTL.
+- Códigos de estado: `503` + `Retry-After` cuando no hay exits usables; `504` si el exit
+  agota el tiempo; `502` para otros fallos de upstream; `429` si un cliente queda bloqueado
+  temporalmente por demasiados fallos de autenticación.
 - Al guardar `exits.json` el gateway lo recarga solo (hot reload, también en Windows) sin
   perder salud, contadores ni sesiones de exits que siguen existiendo.
 
@@ -561,11 +621,19 @@ Muchas apps (curl, Python `requests`, Go) usan `HTTP_PROXY`/`HTTPS_PROXY` solas.
 
 ## Monitoreo
 
-- `curl -u agent:secret123 http://100.110.109.28:8888/__stats` (acceso directo, no a través
-  del proxy) → exits, salud, conexiones, bytes y sesiones activas. También acepta
-  `Proxy-Authorization` o `?token=...` si defines `STATS_TOKEN`.
+Endpoints del gateway (en el puerto HTTP del proxy, acceso directo, no a través del proxy):
+
+| Endpoint | Auth | Devuelve |
+|---|---|---|
+| `GET /healthz` | ninguna | Liveness: `200` siempre que el proceso esté vivo |
+| `GET /readyz` | ninguna | Readiness: `200` si hay ≥1 exit usable, `503` si no |
+| `GET /__stats` | `?token=<STATS_TOKEN>` o `Authorization: Bearer <STATS_TOKEN>` | Exits, salud, conexiones, bytes y sesiones activas |
+
+- `/__stats` **exige `STATS_TOKEN`**: si la variable está vacía, responde `403`
+  (estadísticas deshabilitadas). Ya no acepta la auth normal de proxy.
+- El exit expone `GET /__health` (sin auth) → `{ok,name,uptimeMs}`.
 - `stats.jsonl` → una línea por conexión cerrada (exit, duración, bytes). El metering de
-  SOCKS5 ahora cuenta subida y bajada por separado.
+  SOCKS5 cuenta subida y bajada por separado.
 
 ---
 
@@ -574,7 +642,12 @@ Muchas apps (curl, Python `requests`, Go) usan `HTTP_PROXY`/`HTTPS_PROXY` solas.
 | Síntoma | Causa probable | Qué hacer |
 |---|---|---|
 | `407 Proxy Authentication Required` | Usuario o clave mal escritos | Revisa `PROXY_USERS` en `.env` y reinicia el gateway. El usuario base no lleva `-exit-...` |
+| `429 Too Many Requests` | Demasiados fallos de auth seguidos desde ese cliente | Espera (viene con `Retry-After`) y corrige las credenciales |
 | `502 Bad Gateway` | No hay exits sanos o el destino no responde | Mira `/__stats`; revisa que Tailscale esté arriba en el exit |
+| `503 Service Unavailable` | No hay ningún exit usable | Consulta `GET /readyz`; revisa salud y `exits.json` |
+| `403 Forbidden` en un destino | El nuevo bloqueo SSRF rechaza loopback/privadas/link-local/CGNAT/metadata o el puerto 25 | Es esperado; para pruebas locales pon `EXIT_BLOCK_PRIVATE=false` |
+| `403` al pedir `/__stats` | `STATS_TOKEN` vacío (stats deshabilitadas) o token incorrecto | Define `STATS_TOKEN` en `.env` y reinicia el gateway; usa `?token=...` o `Authorization: Bearer` |
+| Los servicios no arrancan tras la migración | Falta la build de `dist/` | Ejecuta `npm run build` y reinicia el servicio |
 | `connection refused` | El gateway no corre, o no estás en Tailscale | Comprueba que el puerto 8888 escuche y que la tarea `local-proxy-autostart` esté `Running` |
 | La app sigue saliendo con su IP | La app no respeta `HTTP_PROXY` | Configura el proxy dentro de la app (ver los ejemplos por herramienta) |
 | Timeout usando `-exit-home` | El laptop está dormido o apagado | Despiértalo, o usa rotación (`USUARIO` sin `-exit-home`) para caer a los VPS |
@@ -589,6 +662,10 @@ netstat -ano | findstr LISTENING | findstr ":8888"
 # ¿La tarea de arranque está viva?
 Get-ScheduledTask -TaskName 'local-proxy-autostart' | Select-Object TaskName, State
 
+# ¿El servicio responde? (liveness y readiness del gateway)
+curl.exe http://100.110.109.28:8888/healthz
+curl.exe http://100.110.109.28:8888/readyz
+
 # ¿Qué está pasando? (logs del supervisor y de cada rol)
 Get-Content logs\autostart-*.log -Tail 20
 ```
@@ -598,10 +675,11 @@ Get-Content logs\autostart-*.log -Tail 20
 ## Tests
 
 ```bash
-npm test
+npm test          # runner nativo de Node (node --test) sobre los tests .ts
+npm run test:bun  # opcional, con bun test
 ```
 
-35 tests con el runner nativo de Node (`node:test`, cero dependencias): parser de usuarios,
+Los tests usan el runner nativo de Node (`node:test`, cero dependencias): parser de usuarios,
 auth, rotación, sticky con TTL, `exit`/`loc`/`rotate`, failover (HTTP, CONNECT y SOCKS5),
 health checks, allowlist, recarga, y tests de integración reales por socket (HTTP, HEAD,
 body grande, CONNECT, SOCKS5 con DNS remoto, WebSocket/Upgrade, IPv6, stats y 407).
@@ -620,6 +698,10 @@ body grande, CONNECT, SOCKS5 con DNS remoto, WebSocket/Upgrade, IPv6, stats y 40
 7. Las claves se comparan en tiempo constante (`crypto.timingSafeEqual`).
 8. El tráfico viaja cifrado por WireGuard dentro del tailnet; el gateway no inspecciona
    contenido, solo enruta.
+9. El exit bloquea por defecto peticiones SSRF a loopback (`127/8`, `::1`), rangos privados
+   (`10/8`, `172.16/12`, `192.168/16`), CGNAT/tailnet (`100.64/10`), link-local y metadata
+   de nube (`169.254/16`), multicast/reservados, IPv6 `fe80::/10` y `fc00::/7`, y el puerto
+   25. `EXIT_BLOCK_PRIVATE=false` desactiva el bloqueo (solo para pruebas locales).
 
 ---
 
@@ -644,19 +726,29 @@ body grande, CONNECT, SOCKS5 con DNS remoto, WebSocket/Upgrade, IPv6, stats y 40
 - El arranque **sin admin** es al **iniciar sesión**; para que arranque al **encender la PC
   sin que nadie entre** hay que instalar las tareas como SYSTEM una vez con admin (ver
   Arranque automático).
-- El health check genera tráfico periódico hacia `HEALTH_TARGET` desde cada exit
-  (`api.ipify.org` por defecto). Si te importa esa fuga, apúntalo a un host tuyo o pon
+- El health check genera tráfico periódico hacia `HEALTH_TARGETS`/`HEALTH_TARGET` desde cada
+  exit (`api.ipify.org` por defecto). Si te importa esa fuga, apúntalos a un host tuyo o pon
   `HEALTH_INTERVAL_MS=0`.
-- `/__stats` muestra las sesiones de **todos** los usuarios a cualquier usuario
-  autenticado; es un diseño de un solo dueño, no multi-tenant.
+- `/__stats` muestra las sesiones de **todos** los usuarios a quien tenga el `STATS_TOKEN`;
+  es un diseño de un solo dueño, no multi-tenant.
 - No hay facturación, cuotas ni KYC; es tu red, tu responsabilidad.
 - El login de Tailscale de cada máquina debe estar activo y sin expiración de clave.
 
 ---
 
+## Rama de trabajo
+
+La migración a TypeScript ESM y el hardening viven en la rama
+`feat/local-proxy-ts-hardening`; **`main` está intacta**. Para desplegar esta rama hay que
+**recompilar (`npm run build`) y reiniciar el servicio** (el runner/watchdog y el daemon
+lanzan desde `dist/`, no desde `src/`).
+
+---
+
 ## Roadmap sugerido
 
-- Cuotas por usuario/día y límite de conexiones concurrentes.
+- Cuotas por usuario/día (el límite global de conexiones concurrentes ya existe vía
+  `MAX_CONNECTIONS`).
 - Watchdog que reviva el supervisor de Windows si muere (auto-reparable).
 - Panel web mínimo para ver `/__stats` desde el móvil.
 - Exit opcional con gost para UDP/QUIC y más protocolos.

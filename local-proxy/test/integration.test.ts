@@ -1,13 +1,13 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const http = require('http');
-const net = require('net');
-const { ExitPool } = require('../src/router');
-const { basic } = require('../src/upstream');
-const {
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import http from 'node:http';
+import net from 'node:net';
+import { ExitPool, type ExitConfig } from '../src/router.ts';
+import { basic } from '../src/upstream.ts';
+import {
   closeServer,
   trackSockets,
   waitFor,
@@ -20,19 +20,19 @@ const {
   socks5Connect,
   httpGet,
   readAll,
-} = require('./helpers');
+} from './helpers.ts';
 
 let counter = 0;
-function statsFile() {
+function statsFile(): string {
   counter += 1;
   return path.join(os.tmpdir(), `local-proxy-test-${process.pid}-${counter}.jsonl`);
 }
 
-function exitConfig(name, port, overrides = {}) {
+function exitConfig(name: string, port: number, overrides: Partial<ExitConfig> = {}): ExitConfig {
   return { name, host: '127.0.0.1', port, ...overrides };
 }
 
-async function readStats(file, predicate, timeoutMs = 3000) {
+async function readStats(file: string, predicate: (item: any) => boolean, timeoutMs = 3000): Promise<any> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (fs.existsSync(file)) {
@@ -218,7 +218,7 @@ test('Failover: si el primer exit falla usa el siguiente', async (t) => {
   });
   assert.equal(response.status, 200);
   assert.equal(response.headers['x-exit-name'], 'exit-b');
-  assert.ok(pool.exits.find((exit) => exit.name === 'exit-a').failures >= 1);
+  assert.ok(pool.exits.find((exit) => exit.name === 'exit-a')!.failures >= 1);
 });
 
 test('CONNECT: tunel HTTP con auth', async (t) => {
@@ -284,8 +284,11 @@ test('Upgrade/WebSocket: se reenvia el upgrade extremo a extremo', async (t) => 
     socket.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: test\r\nConnection: Upgrade\r\n\r\n');
     socket.on('data', (chunk) => socket.write(chunk));
   });
-  const originPort = await new Promise((resolve) => {
-    origin.listen(0, '127.0.0.1', () => resolve(origin.address().port));
+  const originPort = await new Promise<number>((resolve) => {
+    origin.listen(0, '127.0.0.1', () => {
+      const address = origin.address();
+      resolve(address && typeof address === 'object' ? address.port : 0);
+    });
   });
   const exit = await startExit({ name: 'exit-a' });
   const { gateway, httpPort } = await startGateway({
@@ -299,7 +302,7 @@ test('Upgrade/WebSocket: se reenvia el upgrade extremo a extremo', async (t) => 
     await closeServer(origin);
     await closeServer(exit.server);
   });
-  const echoed = await new Promise((resolve, reject) => {
+  const echoed = await new Promise<string>((resolve, reject) => {
     const request = http.request({
       host: '127.0.0.1',
       port: httpPort,
@@ -311,9 +314,9 @@ test('Upgrade/WebSocket: se reenvia el upgrade extremo a extremo', async (t) => 
         'proxy-authorization': basic('julio', 'clave'),
       },
     });
-    request.on('upgrade', (response, socket, head) => {
+    request.on('upgrade', (response, socket) => {
       socket.write('ping');
-      socket.once('data', (chunk) => {
+      socket.once('data', (chunk: Buffer) => {
         socket.destroy();
         resolve(chunk.toString());
       });
@@ -325,7 +328,7 @@ test('Upgrade/WebSocket: se reenvia el upgrade extremo a extremo', async (t) => 
   assert.equal(echoed, 'ping');
 });
 
-test('Stats: requiere auth y expone el estado', async (t) => {
+test('Stats: requiere token y expone el estado', async (t) => {
   const origin = await startOrigin();
   const exit = await startExit({ name: 'exit-a' });
   const { gateway, httpPort } = await startGateway({
@@ -333,6 +336,7 @@ test('Stats: requiere auth y expone el estado', async (t) => {
     pool: new ExitPool([exitConfig('exit-a', exit.port)]),
     statsFile: statsFile(),
     healthIntervalMs: 0,
+    statsToken: 'secreto',
   });
   t.after(async () => {
     await gateway.close();
@@ -340,11 +344,11 @@ test('Stats: requiere auth y expone el estado', async (t) => {
     await closeServer(exit.server);
   });
   const unauthorized = await httpGet({ port: httpPort, path: '/__stats' });
-  assert.equal(unauthorized.status, 407);
+  assert.equal(unauthorized.status, 403);
   const authorized = await httpGet({
     port: httpPort,
     path: '/__stats',
-    headers: { authorization: basic('julio', 'clave') },
+    headers: { authorization: 'Bearer secreto' },
   });
   assert.equal(authorized.status, 200);
   const payload = JSON.parse(authorized.body);
@@ -367,8 +371,8 @@ test('Stats: acepta token por query', async (t) => {
     await closeServer(origin.server);
     await closeServer(exit.server);
   });
-  assert.equal((await httpGet({ port: httpPort, path: '/__stats' })).status, 407);
-  assert.equal((await httpGet({ port: httpPort, path: '/__stats?token=malo' })).status, 407);
+  assert.equal((await httpGet({ port: httpPort, path: '/__stats' })).status, 403);
+  assert.equal((await httpGet({ port: httpPort, path: '/__stats?token=malo' })).status, 403);
   assert.equal((await httpGet({ port: httpPort, path: '/__stats?token=secreto' })).status, 200);
 });
 
@@ -439,11 +443,10 @@ test('Failover: SOCKS5 usa el siguiente exit si el primero falla', async (t) => 
   assert.equal(exitB.stats.connections, 1);
 });
 
-test('Sin exits disponibles: HTTP y CONNECT devuelven 502', async (t) => {
-  const deadPort = await freePort();
+test('Sin exits disponibles: HTTP y CONNECT devuelven 503', async (t) => {
   const { gateway, httpPort } = await startGateway({
     users: new Map([['julio', 'clave']]),
-    pool: new ExitPool([exitConfig('dead', deadPort)]),
+    pool: new ExitPool([]),
     statsFile: statsFile(),
     healthIntervalMs: 0,
   });
@@ -456,7 +459,8 @@ test('Sin exits disponibles: HTTP y CONNECT devuelven 502', async (t) => {
     username: 'julio',
     password: 'clave',
   });
-  assert.equal(response.status, 502);
+  assert.equal(response.status, 503);
+  assert.equal(response.headers['retry-after'], '5');
   await assert.rejects(
     connectThroughProxy({
       proxyPort: httpPort,
@@ -464,7 +468,7 @@ test('Sin exits disponibles: HTTP y CONNECT devuelven 502', async (t) => {
       username: 'julio',
       password: 'clave',
     }),
-    /CONNECT respondio 502/,
+    /CONNECT respondio 503/,
   );
 });
 
@@ -491,7 +495,7 @@ test('EXIT_ALLOW: rechaza peers no autorizados y el gateway devuelve 502', async
   });
   assert.equal(response.status, 502);
   assert.equal(exit.stats.requests, 1);
-  assert.ok(pool.exits[0].failures >= 1);
+  assert.ok(pool.exits[0]!.failures >= 1);
 });
 
 test('Health: marca un exit no sano y lo recupera al volver el destino', async (t) => {
@@ -512,12 +516,12 @@ test('Health: marca un exit no sano y lo recupera al volver el destino', async (
     await closeServer(target);
     await closeServer(exit.server);
   });
-  await waitFor(() => pool.exits[0].healthy === false);
-  await new Promise((resolve, reject) => {
+  await waitFor(() => pool.exits[0]!.healthy === false);
+  await new Promise<void>((resolve, reject) => {
     target.once('error', reject);
-    target.listen(targetPort, '127.0.0.1', resolve);
+    target.listen(targetPort, '127.0.0.1', () => resolve());
   });
-  await waitFor(() => pool.exits[0].healthy === true);
+  await waitFor(() => pool.exits[0]!.healthy === true);
 });
 
 test('loc: filtra exits por ubicacion extremo a extremo', async (t) => {
@@ -615,14 +619,14 @@ test('Un 502 del origen no marca el exit como fallido', async (t) => {
   });
   assert.equal(response.status, 502);
   assert.equal(response.body, 'origin-bad-gateway');
-  assert.equal(pool.exits[0].failures, 0);
-  assert.equal(pool.exits[0].healthy, true);
+  assert.equal(pool.exits[0]!.failures, 0);
+  assert.equal(pool.exits[0]!.healthy, true);
 });
 
 test('CONNECT: destino IPv6', async (t) => {
   const origin = http.createServer((request, response) => response.end('ipv6-ok'));
   trackSockets(origin);
-  const listening = await new Promise((resolve) => {
+  const listening = await new Promise<boolean>((resolve) => {
     origin.once('error', () => resolve(false));
     origin.listen(0, '::1', () => resolve(true));
   });
@@ -642,9 +646,11 @@ test('CONNECT: destino IPv6', async (t) => {
     await closeServer(origin);
     await closeServer(exit.server);
   });
+  const address = origin.address();
+  const originPort = address && typeof address === 'object' ? address.port : 0;
   const socket = await connectThroughProxy({
     proxyPort: httpPort,
-    target: `[::1]:${origin.address().port}`,
+    target: `[::1]:${originPort}`,
     username: 'julio',
     password: 'clave',
   });
@@ -682,7 +688,7 @@ test('HTTP: HEAD se reenvia sin body', async (t) => {
 test('HTTP: body grande se reenvia completo y se metrifica', async (t) => {
   const origin = await startOrigin((request, response) => {
     let size = 0;
-    request.on('data', (chunk) => {
+    request.on('data', (chunk: Buffer) => {
       size += chunk.length;
     });
     request.on('end', () => response.end(String(size)));

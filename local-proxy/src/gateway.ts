@@ -663,7 +663,7 @@ export function watchExits(file: string, pool: ExitPool, logger: GatewayLogger =
 const entry = process.argv[1];
 const isMain = entry !== undefined && path.resolve(entry) === import.meta.filename;
 
-if (isMain) {
+export function runGateway(): void {
   process.on('uncaughtException', (error) => {
     console.error(`[gateway] excepcion no capturada: ${error.message}`);
     process.exit(1);
@@ -735,3 +735,5 @@ if (isMain) {
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 }
+
+if (isMain) runGateway();

@@ -144,13 +144,12 @@ function parseAuthority(authority: unknown): { host: string; port: number } {
   return { host, port };
 }
 
-function requestPath(request: http.IncomingMessage): string {
-  const raw = request.url ?? '';
-  try {
-    return new URL(raw, 'http://localhost').pathname;
-  } catch {
-    return raw;
-  }
+// Solo tratamos como health las peticiones directas (path relativo). Las peticiones
+// proxied llegan con URL absoluta (http://host/__health) y NO deben colisionar.
+function isHealthRequest(url: string | undefined, healthPath: string): boolean {
+  const value = String(url ?? '');
+  if (!value.startsWith('/')) return false;
+  return value === healthPath || value.startsWith(`${healthPath}?`);
 }
 
 export function createExitServer(options: ExitServerOptions = {}): http.Server {
@@ -183,7 +182,7 @@ export function createExitServer(options: ExitServerOptions = {}): http.Server {
 
   const server = http.createServer((request: http.IncomingMessage, response: http.ServerResponse) => {
     // Health endpoint local: sin auth ni allowlist.
-    if (request.method === 'GET' && requestPath(request) === healthPath) {
+    if (request.method === 'GET' && isHealthRequest(request.url, healthPath)) {
       const body = JSON.stringify({ ok: true, name, uptimeMs: Date.now() - startedAt });
       response.writeHead(200, { 'content-type': 'application/json' });
       response.end(body);
@@ -330,7 +329,7 @@ export function createExitServer(options: ExitServerOptions = {}): http.Server {
 
 const isMain = process.argv[1] !== undefined && path.resolve(process.argv[1]) === import.meta.filename;
 
-if (isMain) {
+export function runExit(): void {
   loadEnv();
   const name = envString('EXIT_NAME', 'exit');
   const host = envString('EXIT_HOST', '127.0.0.1');
@@ -365,3 +364,5 @@ if (isMain) {
     process.exit(1);
   });
 }
+
+if (isMain) runExit();

@@ -1,22 +1,26 @@
-const http = require('http');
-const net = require('net');
-const { createExitServer } = require('../src/exit');
-const { createGateway } = require('../src/gateway');
-const { basic } = require('../src/upstream');
+import http from 'node:http';
+import net from 'node:net';
+import { createExitServer, type ExitServerOptions } from '../src/exit.ts';
+import { createGateway, type GatewayConfig } from '../src/gateway.ts';
+import { basic } from '../src/upstream.ts';
 
-function listen(server) {
+const socketsByServer = new WeakMap<net.Server, Set<net.Socket>>();
+
+function listen(server: net.Server): Promise<number> {
   return new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(0, '127.0.0.1', () => {
       server.removeListener('error', reject);
-      resolve(server.address().port);
+      const address = server.address();
+      if (address && typeof address === 'object') resolve(address.port);
+      else reject(new Error('el servidor no tiene direccion'));
     });
   });
 }
 
-function trackSockets(server) {
-  const sockets = new Set();
-  server.__sockets = sockets;
+function trackSockets(server: net.Server): Set<net.Socket> {
+  const sockets = new Set<net.Socket>();
+  socketsByServer.set(server, sockets);
   server.on('connection', (socket) => {
     sockets.add(socket);
     socket.on('close', () => sockets.delete(socket));
@@ -24,18 +28,28 @@ function trackSockets(server) {
   return sockets;
 }
 
-function closeServer(server) {
+function closeServer(server: net.Server): Promise<void> {
   return new Promise((resolve) => {
-    if (!server.listening) return resolve();
-    if (server.__sockets) {
-      for (const socket of server.__sockets) socket.destroy();
+    if (!server.listening) {
+      resolve();
+      return;
     }
-    server.closeAllConnections?.();
+    const sockets = socketsByServer.get(server);
+    if (sockets) {
+      for (const socket of sockets) socket.destroy();
+    }
+    (server as http.Server).closeAllConnections?.();
     server.close(() => resolve());
   });
 }
 
-async function startOrigin(handler) {
+interface OriginHandle {
+  server: http.Server;
+  port: number;
+  url: string;
+}
+
+async function startOrigin(handler?: http.RequestListener): Promise<OriginHandle> {
   const server = http.createServer(
     handler ||
       ((request, response) => {
@@ -48,9 +62,15 @@ async function startOrigin(handler) {
   return { server, port, url: `http://127.0.0.1:${port}` };
 }
 
-async function startExit(options) {
+interface ExitHandle {
+  server: http.Server;
+  port: number;
+  stats: { connections: number; requests: number };
+}
+
+async function startExit(options: ExitServerOptions = {}): Promise<ExitHandle> {
   const stats = { connections: 0, requests: 0 };
-  const server = createExitServer(options);
+  const server = createExitServer({ blockPrivate: false, ...options });
   trackSockets(server);
   server.on('connection', () => {
     stats.connections += 1;
@@ -62,10 +82,26 @@ async function startExit(options) {
   return { server, port, stats };
 }
 
-async function startGateway(config) {
+async function startGateway(config: GatewayConfig = {}) {
   const gateway = createGateway({ httpPort: 0, socksPort: 0, ...config });
   const addresses = await gateway.start();
   return { gateway, ...addresses };
+}
+
+interface ProxyResponse {
+  status: number | undefined;
+  headers: http.IncomingHttpHeaders;
+  body: string;
+}
+
+interface HttpGetThroughProxyOptions {
+  proxyPort: number;
+  targetUrl: string;
+  username: string;
+  password: string;
+  method?: string;
+  headers?: http.OutgoingHttpHeaders;
+  body?: string;
 }
 
 function httpGetThroughProxy({
@@ -76,7 +112,7 @@ function httpGetThroughProxy({
   method = 'GET',
   headers = {},
   body,
-}) {
+}: HttpGetThroughProxyOptions): Promise<ProxyResponse> {
   return new Promise((resolve, reject) => {
     const request = http.request(
       {
@@ -92,7 +128,7 @@ function httpGetThroughProxy({
       },
       (response) => {
         let text = '';
-        response.on('data', (chunk) => {
+        response.on('data', (chunk: Buffer) => {
           text += chunk;
         });
         response.on('end', () => resolve({ status: response.statusCode, headers: response.headers, body: text }));
@@ -104,16 +140,23 @@ function httpGetThroughProxy({
   });
 }
 
-function connectThroughProxy({ proxyPort, target, username, password }) {
+interface ConnectThroughProxyOptions {
+  proxyPort: number;
+  target: string;
+  username?: string;
+  password?: string;
+}
+
+function connectThroughProxy({ proxyPort, target, username, password }: ConnectThroughProxyOptions): Promise<net.Socket> {
   return new Promise((resolve, reject) => {
     const socket = net.connect(proxyPort, '127.0.0.1');
     let buffer = '';
-    const onData = (chunk) => {
+    const onData = (chunk: Buffer) => {
       buffer += chunk.toString('latin1');
       const end = buffer.indexOf('\r\n\r\n');
       if (end === -1) return;
       socket.removeListener('data', onData);
-      const status = Number((buffer.split(' ')[1] || 0));
+      const status = Number(buffer.split(' ')[1] || 0);
       if (status !== 200) {
         socket.destroy();
         reject(new Error(`CONNECT respondio ${status}`));
@@ -133,19 +176,19 @@ function connectThroughProxy({ proxyPort, target, username, password }) {
   });
 }
 
-function readBytes(socket, count) {
+function readBytes(socket: net.Socket, count: number): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     let buffer = Buffer.alloc(0);
-    const onData = (chunk) => {
+    const onData = (chunk: Buffer) => {
       buffer = Buffer.concat([buffer, chunk]);
       if (buffer.length < count) return;
       socket.removeListener('data', onData);
       socket.removeListener('error', onError);
-      const extra = buffer.slice(count);
+      const extra = buffer.subarray(count);
       if (extra.length) socket.unshift(extra);
-      resolve(buffer.slice(0, count));
+      resolve(buffer.subarray(0, count));
     };
-    const onError = (error) => {
+    const onError = (error: Error) => {
       socket.removeListener('data', onData);
       reject(error);
     };
@@ -154,9 +197,23 @@ function readBytes(socket, count) {
   });
 }
 
-async function socks5Connect({ proxyPort, targetHost, targetPort, username, password }) {
+interface Socks5ConnectOptions {
+  proxyPort: number;
+  targetHost: string;
+  targetPort: number;
+  username: string;
+  password: string;
+}
+
+async function socks5Connect({
+  proxyPort,
+  targetHost,
+  targetPort,
+  username,
+  password,
+}: Socks5ConnectOptions): Promise<net.Socket> {
   const socket = net.connect(proxyPort, '127.0.0.1');
-  await new Promise((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     socket.once('connect', resolve);
     socket.once('error', reject);
   });
@@ -177,37 +234,49 @@ async function socks5Connect({ proxyPort, targetHost, targetPort, username, pass
   return socket;
 }
 
-function waitFor(predicate, timeoutMs = 4000) {
+function waitFor(predicate: () => unknown, timeoutMs = 4000): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const deadline = Date.now() + timeoutMs;
-    const tick = () => {
-      let result;
+    const tick = (): void => {
+      let result: unknown;
       try {
         result = predicate();
       } catch (error) {
         reject(error);
         return;
       }
-      if (result) return resolve(result);
-      if (Date.now() > deadline) return reject(new Error('waitFor: timeout'));
+      if (result) {
+        resolve(result);
+        return;
+      }
+      if (Date.now() > deadline) {
+        reject(new Error('waitFor: timeout'));
+        return;
+      }
       setTimeout(tick, 25);
     };
     tick();
   });
 }
 
-async function freePort() {
+async function freePort(): Promise<number> {
   const server = net.createServer();
   const port = await listen(server);
   await closeServer(server);
   return port;
 }
 
-function httpGet({ port, path: requestPath, headers = {} }) {
+interface HttpGetOptions {
+  port: number;
+  path: string;
+  headers?: http.OutgoingHttpHeaders;
+}
+
+function httpGet({ port, path: requestPath, headers = {} }: HttpGetOptions): Promise<ProxyResponse> {
   return new Promise((resolve, reject) => {
     const request = http.request({ host: '127.0.0.1', port, path: requestPath, headers }, (response) => {
       let body = '';
-      response.on('data', (chunk) => {
+      response.on('data', (chunk: Buffer) => {
         body += chunk;
       });
       response.on('end', () => resolve({ status: response.statusCode, headers: response.headers, body }));
@@ -217,23 +286,23 @@ function httpGet({ port, path: requestPath, headers = {} }) {
   });
 }
 
-function readAll(socket) {
+function readAll(socket: net.Socket): Promise<string> {
   return new Promise((resolve, reject) => {
-    const chunks = [];
+    const chunks: Buffer[] = [];
     let done = false;
-    const finish = () => {
+    const finish = (): void => {
       if (done) return;
       done = true;
       resolve(Buffer.concat(chunks).toString());
     };
-    socket.on('data', (chunk) => chunks.push(chunk));
+    socket.on('data', (chunk: Buffer) => chunks.push(chunk));
     socket.on('end', finish);
     socket.on('close', finish);
     socket.on('error', reject);
   });
 }
 
-module.exports = {
+export {
   listen,
   closeServer,
   trackSockets,

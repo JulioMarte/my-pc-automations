@@ -1,11 +1,11 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const { ExitPool } = require('../src/router');
-const { watchExits } = require('../src/gateway');
-const { waitFor } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { ExitPool } from '../src/router.ts';
+import { watchExits } from '../src/gateway.ts';
+import { waitFor } from './helpers.ts';
 
 test('watchExits: recarga exits.json al cambiar el archivo', async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'local-proxy-reload-'));
@@ -44,5 +44,5 @@ test('watchExits: ignora un archivo invalido y mantiene los exits previos', asyn
   fs.writeFileSync(file, '{ esto no es json');
   await new Promise((resolve) => setTimeout(resolve, 800));
   assert.equal(pool.exits.length, 1);
-  assert.equal(pool.exits[0].name, 'a');
+  assert.equal(pool.exits[0]?.name, 'a');
 });
