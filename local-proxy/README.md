@@ -121,6 +121,9 @@ compila `src/*.ts` a `dist/`.
 | `MAX_CONNECTIONS` | Límite de conexiones simultáneas del gateway (0 = sin límite) |
 | `STATS_TOKEN` | **Obligatorio** para leer `/__stats` (por `?token=` o `Authorization: Bearer`); si queda vacío, `/__stats` responde 403 |
 | `EXITS_FILE` / `STATS_FILE` | Rutas de configuración y métricas (relativas al proyecto o absolutas) |
+| `LOG_LEVEL` | Nivel mínimo de log: `debug`, `info`, `warn` o `error` (`info` por defecto) |
+| `LOG_FORMAT` | Formato de log: `json` (una línea JSON por evento, por defecto) o `text` (legible para desarrollo) |
+| `METRICS_TOKEN` | Protege `GET /metrics` en gateway y exit. Vacío = endpoint abierto en el bind de Tailscale; con valor exige `?token=<valor>` o `Authorization: Bearer <valor>` |
 
 `exits.json` (en el gateway):
 
@@ -628,12 +631,68 @@ Endpoints del gateway (en el puerto HTTP del proxy, acceso directo, no a través
 | `GET /healthz` | ninguna | Liveness: `200` siempre que el proceso esté vivo |
 | `GET /readyz` | ninguna | Readiness: `200` si hay ≥1 exit usable, `503` si no |
 | `GET /__stats` | `?token=<STATS_TOKEN>` o `Authorization: Bearer <STATS_TOKEN>` | Exits, salud, conexiones, bytes y sesiones activas |
+| `GET /metrics` | ninguna si `METRICS_TOKEN` está vacío; si no, `?token=<METRICS_TOKEN>` o `Authorization: Bearer <METRICS_TOKEN>` | Métricas en formato Prometheus (`text/plain; version=0.0.4`), antes de la auth y solo por ruta relativa |
 
 - `/__stats` **exige `STATS_TOKEN`**: si la variable está vacía, responde `403`
   (estadísticas deshabilitadas). Ya no acepta la auth normal de proxy.
 - El exit expone `GET /__health` (sin auth) → `{ok,name,uptimeMs}`.
+- El exit también expone `GET /metrics` en su puerto (mismo formato, antes de la auth y
+  solo por ruta relativa), protegido por `METRICS_TOKEN` igual que en el gateway.
 - `stats.jsonl` → una línea por conexión cerrada (exit, duración, bytes). El metering de
   SOCKS5 cuenta subida y bajada por separado.
+
+### Métricas y logs
+
+**Scraping con Prometheus** (el gateway y cada exit exponen `/metrics` en el puerto del
+proxy; los binds son solo Tailscale, así que el scrape ocurre dentro del tailnet):
+
+```yaml
+scrape_configs:
+  - job_name: local-proxy-gateway
+    static_configs: [{ targets: ['100.110.109.28:8888'] }]
+  - job_name: local-proxy-exits
+    static_configs: [{ targets: ['100.112.184.84:8899', '100.70.33.2:8899'] }]
+```
+
+Comprobación rápida (texto plano, formato Prometheus):
+
+```bash
+curl http://100.110.109.28:8888/metrics
+```
+
+Si defines `METRICS_TOKEN`, añade `?token=<METRICS_TOKEN>` (o la cabecera
+`Authorization: Bearer <METRICS_TOKEN>`) a la URL de scrape y al `curl`.
+
+**Métricas del gateway** (todas con prefijo `localproxy_`):
+
+| Métrica | Etiquetas | Descripción |
+|---|---|---|
+| `requests_total` | `protocol` (`http`/`connect`/`socks5`), `code` (HTTP status o `ok`/`error` en SOCKS) | Peticiones atendidas |
+| `bytes_total` | `direction` (`up`/`down`), `exit` | Bytes transferidos |
+| `active_connections` | `protocol` | Conexiones activas |
+| `auth_failures_total` / `auth_blocked_total` | - | Fallos de auth y clientes bloqueados temporalmente |
+| `upstream_errors_total` | `kind` (`no_exits` o el status numérico) | Errores al conectar al exit |
+| `exit_healthy` | `exit` | Salud del exit (1/0) |
+| `exit_circuit` | `exit` | Estado del circuit breaker (0=closed, 1=halfOpen, 2=open) |
+| `sessions` | - | Sesiones sticky activas |
+| `healthcheck_failures_total` | `exit` | Fallos de health check |
+| `request_duration_seconds` | `protocol` | Histograma de duración de peticiones |
+| `connect_duration_seconds` | `exit` | Histograma de duración del CONNECT al exit |
+| `uptime_seconds` | - | Tiempo encendido |
+| `build_info` | `version`, `role` | Información de la build |
+
+**Métricas del exit** (prefijo `localproxy_`): `requests_total{code}`,
+`bytes_total{direction}`, `active_connections`, `blocked_total{reason}`
+(`reason="ssrf"` para bloqueos SSRF), `uptime_seconds` y `build_info{version,role}`.
+
+Las etiquetas son deliberadamente acotadas (no hay etiquetas por host ni por usuario) para
+controlar la cardinalidad.
+
+**Logs**: por defecto cada evento es un objeto JSON en una línea con `ts`, `level`, `msg` y
+campos de contexto (`role`, `name`, `exit`, etc.). Los secretos (`authorization`,
+`proxy-authorization`, `password`, `token`, `cookie`, `secret`) se redactan como
+`[redacted]`. `LOG_FORMAT=text` produce una línea legible para desarrollo. Los niveles
+`warn` y `error` van a stderr. Ajusta la verbosidad con `LOG_LEVEL`.
 
 ---
 

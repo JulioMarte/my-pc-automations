@@ -17,17 +17,15 @@ import {
   type Exit,
   type AuthLimiter,
 } from './router.ts';
+import { Registry, startTimer, elapsedSeconds, type Counter } from './metrics.ts';
+import { createLogger, parseLogLevel, parseLogFormat, type Logger } from './logger.ts';
 
 const RETRYABLE_STATUS = new Set([407, 502, 503, 504]);
 const HTTP_TIMEOUTS = { headersTimeout: 10000, requestTimeout: 30000, keepAliveTimeout: 10000 };
 const HEALTH_JITTER = 0.2;
 const HEALTH_STAGGER_MS = 250;
 
-export interface GatewayLogger {
-  log?(...args: unknown[]): void;
-  warn?(...args: unknown[]): void;
-  error?(...args: unknown[]): void;
-}
+export type GatewayLogger = Logger;
 
 export interface HealthTarget {
   host: string;
@@ -53,7 +51,10 @@ export interface GatewayConfig {
   authWindowMs?: number;
   authBlockMs?: number;
   readyz?: boolean;
-  logger?: GatewayLogger;
+  logger?: Logger;
+  metrics?: Registry;
+  metricsToken?: string;
+  version?: string;
 }
 
 export interface GatewayAddresses {
@@ -91,6 +92,12 @@ function errorMessage(error: unknown): string {
 function statusForError(error: unknown): number {
   if (error instanceof ProxyError) return error.statusCode === 504 ? 504 : 502;
   return 502;
+}
+
+function circuitValue(state: string): number {
+  if (state === 'open') return 2;
+  if (state === 'halfOpen') return 1;
+  return 0;
 }
 
 function portOf(server: http.Server | net.Server, fallback: number): number {
@@ -148,7 +155,7 @@ interface Meter {
   done(): void;
 }
 
-function createMeter({ exit, label, statsFile }: { exit: Exit; label: string; statsFile: string }): Meter {
+function createMeter({ exit, label, statsFile, bytes }: { exit: Exit; label: string; statsFile: string; bytes: Counter }): Meter {
   const startedAt = Date.now();
   let up = 0;
   let down = 0;
@@ -158,10 +165,12 @@ function createMeter({ exit, label, statsFile }: { exit: Exit; label: string; st
     countUp: (chunk: Buffer): void => {
       up += chunk.length;
       exit.bytesUp += chunk.length;
+      bytes.inc({ direction: 'up', exit: exit.name }, chunk.length);
     },
     countDown: (chunk: Buffer): void => {
       down += chunk.length;
       exit.bytesDown += chunk.length;
+      bytes.inc({ direction: 'down', exit: exit.name }, chunk.length);
     },
     done: (): void => {
       if (finished) return;
@@ -199,8 +208,38 @@ export function createGateway(config: GatewayConfig = {}) {
     authWindowMs = 60000,
     authBlockMs = 60000,
     readyz = true,
-    logger = console,
+    logger = createLogger({ role: 'gateway' }),
+    metrics: metricsRegistry,
+    metricsToken = '',
+    version,
   } = config;
+
+  const registry = metricsRegistry ?? new Registry();
+  const requestsTotal = registry.counter('localproxy_requests_total', 'Peticiones atendidas por protocolo y codigo', ['protocol', 'code']);
+  const bytesTotal = registry.counter('localproxy_bytes_total', 'Bytes transferidos', ['direction', 'exit']);
+  const activeConnections = registry.gauge('localproxy_active_connections', 'Conexiones activas', ['protocol']);
+  const authFailures = registry.counter('localproxy_auth_failures_total', 'Fallos de autenticacion');
+  const authBlocked = registry.counter('localproxy_auth_blocked_total', 'Peticiones bloqueadas por rate-limit');
+  const upstreamErrors = registry.counter('localproxy_upstream_errors_total', 'Errores de upstream', ['kind']);
+  const exitHealthy = registry.gauge('localproxy_exit_healthy', 'Salud del exit (1/0)', ['exit']);
+  const exitCircuit = registry.gauge('localproxy_exit_circuit', 'Estado del circuit breaker (0=closed,1=halfOpen,2=open)', ['exit']);
+  const sessionsGauge = registry.gauge('localproxy_sessions', 'Sesiones sticky activas');
+  const healthcheckFailures = registry.counter('localproxy_healthcheck_failures_total', 'Fallos de health check', ['exit']);
+  const requestDuration = registry.histogram('localproxy_request_duration_seconds', 'Duracion de peticion', undefined, ['protocol']);
+  const connectDuration = registry.histogram('localproxy_connect_duration_seconds', 'Duracion de establecimiento de tunel', undefined, ['exit']);
+  const uptimeGauge = registry.gauge('localproxy_uptime_seconds', 'Uptime del proceso');
+  const buildInfo = registry.gauge('localproxy_build_info', 'Info de build', ['version', 'role']);
+  buildInfo.set(1, { version: version ?? 'unknown', role: 'gateway' });
+
+  function syncGauges(): void {
+    const snapshot = pool.stats();
+    for (const exit of snapshot.exits) {
+      exitHealthy.set(exit.healthy ? 1 : 0, { exit: exit.name });
+      exitCircuit.set(circuitValue(exit.circuit), { exit: exit.name });
+    }
+    sessionsGauge.set(snapshot.sessions.length);
+    uptimeGauge.set(process.uptime());
+  }
 
   const authenticate = createAuthenticator(users);
   const limiter: AuthLimiter =
@@ -255,11 +294,15 @@ export function createGateway(config: GatewayConfig = {}) {
     const credentials = decodeBasic(header);
     const username = credentials ? credentials.username : '';
     const key = `${normalizeAddress(remoteAddress)}|${username}`;
-    if (!limiter.allowed(key)) return { parsed: null, key, limited: true };
+    if (!limiter.allowed(key)) {
+      authBlocked.inc();
+      return { parsed: null, key, limited: true };
+    }
     if (!credentials) return { parsed: null, key, limited: false };
     const parsed = authenticate(credentials.username, credentials.password);
     if (!parsed) {
       limiter.recordFailure(key);
+      authFailures.inc();
       return { parsed: null, key, limited: false };
     }
     limiter.recordSuccess(key);
@@ -284,6 +327,24 @@ export function createGateway(config: GatewayConfig = {}) {
     return false;
   }
 
+  function metricsAuthorized(request: http.IncomingMessage): boolean {
+    if (!metricsToken) return true;
+    let query = '';
+    try {
+      const url = new URL(request.url ?? '/', 'http://localhost');
+      query = url.searchParams.get('token') ?? '';
+    } catch {
+      query = '';
+    }
+    if (query && safeEqual(query, metricsToken)) return true;
+    const header = request.headers.authorization ?? '';
+    if (header.startsWith('Bearer ')) {
+      const token = header.slice(7).trim();
+      return token.length > 0 && safeEqual(token, metricsToken);
+    }
+    return false;
+  }
+
   function statsPayload() {
     return {
       host,
@@ -299,9 +360,13 @@ export function createGateway(config: GatewayConfig = {}) {
     targetPort: number,
   ): Promise<{ exit: Exit; remote: net.Socket }> {
     const candidates = pool.candidates(parsed);
-    if (!candidates.length) throw new NoExitsError('sin exits disponibles');
+    if (!candidates.length) {
+      upstreamErrors.inc({ kind: 'no_exits' });
+      throw new NoExitsError('sin exits disponibles');
+    }
     let lastError: unknown;
     for (const exit of candidates) {
+      const started = startTimer();
       try {
         const remote = await connectViaHttpProxy({
           proxy: exit,
@@ -311,13 +376,15 @@ export function createGateway(config: GatewayConfig = {}) {
         });
         pool.recordSuccess(exit);
         pool.commit(parsed, exit);
+        connectDuration.observe(elapsedSeconds(started), { exit: exit.name });
         return { exit, remote };
       } catch (error) {
         lastError = error;
         pool.recordFailure(exit);
-        logger.warn?.(`[gateway] exit ${exit.name} fallo: ${errorMessage(error)}`);
+        logger.warn?.('exit fallo', { exit: exit.name, error: errorMessage(error) });
       }
     }
+    upstreamErrors.inc({ kind: String(statusForError(lastError)) });
     throw lastError ?? new NoExitsError('sin exits disponibles');
   }
 
@@ -328,6 +395,7 @@ export function createGateway(config: GatewayConfig = {}) {
   ): void {
     const candidates = pool.candidates(parsed);
     if (!candidates.length) {
+      upstreamErrors.inc({ kind: 'no_exits' });
       reject503(response);
       return;
     }
@@ -339,7 +407,7 @@ export function createGateway(config: GatewayConfig = {}) {
         reject503(response);
         return;
       }
-      const meter = createMeter({ exit, label: 'http', statsFile });
+      const meter = createMeter({ exit, label: 'http', statsFile, bytes: bytesTotal });
       let settled = false;
       const failover = (status: number): boolean => {
         if (settled) return true;
@@ -351,6 +419,7 @@ export function createGateway(config: GatewayConfig = {}) {
           tryNext();
           return true;
         }
+        upstreamErrors.inc({ kind: String(status) });
         if (!response.headersSent) {
           response.writeHead(status);
           response.end();
@@ -367,7 +436,7 @@ export function createGateway(config: GatewayConfig = {}) {
           const exitLevel = !proxyResponse.headers['x-exit-name'];
           const statusCode = proxyResponse.statusCode ?? 502;
           if (exitLevel && RETRYABLE_STATUS.has(statusCode)) {
-            logger.warn?.(`[gateway] exit ${exit.name} respondio ${statusCode}, reintentando`);
+            logger.warn?.('exit respondio estado retryable', { exit: exit.name, status: statusCode });
             return failover(statusCode === 504 ? 504 : 502);
           }
           settled = true;
@@ -409,6 +478,17 @@ export function createGateway(config: GatewayConfig = {}) {
       response.end(JSON.stringify(statsPayload(), null, 2));
       return;
     }
+    if (pathname === '/metrics') {
+      if (!metricsAuthorized(request)) {
+        response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('no autorizado');
+        return;
+      }
+      syncGauges();
+      response.writeHead(200, { 'content-type': 'text/plain; version=0.0.4; charset=utf-8' });
+      response.end(registry.render());
+      return;
+    }
     const outcome = authorize(request.headers['proxy-authorization'], request.socket.remoteAddress);
     if (outcome.limited) {
       reject429(response);
@@ -418,6 +498,12 @@ export function createGateway(config: GatewayConfig = {}) {
       reject407(response);
       return;
     }
+    // Solo las peticiones proxied cuentan como trafico (no /healthz, /readyz, /__stats, /metrics).
+    const started = startTimer();
+    response.on('finish', () => {
+      requestsTotal.inc({ protocol: 'http', code: String(response.statusCode) });
+      requestDuration.observe(elapsedSeconds(started), { protocol: 'http' });
+    });
     forwardHttpWithFailover(request, response, outcome.parsed);
   });
 
@@ -435,8 +521,9 @@ export function createGateway(config: GatewayConfig = {}) {
     const { host: targetHost, port: targetPort } = parseTarget(request.url ?? '');
     openTunnel(outcome.parsed, targetHost, targetPort)
       .then(({ exit, remote }) => {
+        requestsTotal.inc({ protocol: 'connect', code: '200' });
         track(remote);
-        const meter = createMeter({ exit, label: 'http-connect', statsFile });
+        const meter = createMeter({ exit, label: 'http-connect', statsFile, bytes: bytesTotal });
         clientSocket.on('data', meter.countUp);
         remote.on('data', meter.countDown);
         clientSocket.on('close', meter.done);
@@ -453,12 +540,14 @@ export function createGateway(config: GatewayConfig = {}) {
         remote.on('close', () => clientSocket.destroy());
       })
       .catch((error: unknown) => {
-        logger.warn?.(`[gateway] CONNECT ${targetHost}:${targetPort} fallo: ${errorMessage(error)}`);
+        logger.warn?.('CONNECT fallo', { target: `${targetHost}:${targetPort}`, error: errorMessage(error) });
         if (error instanceof NoExitsError) {
+          requestsTotal.inc({ protocol: 'connect', code: '503' });
           reject503Socket(clientSocket);
           return;
         }
         const status = statusForError(error);
+        requestsTotal.inc({ protocol: 'connect', code: String(status) });
         clientSocket.write(
           `HTTP/1.1 ${status} ${status === 504 ? 'Gateway Timeout' : 'Bad Gateway'}\r\n\r\n`,
         );
@@ -511,30 +600,40 @@ export function createGateway(config: GatewayConfig = {}) {
     // El callback auth no recibe el socket; la IP se aplica en connect().
     auth: (username, password) => {
       const key = `${''}|${username}`;
-      if (!limiter.allowed(key)) return false;
+      if (!limiter.allowed(key)) {
+        requestsTotal.inc({ protocol: 'socks5', code: 'error' });
+        return false;
+      }
       const parsed = authenticate(username, password);
       if (!parsed) {
         limiter.recordFailure(key);
+        requestsTotal.inc({ protocol: 'socks5', code: 'error' });
         return false;
       }
       limiter.recordSuccess(key);
       return true;
     },
     connect: async ({ username, password, host: targetHost, port: targetPort, client }) => {
-      const key = `${normalizeAddress(client.remoteAddress)}|${username}`;
-      if (!limiter.allowed(key)) throw new Error('demasiados intentos');
-      const parsed = authenticate(username, password);
-      if (!parsed) {
-        limiter.recordFailure(key);
-        throw new Error('no autorizado');
+      try {
+        const key = `${normalizeAddress(client.remoteAddress)}|${username}`;
+        if (!limiter.allowed(key)) throw new Error('demasiados intentos');
+        const parsed = authenticate(username, password);
+        if (!parsed) {
+          limiter.recordFailure(key);
+          throw new Error('no autorizado');
+        }
+        const { exit, remote } = await openTunnel(parsed, targetHost, targetPort);
+        requestsTotal.inc({ protocol: 'socks5', code: 'ok' });
+        const meter = createMeter({ exit, label: 'socks5', statsFile, bytes: bytesTotal });
+        client.on('data', meter.countUp);
+        remote.on('data', meter.countDown);
+        client.on('close', meter.done);
+        remote.on('close', meter.done);
+        return remote;
+      } catch (error) {
+        requestsTotal.inc({ protocol: 'socks5', code: 'error' });
+        throw error;
       }
-      const { exit, remote } = await openTunnel(parsed, targetHost, targetPort);
-      const meter = createMeter({ exit, label: 'socks5', statsFile });
-      client.on('data', meter.countUp);
-      remote.on('data', meter.countDown);
-      client.on('close', meter.done);
-      remote.on('close', meter.done);
-      return remote;
     },
   });
 
@@ -553,6 +652,7 @@ export function createGateway(config: GatewayConfig = {}) {
       socket.destroy();
       pool.recordSuccess(exit);
     } catch {
+      healthcheckFailures.inc({ exit: exit.name });
       pool.recordFailure(exit);
     } finally {
       checking.delete(exit.name);
@@ -598,6 +698,14 @@ export function createGateway(config: GatewayConfig = {}) {
   async function start(): Promise<GatewayAddresses> {
     httpServer.on('connection', track);
     socksServer.on('connection', track);
+    httpServer.on('connection', (socket: net.Socket) => {
+      activeConnections.inc({ protocol: 'http' });
+      socket.on('close', () => activeConnections.dec({ protocol: 'http' }));
+    });
+    socksServer.on('connection', (socket: net.Socket) => {
+      activeConnections.inc({ protocol: 'socks5' });
+      socket.on('close', () => activeConnections.dec({ protocol: 'socks5' }));
+    });
     await listen(httpServer, httpPort);
     await listen(socksServer, socksPort);
     return { httpPort: portOf(httpServer, httpPort), socksPort: portOf(socksServer, socksPort) };
@@ -632,16 +740,16 @@ export function createGateway(config: GatewayConfig = {}) {
   return { httpServer, socksServer, pool, users, start, close, stats: statsPayload };
 }
 
-export function watchExits(file: string, pool: ExitPool, logger: GatewayLogger = console): fs.FSWatcher | null {
+export function watchExits(file: string, pool: ExitPool, logger: Logger = console): fs.FSWatcher | null {
   let timer: NodeJS.Timeout | null = null;
   const schedule = (): void => {
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
       try {
         pool.reload(loadExits(file));
-        logger.log?.(`[gateway] ${path.basename(file)} recargado (${pool.exits.length} exits)`);
+        logger.log?.('exits recargados', { file: path.basename(file), exits: pool.exits.length });
       } catch (error) {
-        logger.error?.(`[gateway] ${path.basename(file)} invalido: ${errorMessage(error)}`);
+        logger.error?.('archivo de exits invalido', { file: path.basename(file), error: errorMessage(error) });
       }
     }, 300);
     timer.unref();
@@ -664,12 +772,17 @@ const entry = process.argv[1];
 const isMain = entry !== undefined && path.resolve(entry) === import.meta.filename;
 
 export function runGateway(): void {
+  const logger = createLogger({
+    level: parseLogLevel(envString('LOG_LEVEL', 'info')),
+    format: parseLogFormat(envString('LOG_FORMAT', 'json')),
+    role: 'gateway',
+  });
   process.on('uncaughtException', (error) => {
-    console.error(`[gateway] excepcion no capturada: ${error.message}`);
+    logger.error?.('excepcion no capturada', { error: errorMessage(error) });
     process.exit(1);
   });
   process.on('unhandledRejection', (reason) => {
-    console.error(`[gateway] promesa rechazada: ${errorMessage(reason)}`);
+    logger.error?.('promesa rechazada', { error: errorMessage(reason) });
     process.exit(1);
   });
 
@@ -680,11 +793,12 @@ export function runGateway(): void {
   try {
     exits = loadExits(exitsFile);
   } catch (error) {
-    console.error(`[gateway] no pude leer ${exitsFile}: ${errorMessage(error)}`);
+    logger.error?.('no pude leer el archivo de exits', { file: exitsFile, error: errorMessage(error) });
   }
   const users = parseUsers(envString('PROXY_USERS'));
   const pool = new ExitPool(exits, { sessionTtlMs: envNumber('SESSION_TTL_MS', 600000) });
   const healthTargets = envList('HEALTH_TARGETS').map((entry) => parseHealthTarget(entry));
+  const version = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version as string;
   const gateway = createGateway({
     host,
     httpPort: envNumber('GATEWAY_HTTP_PORT', 8888),
@@ -699,34 +813,37 @@ export function runGateway(): void {
     healthTargets: healthTargets.length ? healthTargets : undefined,
     healthTimeoutMs: envNumber('HEALTH_TIMEOUT_MS', 10000),
     maxConnections: envNumber('MAX_CONNECTIONS', 0),
+    metricsToken: envString('METRICS_TOKEN', ''),
+    version,
+    logger,
   });
 
   if (host === '0.0.0.0') {
-    console.warn('[gateway] ADVERTENCIA: GATEWAY_HOST=0.0.0.0 expone el proxy en todas las interfaces. Usa la IP de Tailscale.');
+    logger.warn?.('GATEWAY_HOST=0.0.0.0 expone el proxy en todas las interfaces. Usa la IP de Tailscale.');
   }
   if (!users.size) {
-    console.warn('[gateway] ADVERTENCIA: PROXY_USERS vacio; ningun cliente podra autenticarse.');
+    logger.warn?.('PROXY_USERS vacio; ningun cliente podra autenticarse.');
   }
   if (!exits.length) {
-    console.warn(`[gateway] ADVERTENCIA: no hay exits en ${exitsFile}.`);
+    logger.warn?.('no hay exits configurados', { file: exitsFile });
   }
 
   gateway
     .start()
     .then((addresses) => {
-      console.log(`[gateway] HTTP proxy en http://${host}:${addresses.httpPort}`);
-      console.log(`[gateway] SOCKS5 en socks5://${host}:${addresses.socksPort}`);
-      console.log(`[gateway] ${exits.length} exits configurados, ${users.size} usuarios.`);
-      watchExits(exitsFile, pool);
+      logger.info?.('HTTP proxy escuchando', { url: `http://${host}:${addresses.httpPort}` });
+      logger.info?.('SOCKS5 escuchando', { url: `socks5://${host}:${addresses.socksPort}` });
+      logger.info?.('exits configurados', { exits: exits.length, users: users.size });
+      watchExits(exitsFile, pool, logger);
     })
     .catch((error: unknown) => {
-      console.error(`[gateway] no pude escuchar en ${host}: ${errorMessage(error)}`);
-      console.error('[gateway] verifica que Tailscale este arriba y que GATEWAY_HOST sea la IP 100.x correcta.');
+      logger.error?.('no pude escuchar', { host, error: errorMessage(error) });
+      logger.error?.('verifica que Tailscale este arriba y que GATEWAY_HOST sea la IP 100.x correcta.');
       process.exit(1);
     });
 
   const shutdown = (): void => {
-    console.log('[gateway] cerrando...');
+    logger.info?.('cerrando...');
     gateway.close().then(() => {
       setTimeout(() => process.exit(0), 100);
     });

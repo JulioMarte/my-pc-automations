@@ -106,3 +106,58 @@ test('gateway: lockout por fallos de auth devuelve 429', async (t) => {
   });
   assert.equal(blocked.status, 429);
 });
+
+test('gateway: /metrics abierto por defecto', async (t) => {
+  const { gateway, httpPort } = await startGateway({ pool: new ExitPool([]), healthIntervalMs: 0, statsFile: statsFile() });
+  t.after(async () => {
+    await gateway.close();
+  });
+  const response = await httpGet({ port: httpPort, path: '/metrics' });
+  assert.equal(response.status, 200);
+  assert.ok(String(response.headers['content-type']).startsWith('text/plain'));
+  assert.match(response.body, /localproxy_build_info/);
+  assert.match(response.body, /localproxy_uptime_seconds/);
+  assert.match(response.body, /localproxy_exit_healthy/);
+});
+
+test('gateway: /metrics exige token cuando esta configurado', async (t) => {
+  const { gateway, httpPort } = await startGateway({
+    pool: new ExitPool([]),
+    metricsToken: 'tok',
+    healthIntervalMs: 0,
+    statsFile: statsFile(),
+  });
+  t.after(async () => {
+    await gateway.close();
+  });
+  assert.equal((await httpGet({ port: httpPort, path: '/metrics' })).status, 403);
+  assert.equal((await httpGet({ port: httpPort, path: '/metrics?token=malo' })).status, 403);
+  assert.equal((await httpGet({ port: httpPort, path: '/metrics?token=tok' })).status, 200);
+  const bearer = await httpGet({ port: httpPort, path: '/metrics', headers: { authorization: 'Bearer tok' } });
+  assert.equal(bearer.status, 200);
+});
+
+test('gateway: /metrics no incrementa localproxy_requests_total', async (t) => {
+  const { gateway, httpPort } = await startGateway({ pool: new ExitPool([]), healthIntervalMs: 0, statsFile: statsFile() });
+  t.after(async () => {
+    await gateway.close();
+  });
+  await httpGet({ port: httpPort, path: '/metrics' });
+  const response = await httpGet({ port: httpPort, path: '/metrics' });
+  assert.equal(response.status, 200);
+  assert.doesNotMatch(response.body, /localproxy_requests_total\{/);
+});
+
+test('gateway: localproxy_build_info incluye rol y version', async (t) => {
+  const { gateway, httpPort } = await startGateway({
+    pool: new ExitPool([]),
+    version: '9.9.9',
+    healthIntervalMs: 0,
+    statsFile: statsFile(),
+  });
+  t.after(async () => {
+    await gateway.close();
+  });
+  const response = await httpGet({ port: httpPort, path: '/metrics' });
+  assert.match(response.body, /localproxy_build_info\{role="gateway",version="9\.9\.9"\} 1/);
+});

@@ -1,8 +1,11 @@
+import fs from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
 import { URL } from 'node:url';
 import { loadEnv, envString, envNumber, envBool, envList } from './env.ts';
+import { createLogger, parseLogLevel, parseLogFormat, type Logger } from './logger.ts';
+import { Registry } from './metrics.ts';
 import { safeEqual } from './router.ts';
 import { stripHopByHop, pipeUpgrade } from './upstream.ts';
 
@@ -15,6 +18,10 @@ export interface ExitServerOptions {
   blockPrivate?: boolean;
   idleTimeoutMs?: number;
   healthPath?: string;
+  metrics?: Registry;
+  metricsToken?: string;
+  logger?: Logger;
+  version?: string;
 }
 
 // Rangos IPv4 bloqueados: [base, prefijo].
@@ -152,6 +159,13 @@ function isHealthRequest(url: string | undefined, healthPath: string): boolean {
   return value === healthPath || value.startsWith(`${healthPath}?`);
 }
 
+// Igual que el health: solo path relativo, para no colisionar con URLs absolutas proxied.
+function isMetricsRequest(url: string | undefined): boolean {
+  const value = String(url ?? '');
+  if (!value.startsWith('/')) return false;
+  return value === '/metrics' || value.startsWith('/metrics?');
+}
+
 export function createExitServer(options: ExitServerOptions = {}): http.Server {
   const {
     name = 'exit',
@@ -162,10 +176,31 @@ export function createExitServer(options: ExitServerOptions = {}): http.Server {
     blockPrivate = true,
     idleTimeoutMs = 0,
     healthPath = '/__health',
+    metricsToken = '',
+    logger,
+    version = 'unknown',
   } = options;
 
   const startedAt = Date.now();
   const allowed = new Set(allowFrom.map(normalizeAddress));
+
+  const registry = options.metrics ?? new Registry();
+  const requestsTotal = registry.counter('localproxy_requests_total', 'Peticiones atendidas', ['code']);
+  const bytesTotal = registry.counter('localproxy_bytes_total', 'Bytes transferidos', ['direction']);
+  const activeConnections = registry.gauge('localproxy_active_connections', 'Conexiones activas');
+  const blockedTotal = registry.counter('localproxy_blocked_total', 'Destinos bloqueados', ['reason']);
+  const uptimeSeconds = registry.gauge('localproxy_uptime_seconds', 'Uptime del proceso');
+  const buildInfo = registry.gauge('localproxy_build_info', 'Info de build', ['version', 'role']);
+  buildInfo.set(1, { version: version ?? 'unknown', role: 'exit' });
+
+  function metricsAuthorized(request: http.IncomingMessage): boolean {
+    if (!metricsToken) return true;
+    const url = new URL(request.url ?? '/', 'http://localhost');
+    const queryToken = url.searchParams.get('token') ?? '';
+    const header = String(request.headers.authorization ?? '');
+    const bearer = header.startsWith('Bearer ') ? header.slice(7) : '';
+    return safeEqual(queryToken, metricsToken) || safeEqual(bearer, metricsToken);
+  }
 
   function authorized(request: http.IncomingMessage): boolean {
     const remote = normalizeAddress(request.socket.remoteAddress);
@@ -188,6 +223,20 @@ export function createExitServer(options: ExitServerOptions = {}): http.Server {
       response.end(body);
       return;
     }
+    // Metricas locales: mismo guard de path relativo, antes de la auth.
+    if (request.method === 'GET' && isMetricsRequest(request.url)) {
+      if (!metricsAuthorized(request)) {
+        response.writeHead(403);
+        response.end();
+        return;
+      }
+      uptimeSeconds.set(process.uptime());
+      response.writeHead(200, { 'content-type': 'text/plain; version=0.0.4; charset=utf-8' });
+      response.end(registry.render());
+      return;
+    }
+    // Solo las peticiones proxied cuentan como trafico (no /__health ni /metrics).
+    response.on('finish', () => requestsTotal.inc({ code: String(response.statusCode) }));
     if (!authorized(request)) {
       response.writeHead(407, { 'proxy-authenticate': 'Basic realm="exit"' });
       response.end();
@@ -202,6 +251,8 @@ export function createExitServer(options: ExitServerOptions = {}): http.Server {
     const host = target.hostname.replace(/^\[|\]$/g, '');
     const port = Number(target.port) || 80;
     if (blockPrivate && isBlockedHost(host, port)) {
+      blockedTotal.inc({ reason: 'ssrf' });
+      logger?.warn?.('destino bloqueado', { host, port, reason: 'ssrf' });
       response.writeHead(403);
       response.end();
       return;
@@ -224,6 +275,7 @@ export function createExitServer(options: ExitServerOptions = {}): http.Server {
           'x-exit-name': name,
         });
         proxyResponse.pipe(response);
+        proxyResponse.on('data', (chunk: Buffer) => bytesTotal.inc({ direction: 'down' }, chunk.length));
       },
     );
     proxyRequest.setTimeout(connectTimeoutMs, () => proxyRequest.destroy());
@@ -233,6 +285,12 @@ export function createExitServer(options: ExitServerOptions = {}): http.Server {
     });
     request.on('error', () => proxyRequest.destroy());
     request.pipe(proxyRequest);
+    request.on('data', (chunk: Buffer) => bytesTotal.inc({ direction: 'up' }, chunk.length));
+  });
+
+  server.on('connection', (socket: net.Socket) => {
+    activeConnections.inc();
+    socket.on('close', () => activeConnections.dec());
   });
 
   server.headersTimeout = 10000;
@@ -242,6 +300,7 @@ export function createExitServer(options: ExitServerOptions = {}): http.Server {
 
   server.on('connect', (request: http.IncomingMessage, clientSocket: net.Socket, head: Buffer) => {
     if (!authorized(request)) {
+      requestsTotal.inc({ code: '407' });
       clientSocket.write(
         'HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="exit"\r\n\r\n',
       );
@@ -250,6 +309,9 @@ export function createExitServer(options: ExitServerOptions = {}): http.Server {
     }
     const { host, port } = parseAuthority(request.url);
     if (blockPrivate && isBlockedHost(host, port)) {
+      blockedTotal.inc({ reason: 'ssrf' });
+      requestsTotal.inc({ code: '403' });
+      logger?.warn?.('destino bloqueado', { host, port, reason: 'ssrf' });
       clientSocket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
       clientSocket.destroy();
       return;
@@ -258,19 +320,25 @@ export function createExitServer(options: ExitServerOptions = {}): http.Server {
     upstream.setNoDelay(true);
     upstream.setKeepAlive(true, 30000);
     const timer = setTimeout(() => upstream.destroy(), connectTimeoutMs);
+    let established = false;
     if (idleTimeoutMs > 0) {
       clientSocket.setTimeout(idleTimeoutMs, () => clientSocket.destroy());
       clientSocket.on('close', () => clientSocket.setTimeout(0));
     }
     upstream.on('connect', () => {
       clearTimeout(timer);
+      established = true;
+      requestsTotal.inc({ code: '200' });
       clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
       if (head && head.length) upstream.write(head);
       upstream.pipe(clientSocket);
       clientSocket.pipe(upstream);
+      clientSocket.on('data', (chunk: Buffer) => bytesTotal.inc({ direction: 'up' }, chunk.length));
+      upstream.on('data', (chunk: Buffer) => bytesTotal.inc({ direction: 'down' }, chunk.length));
     });
     upstream.on('error', () => {
       clearTimeout(timer);
+      if (!established) requestsTotal.inc({ code: '502' });
       clientSocket.destroy();
     });
     upstream.on('close', () => {
@@ -285,6 +353,7 @@ export function createExitServer(options: ExitServerOptions = {}): http.Server {
 
   server.on('upgrade', (request: http.IncomingMessage, clientSocket: net.Socket, head: Buffer) => {
     if (!authorized(request)) {
+      requestsTotal.inc({ code: '407' });
       clientSocket.write(
         'HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="exit"\r\n\r\n',
       );
@@ -293,6 +362,7 @@ export function createExitServer(options: ExitServerOptions = {}): http.Server {
     }
     const target = parseTarget(request);
     if (!target || target.protocol !== 'http:') {
+      requestsTotal.inc({ code: '400' });
       clientSocket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
       clientSocket.destroy();
       return;
@@ -300,6 +370,9 @@ export function createExitServer(options: ExitServerOptions = {}): http.Server {
     const host = target.hostname.replace(/^\[|\]$/g, '');
     const port = Number(target.port) || 80;
     if (blockPrivate && isBlockedHost(host, port)) {
+      blockedTotal.inc({ reason: 'ssrf' });
+      requestsTotal.inc({ code: '403' });
+      logger?.warn?.('destino bloqueado', { host, port, reason: 'ssrf' });
       clientSocket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
       clientSocket.destroy();
       return;
@@ -310,7 +383,7 @@ export function createExitServer(options: ExitServerOptions = {}): http.Server {
     };
     delete headers['proxy-authorization'];
     delete headers['proxy-connection'];
-    pipeUpgrade({
+    const upstream = pipeUpgrade({
       request,
       clientSocket,
       head,
@@ -322,6 +395,15 @@ export function createExitServer(options: ExitServerOptions = {}): http.Server {
         headers,
       },
     });
+    upstream.on('upgrade', (_response, upstreamSocket) => {
+      requestsTotal.inc({ code: '101' });
+      clientSocket.on('data', (chunk: Buffer) => bytesTotal.inc({ direction: 'up' }, chunk.length));
+      upstreamSocket.on('data', (chunk: Buffer) => bytesTotal.inc({ direction: 'down' }, chunk.length));
+    });
+    upstream.on('response', (proxyResponse) => {
+      requestsTotal.inc({ code: String(proxyResponse.statusCode) });
+    });
+    upstream.on('error', () => requestsTotal.inc({ code: '502' }));
   });
 
   return server;
@@ -336,6 +418,15 @@ export function runExit(): void {
   const port = envNumber('EXIT_PORT', 8899);
   const user = envString('EXIT_USER');
   const allowFrom = envList('EXIT_ALLOW');
+  const logger = createLogger({
+    level: parseLogLevel(envString('LOG_LEVEL', 'info')),
+    format: parseLogFormat(envString('LOG_FORMAT', 'json')),
+    role: 'exit',
+    name,
+  });
+  const manifest = JSON.parse(
+    fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+  ) as { version?: string };
   const server = createExitServer({
     name,
     user,
@@ -344,23 +435,31 @@ export function runExit(): void {
     connectTimeoutMs: envNumber('EXIT_CONNECT_TIMEOUT_MS', 15000),
     blockPrivate: envBool('EXIT_BLOCK_PRIVATE', true),
     idleTimeoutMs: envNumber('EXIT_IDLE_TIMEOUT_MS', 0),
+    metricsToken: envString('METRICS_TOKEN'),
+    logger,
+    version: manifest.version ?? 'unknown',
   });
   process.on('uncaughtException', (error) => {
-    console.error(`[exit:${name}] excepcion no capturada: ${error.message}`);
+    logger.error?.(`excepcion no capturada: ${error.message}`);
     process.exit(1);
   });
   process.on('unhandledRejection', (reason) => {
     const message = reason instanceof Error ? reason.message : String(reason);
-    console.error(`[exit:${name}] promesa rechazada: ${message}`);
+    logger.error?.(`promesa rechazada: ${message}`);
     process.exit(1);
   });
   server.listen(port, host, () => {
     const auth = user ? ' (con auth)' : '';
     const allow = allowFrom.length ? ` allow=${allowFrom.join(',')}` : '';
-    console.log(`[exit:${name}] HTTP proxy escuchando en ${host}:${port}${auth}${allow}`);
+    logger.info?.(`HTTP proxy escuchando en ${host}:${port}${auth}${allow}`, {
+      host,
+      port,
+      auth: Boolean(user),
+      allow: allowFrom,
+    });
   });
   server.on('error', (error) => {
-    console.error(`[exit:${name}] no pude escuchar en ${host}:${port}: ${error.message}`);
+    logger.error?.(`no pude escuchar en ${host}:${port}: ${error.message}`);
     process.exit(1);
   });
 }
