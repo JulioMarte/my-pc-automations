@@ -1,0 +1,2 @@
+# Los scripts de shell DEBEN usar LF (un shebang con CRLF rompe en Linux).
+*.sh text eol=lf

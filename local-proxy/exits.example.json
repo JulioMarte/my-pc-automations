@@ -1,0 +1,26 @@
+[
+  {
+    "name": "home",
+    "location": "do-santiago",
+    "host": "100.110.109.28",
+    "port": 8899,
+    "user": "exit-home",
+    "pass": "cambia-esto-home"
+  },
+  {
+    "name": "vps-01",
+    "location": "us-ny",
+    "host": "100.112.184.84",
+    "port": 8899,
+    "user": "exit-vps-01",
+    "pass": "cambia-esto-vps-01"
+  },
+  {
+    "name": "vps-02",
+    "location": "us-mo",
+    "host": "100.70.33.2",
+    "port": 8899,
+    "user": "exit-vps-02",
+    "pass": "cambia-esto-vps-02"
+  }
+]
