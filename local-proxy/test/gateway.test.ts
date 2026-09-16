@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { ExitPool, parseUsers } from '../src/router.ts';
@@ -373,4 +374,94 @@ test('gateway: metricas de limite por usuario', async (t) => {
   assert.match(response.body, /localproxy_user_limit_rejections_total\{user="agent"\} 1/);
   assert.match(response.body, /localproxy_user_connections\{user="agent"\} 1/);
   first.destroy();
+});
+
+test('gateway: cuenta conexiones activas por exit en CONNECT', async (t) => {
+  const origin = await startOrigin();
+  const exit = await startExit({ name: 'exit-a' });
+  const pool = new ExitPool([{ name: 'exit-a', host: '127.0.0.1', port: exit.port }]);
+  const { gateway, httpPort } = await startGateway({
+    users: new Map([['agent', 'clave']]),
+    pool,
+    statsFile: statsFile(),
+    healthIntervalMs: 0,
+  });
+  t.after(async () => {
+    await gateway.close();
+    await closeServer(origin.server);
+    await closeServer(exit.server);
+  });
+  const socket = await connectThroughProxy({
+    proxyPort: httpPort,
+    target: `127.0.0.1:${origin.port}`,
+    username: 'agent',
+    password: 'clave',
+  });
+  assert.equal(pool.stats().exits[0]?.active, 1);
+  socket.destroy();
+  await waitFor(() => pool.stats().exits[0]?.active === 0);
+  assert.equal(pool.stats().exits[0]?.active, 0);
+});
+
+test('gateway: /__drain exige token y rechaza trafico nuevo', async (t) => {
+  const origin = await startOrigin((request, response) => {
+    setTimeout(() => {
+      response.writeHead(200, { 'content-type': 'text/plain' });
+      response.end('origin-ok');
+    }, 300);
+  });
+  const exit = await startExit({ name: 'exit-a' });
+  const { gateway, httpPort } = await startGateway({
+    users: new Map([['agent', 'clave']]),
+    pool: new ExitPool([{ name: 'exit-a', host: '127.0.0.1', port: exit.port }]),
+    statsToken: 'secreto',
+    shutdownGraceMs: 200,
+    statsFile: statsFile(),
+    healthIntervalMs: 0,
+  });
+  t.after(async () => {
+    await gateway.close();
+    await closeServer(origin.server);
+    await closeServer(exit.server);
+  });
+  assert.equal(gateway.isDraining(), false);
+  assert.equal((await httpGet({ port: httpPort, path: '/__drain', method: 'POST' })).status, 403);
+
+  // Dos conexiones keep-alive con peticiones en vuelo sobreviven al drenado.
+  const agentA = new http.Agent({ keepAlive: true, maxSockets: 1 });
+  const agentB = new http.Agent({ keepAlive: true, maxSockets: 1 });
+  const inflightA = httpGetThroughProxy({
+    proxyPort: httpPort,
+    targetUrl: `${origin.url}/`,
+    username: 'agent',
+    password: 'clave',
+    agent: agentA,
+  });
+  const inflightB = httpGetThroughProxy({
+    proxyPort: httpPort,
+    targetUrl: `${origin.url}/`,
+    username: 'agent',
+    password: 'clave',
+    agent: agentB,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  const drained = await httpGet({ port: httpPort, path: '/__drain?token=secreto', method: 'POST' });
+  assert.equal(drained.status, 202);
+  await waitFor(() => gateway.isDraining());
+  assert.equal(gateway.isDraining(), true);
+  assert.equal((await inflightA).status, 200);
+  assert.equal((await inflightB).status, 200);
+  // Las conexiones existentes siguen vivas: readyz y proxy nuevos dan 503.
+  assert.equal((await httpGet({ port: httpPort, path: '/readyz', agent: agentA })).status, 503);
+  const proxied = await httpGetThroughProxy({
+    proxyPort: httpPort,
+    targetUrl: `${origin.url}/`,
+    username: 'agent',
+    password: 'clave',
+    agent: agentB,
+  });
+  assert.equal(proxied.status, 503);
+  agentA.destroy();
+  agentB.destroy();
+  await gateway.close({ graceMs: 200 });
 });

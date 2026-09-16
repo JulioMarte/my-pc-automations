@@ -32,6 +32,7 @@ export interface Exit {
   failures: number;
   successes: number;
   connections: number;
+  active: number;
   bytesUp: number;
   bytesDown: number;
   circuit: CircuitState;
@@ -151,7 +152,6 @@ export class ExitPool {
   readonly circuitMaxMs: number;
   readonly now: () => number;
   sessions: Map<string, Session>;
-  roundRobin: number;
   exits: Exit[];
 
   constructor(exits: ExitConfig[] = [], options: ExitPoolOptions = {}) {
@@ -164,7 +164,6 @@ export class ExitPool {
     this.circuitMaxMs = options.circuitMaxMs ?? 60000;
     this.now = options.now ?? (() => Date.now());
     this.sessions = new Map();
-    this.roundRobin = 0;
     this.exits = [];
     this.reload(exits);
   }
@@ -181,6 +180,7 @@ export class ExitPool {
       failures: 0,
       successes: 0,
       connections: 0,
+      active: 0,
       bytesUp: 0,
       bytesDown: 0,
       circuit: 'closed',
@@ -201,6 +201,7 @@ export class ExitPool {
         failures: old.failures,
         successes: old.successes,
         connections: old.connections,
+        active: old.active,
         bytesUp: old.bytesUp,
         bytesDown: old.bytesDown,
         circuit: old.circuit,
@@ -254,15 +255,30 @@ export class ExitPool {
       if (exit) ordered.push(exit);
     }
     const pool = this.healthyExits(parsed.location).filter((exit) => !ordered.includes(exit));
-    if (pool.length) {
-      const start = this.roundRobin % pool.length;
-      this.roundRobin = (this.roundRobin + 1) % pool.length;
-      for (let offset = 0; offset < pool.length; offset += 1) {
-        const exit = pool[(start + offset) % pool.length];
-        if (exit) ordered.push(exit);
-      }
-    }
+    for (const exit of this.orderByLoad(pool)) ordered.push(exit);
     return ordered;
+  }
+
+  // Power-of-two-choices: ordena por carga (tuneles activos) eligiendo, en cada paso,
+  // el menos cargado entre dos candidatos al azar. Mantiene la rotacion por TTL.
+  private orderByLoad(pool: Exit[]): Exit[] {
+    const remaining = [...pool];
+    const result: Exit[] = [];
+    while (remaining.length > 0) {
+      if (remaining.length === 1) {
+        result.push(remaining.pop() as Exit);
+        break;
+      }
+      const i = Math.floor(Math.random() * remaining.length);
+      let j = Math.floor(Math.random() * (remaining.length - 1));
+      if (j >= i) j += 1;
+      const a = remaining[i] as Exit;
+      const b = remaining[j] as Exit;
+      const chosen = a.active <= b.active ? a : b;
+      result.push(chosen);
+      remaining.splice(remaining.indexOf(chosen), 1);
+    }
+    return result;
   }
 
   commit(parsed: ParsedUser, exit: Exit): void {
@@ -314,6 +330,7 @@ export class ExitPool {
         circuit: exit.circuit,
         failures: exit.failures,
         connections: exit.connections,
+        active: exit.active,
         bytesUp: exit.bytesUp,
         bytesDown: exit.bytesDown,
       })),

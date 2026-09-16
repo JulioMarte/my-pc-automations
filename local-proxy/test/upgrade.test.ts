@@ -79,6 +79,9 @@ test('Upgrade: failover al siguiente exit antes del 101', async (t) => {
   const origin = await startUpgradeOrigin();
   const exit = await startExit({ name: 'exit-ok' });
   const pool = new ExitPool([exitConfig('dead', 1), exitConfig('exit-ok', exit.port)]);
+  // Fuerza a que "dead" sea el primer candidato para probar el failover.
+  pool.exits.find((item) => item.name === 'dead')!.active = 0;
+  pool.exits.find((item) => item.name === 'exit-ok')!.active = 100;
   const { gateway, httpPort } = await startGateway({
     users: new Map([['julio', 'clave']]),
     pool,
