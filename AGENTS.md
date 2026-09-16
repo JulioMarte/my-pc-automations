@@ -33,19 +33,34 @@ feat/<feature>  --(tests + verificacion OK)-->  dev  --(PR + review)-->  main
   tooling (`bun src/gateway.ts`, `bun test`, `bun --watch`).
 - Comandos:
   - `npm run typecheck` - comprobacion de tipos (`tsc --noEmit`).
-  - `npm test` - tests (`node --test` sobre `.ts`; ~108 tests).
+  - `npm test` - tests (`node --test` sobre `.ts`; ~134 tests, incluye user journeys).
+  - `npm run test:journey` - solo las jornadas e2e (`test/journey.test.ts`).
+  - `npm run stress` - generador de carga in-process (`scripts/stress.ts`).
   - `npm run build` - compila a `dist/`.
   - `npm run dev:gateway` / `npm run dev:exit` - desarrollo con `--watch`.
+  - `npm run monitor` / `monitor:once` - alertas de salud (`scripts/monitor.ts`).
+  - `npm run docker:build` / `docker:gateway` / `docker:exit` / `docker:e2e`.
+  - `npm run service:install[:gateway|:exit]` / `service:uninstall` (Windows, admin).
 - Endpoints:
   - Gateway: `GET /healthz` (liveness), `GET /readyz` (readiness),
-    `GET /__stats?token=` (requiere `STATS_TOKEN`), `GET /metrics` (Prometheus;
-    `METRICS_TOKEN` opcional).
+    `GET /panel` (dashboard HTML; `PANEL_ENABLED`), `GET /__stats?token=`
+    (requiere `STATS_TOKEN`), `GET /metrics` (Prometheus; `METRICS_TOKEN` opcional),
+    `POST /__drain?token=`.
   - Exit: `GET /__health` (liveness), `GET /metrics`.
+- **Health check multi-target**: `HEALTH_TARGETS` se prueba en orden aleatorio y basta con
+  que uno responda; un destino caido no marca los exits como no sanos.
+- **Operaciones**: Docker, servicio real (systemd/WinSW), alertas y panel; guias en
+  `docs/` (`docker.md`, `service.md`, `alerts.md`, `testing.md`, `ci.md`). El servicio real
+  y el arranque por Task Scheduler/cron **no deben usarse a la vez**.
 - **Recarga en caliente**: el gateway recarga `PROXY_USERS`/`STATS_TOKEN`/`METRICS_TOKEN`
   y el exit `EXIT_USERS` al guardar `.env` (sin reiniciar). Puertos, timeouts,
   `SESSION_TTL_MS`, `MAX_CONNECTIONS*`, `EXIT_BLOCK_PRIVATE` y logs requieren reinicio.
 - **Credenciales de exit**: una por exit; rotacion sin downtime con `EXIT_USERS` (solape)
   y `scripts/rotate-cred.ts`. Ver "Rotacion de credenciales" en el README.
+- **Draining y seleccion P2C**: al reiniciar, `POST /__drain?token=<STATS_TOKEN>` drena el
+  gateway (tuneles en vuelo terminan hasta `SHUTDOWN_GRACE_MS`; el exit hasta
+  `EXIT_SHUTDOWN_GRACE_MS`); las sesiones nuevas eligen el menos cargado de dos exits sanos
+  (P2C least-connections), con sticky/TTL sin cambios.
 - **Despliegue (Windows)**: `npm run build` y reiniciar la tarea `local-proxy-autostart`
   (lanza desde `dist/`); verificar `/healthz` + `/readyz`. El watchdog
   `local-proxy-watchdog` sondea la salud cada 2 min. Script elevado opcional:

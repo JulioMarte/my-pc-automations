@@ -1,0 +1,6 @@
+# Binario externo de WinSW descargado por install-windows-service.ps1
+WinSW-*.exe
+WinSW-*.exe.download
+
+# Config final generada (exe renombrado + xml con rutas absolutas)
+runtime/

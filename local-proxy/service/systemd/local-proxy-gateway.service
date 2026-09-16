@@ -1,0 +1,42 @@
+# local-proxy: gateway (servicio systemd) - OPCIONAL
+#
+# Alternativa "servicio real" a Task Scheduler (Windows) y al cron (Linux).
+# NO reemplaza nada por si sola: instalala solo si quieres un servicio real y
+# desactiva antes el mecanismo viejo para no arrancar dos veces (ver docs/service.md).
+#
+# Placeholder que reemplaza service/systemd/install.sh:
+#   __PROJECT_DIR__  -> ruta absoluta del proyecto (p. ej. /home/usuario/local-proxy)
+#
+# Instalar:  sudo service/systemd/install.sh gateway
+# Estado:    systemctl status local-proxy-gateway.service
+# Logs:      journalctl -u local-proxy-gateway.service -f
+# Quitar:    sudo systemctl disable --now local-proxy-gateway.service
+#
+# Requiere la build: __PROJECT_DIR__/dist/gateway.js (npm run build).
+
+[Unit]
+Description=local-proxy gateway (HTTP + SOCKS5 sobre Tailscale)
+After=network-online.target tailscaled.service
+Wants=network-online.target tailscaled.service
+
+[Service]
+Type=simple
+WorkingDirectory=__PROJECT_DIR__
+ExecStart=/usr/bin/node dist/gateway.js
+# El .env define PROXY_USERS, puertos, STATS_TOKEN, etc. El prefijo "-" evita
+# fallar si el archivo todavia no existe.
+EnvironmentFile=-__PROJECT_DIR__/.env
+Restart=always
+RestartSec=5
+# La app maneja SIGTERM para drenar los tuneles en vuelo (SHUTDOWN_GRACE_MS).
+KillSignal=SIGTERM
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=local-proxy-gateway
+# Opcional: correr como usuario sin privilegios (debe poder leer __PROJECT_DIR__).
+#User=local-proxy
+#Group=local-proxy
+
+[Install]
+WantedBy=multi-user.target

@@ -3,5 +3,6 @@ dist/
 .env
 exits.json
 stats.jsonl
+monitor-state.json
 logs/
 *.log

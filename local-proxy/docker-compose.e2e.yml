@@ -1,0 +1,65 @@
+# docker-compose.e2e.yml - pila e2e manual (origin + exit + gateway) en una red
+# bridge propia. Es una alternativa comoda para reproducir la prueba a mano; la
+# prueba automatizada vive en scripts/e2e-docker.sh.
+#
+# NO usar en produccion: EXIT_BLOCK_PRIVATE=false y un puerto publicado en
+# loopback para poder lanzar curl desde el host.
+#
+# Uso:
+#   docker build -t local-proxy:e2e .
+#   docker compose -f docker-compose.e2e.yml up -d --wait
+#   curl -x http://agent:secret@127.0.0.1:18888 http://origin/
+#   docker compose -f docker-compose.e2e.yml down -v
+name: local-proxy-e2e
+
+services:
+  origin:
+    image: node:24-alpine
+    command:
+      - node
+      - -e
+      - |
+        const http = require("http");
+        const body = "origin-e2e-ok";
+        http.createServer((req, res) => {
+          res.writeHead(200, { "content-type": "text/plain" });
+          res.end(body);
+        }).listen(80, "0.0.0.0");
+    networks: [e2e]
+
+  exit:
+    image: ${E2E_IMAGE:-local-proxy:e2e}
+    environment:
+      ROLE: exit
+      EXIT_NAME: e2e-exit
+      EXIT_HOST: 0.0.0.0
+      EXIT_PORT: "8899"
+      EXIT_BLOCK_PRIVATE: "false"
+      EXIT_USERS: "e2e-exit:e2e-secret"
+      LOG_LEVEL: warn
+    depends_on:
+      - origin
+    networks: [e2e]
+
+  gateway:
+    image: ${E2E_IMAGE:-local-proxy:e2e}
+    environment:
+      ROLE: gateway
+      GATEWAY_HOST: 0.0.0.0
+      PROXY_USERS: "agent:secret"
+      STATS_TOKEN: tok
+      METRICS_TOKEN: ""
+      HEALTH_TARGETS: "origin:80"
+      HEALTH_INTERVAL_MS: "3600000"
+      LOG_LEVEL: warn
+    volumes:
+      - ./scripts/e2e/exits.e2e.json:/app/exits.json:ro
+    ports:
+      - "127.0.0.1:18888:8888"
+    depends_on:
+      - exit
+    networks: [e2e]
+
+networks:
+  e2e:
+    driver: bridge
