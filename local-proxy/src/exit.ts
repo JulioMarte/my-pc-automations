@@ -7,7 +7,7 @@ import { loadEnv, envString, envNumber, envBool, envList } from './env.ts';
 import { createLogger, parseLogLevel, parseLogFormat, type Logger } from './logger.ts';
 import { Registry } from './metrics.ts';
 import { parseCredentials, safeEqual, type Credential } from './router.ts';
-import { stripHopByHop, pipeUpgrade } from './upstream.ts';
+import { stripHopByHop, pipeUpgrade, upgradeHeaders } from './upstream.ts';
 
 export interface ExitServerOptions {
   name?: string;
@@ -393,12 +393,7 @@ export function createExitServer(options: ExitServerOptions = {}): http.Server {
       clientSocket.destroy();
       return;
     }
-    const headers: Record<string, string | string[] | undefined> = {
-      ...request.headers,
-      host: target.host,
-    };
-    delete headers['proxy-authorization'];
-    delete headers['proxy-connection'];
+    const headers = upgradeHeaders(request.headers, target.host);
     const upstream = pipeUpgrade({
       request,
       clientSocket,

@@ -640,6 +640,10 @@ Muchas apps (curl, Python `requests`, Go) usan `HTTP_PROXY`/`HTTPS_PROXY` solas.
 - Si el exit elegido falla (conexión, timeout o `407/502/503/504` **generado por el exit**),
   el gateway prueba el siguiente candidato. En HTTP plano solo reintenta métodos sin cuerpo
   (`GET`/`HEAD`) para no reenviar bodies; CONNECT y SOCKS5 siempre reintentan.
+- El **WebSocket/`Upgrade`** también hace failover, pero solo **antes** de establecer el
+  túnel (antes del `101`): si el exit elegido falla al conectar o devuelve `502/503/504`, el
+  gateway reintenta con el siguiente exit; una vez emitido el `101` el túnel es un pipe de
+  bytes opaco y ya no hay failover posible.
 - Para distinguir un error del exit de un `502/503` legítimo del **origen**, el exit agrega
   el header `x-exit-name` a las respuestas que reenvía. Si usas otro software como exit
   (p. ej. gost), esa marca no existe y un `502/503/504` del origen puede reintentarse en
@@ -699,7 +703,7 @@ Si defines `METRICS_TOKEN`, añade `?token=<METRICS_TOKEN>` (o la cabecera
 
 | Métrica | Etiquetas | Descripción |
 |---|---|---|
-| `requests_total` | `protocol` (`http`/`connect`/`socks5`), `code` (HTTP status o `ok`/`error` en SOCKS) | Peticiones atendidas |
+| `requests_total` | `protocol` (`http`/`connect`/`socks5`/`upgrade`), `code` (HTTP status o `ok`/`error` en SOCKS) | Peticiones atendidas; en `protocol="upgrade"` el `code` es `101` al establecer el túnel o el status del fallo (`localproxy_requests_total{protocol="upgrade",code=...}`) |
 | `bytes_total` | `direction` (`up`/`down`), `exit` | Bytes transferidos |
 | `active_connections` | `protocol` | Conexiones activas |
 | `user_connections` | `user` (usuario base) | Conexiones activas por usuario base (gauge) |

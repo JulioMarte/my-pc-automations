@@ -3,7 +3,7 @@ import path from 'node:path';
 import http from 'node:http';
 import net from 'node:net';
 import { loadEnv, envString, envNumber, envList } from './env.ts';
-import { connectViaHttpProxy, forwardHttp, pipeUpgrade, basic, ProxyError } from './upstream.ts';
+import { connectViaHttpProxy, forwardHttp, pipeUpgrade, upgradeHeaders, basic, ProxyError } from './upstream.ts';
 import { createSocks5Server } from './socks5.ts';
 import {
   createAuthenticator,
@@ -477,6 +477,73 @@ export function createGateway(config: GatewayConfig = {}) {
     tryNext();
   }
 
+  function forwardUpgradeWithFailover(
+    request: http.IncomingMessage,
+    clientSocket: net.Socket,
+    head: Buffer,
+    parsed: ParsedUser,
+  ): void {
+    const candidates = pool.candidates(parsed);
+    if (!candidates.length) {
+      reject503Socket(clientSocket);
+      return;
+    }
+    let attempt = 0;
+    const tryNext = (): void => {
+      const exit = candidates[attempt];
+      if (!exit) {
+        // Sin candidatos restantes: 502.
+        if (clientSocket.writable) clientSocket.write('HTTP/1.1 502 Bad Gateway\r\n\r\n');
+        clientSocket.destroy();
+        return;
+      }
+      const headers = upgradeHeaders(request.headers, request.headers.host ?? '');
+      if (exit.user) headers['proxy-authorization'] = basic(exit.user, exit.pass);
+      pipeUpgrade({
+        request,
+        clientSocket,
+        head,
+        options: {
+          host: exit.host,
+          port: exit.port,
+          method: request.method,
+          path: request.url,
+          headers,
+        },
+        onUpgrade: () => {
+          pool.recordSuccess(exit);
+          pool.commit(parsed, exit);
+          requestsTotal.inc({ protocol: 'upgrade', code: '101' });
+          return false; // pipeUpgrade escribe el 101 y hace el pipe
+        },
+        onResponse: (proxyResponse) => {
+          const status = proxyResponse.statusCode ?? 502;
+          requestsTotal.inc({ protocol: 'upgrade', code: String(status) });
+          if (RETRYABLE_STATUS.has(status)) {
+            pool.recordFailure(exit);
+            attempt += 1;
+            if (attempt < candidates.length) {
+              tryNext();
+              return true; // takeover y reintenta
+            }
+          }
+          return false; // se le pasa al cliente la respuesta del exit
+        },
+        onError: () => {
+          pool.recordFailure(exit);
+          attempt += 1;
+          if (attempt < candidates.length) {
+            tryNext();
+            return true;
+          }
+          requestsTotal.inc({ protocol: 'upgrade', code: '502' });
+          return false; // pipeUpgrade escribe 502
+        },
+      });
+    };
+    tryNext();
+  }
+
   const httpServer = http.createServer((request: http.IncomingMessage, response: http.ServerResponse) => {
     const pathname = pathnameOf(request.url);
     if (pathname === '/healthz') {
@@ -611,34 +678,7 @@ export function createGateway(config: GatewayConfig = {}) {
       return;
     }
     trackUser(user, clientSocket);
-    const exit = pool.candidates(outcome.parsed)[0];
-    if (!exit) {
-      reject503Socket(clientSocket);
-      return;
-    }
-    const headers: Record<string, string | string[] | undefined> = {
-      ...request.headers,
-      host: request.headers.host ?? '',
-    };
-    delete headers['proxy-connection'];
-    delete headers['proxy-authorization'];
-    if (exit.user) headers['proxy-authorization'] = basic(exit.user, exit.pass);
-    pipeUpgrade({
-      request,
-      clientSocket,
-      head,
-      options: {
-        host: exit.host,
-        port: exit.port,
-        method: request.method,
-        path: request.url,
-        headers,
-      },
-      onError: () => {
-        pool.recordFailure(exit);
-        return false;
-      },
-    });
+    forwardUpgradeWithFailover(request, clientSocket, head, outcome.parsed);
   });
 
   const socksServer = createSocks5Server({

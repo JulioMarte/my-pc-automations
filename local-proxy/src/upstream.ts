@@ -60,6 +60,36 @@ export function formatAuthority(host: string, port: number): string {
   return host.includes(':') ? `[${host}]:${port}` : `${host}:${port}`;
 }
 
+const UPGRADE_HOP_BY_HOP = new Set([
+  'keep-alive',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'proxy-connection',
+]);
+
+// Cabeceras para reenviar una peticion de upgrade: elimina las hop-by-hop que no
+// aplican y normaliza Connection/Upgrade (que en un upgrade SI deben viajar).
+export function upgradeHeaders(
+  headers: http.IncomingHttpHeaders,
+  host: string,
+): Record<string, string | string[]> {
+  const result: Record<string, string | string[]> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    const lower = key.toLowerCase();
+    if (lower === 'connection' || lower === 'upgrade' || lower === 'host') continue;
+    if (UPGRADE_HOP_BY_HOP.has(lower)) continue;
+    result[key] = value as string | string[];
+  }
+  result.host = host;
+  result.connection = 'Upgrade';
+  const upgrade = headers.upgrade;
+  if (upgrade) result.upgrade = upgrade;
+  return result;
+}
+
 export function connectViaHttpProxy(opts: {
   proxy: ProxyTarget;
   host: string;
@@ -183,15 +213,19 @@ export function forwardHttp(
   return proxyRequest;
 }
 
-export function pipeUpgrade(args: {
+export interface PipeUpgradeArgs {
   request: http.IncomingMessage;
   clientSocket: net.Socket;
   head: Buffer | null;
   options: http.RequestOptions;
+  onUpgrade?(response: http.IncomingMessage, upstreamSocket: net.Socket, upstreamHead: Buffer): boolean | void;
+  onResponse?(response: http.IncomingMessage): boolean | void;
   onDone?(): void;
   onError?(error: Error): boolean | void;
-}): http.ClientRequest {
-  const { request, clientSocket, head, options, onDone, onError } = args;
+}
+
+export function pipeUpgrade(args: PipeUpgradeArgs): http.ClientRequest {
+  const { request, clientSocket, head, options, onUpgrade, onResponse, onDone, onError } = args;
   let finished = false;
   const finish = () => {
     if (finished) return;
@@ -201,6 +235,7 @@ export function pipeUpgrade(args: {
   const upstream = http.request(options);
   if (head && head.length) upstream.write(head);
   upstream.on('upgrade', (upgradeResponse, upstreamSocket, upstreamHead) => {
+    if (onUpgrade && onUpgrade(upgradeResponse, upstreamSocket, upstreamHead) === true) return;
     clientSocket.write(
       `HTTP/1.1 ${upgradeResponse.statusCode} ${upgradeResponse.statusMessage}\r\n${rawHeaders(upgradeResponse.headers)}\r\n\r\n`,
     );
@@ -220,6 +255,10 @@ export function pipeUpgrade(args: {
     upstreamSocket.on('close', closeBoth);
   });
   upstream.on('response', (proxyResponse) => {
+    if (onResponse && onResponse(proxyResponse) === true) {
+      proxyResponse.resume();
+      return;
+    }
     if (!clientSocket.writable) return finish();
     clientSocket.write(
       `HTTP/1.1 ${proxyResponse.statusCode} ${proxyResponse.statusMessage}\r\n${rawHeaders(proxyResponse.headers)}\r\n\r\n`,
