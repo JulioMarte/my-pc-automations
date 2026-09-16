@@ -846,6 +846,25 @@ curl -X POST "https://api.tailscale.com/api/v2/tailnet/-/acl" \
   --data-binary @tailscale/acl.hujson
 ```
 
+### Orden de aplicacion (evitar lockout / cortar el trafico)
+
+Hay una **dependencia circular** peligrosa: las reglas usan `tag:*`, pero los
+dispositivos solo se pueden etiquetar despues de que el ACL permita esos tags
+(`tagOwners`); y si aplicas el ACL completo **antes** de etiquetar, las reglas por tag
+no matchean y **se corta el proxy** (clientes y gateway dejan de poder hablar con los
+exits). Aplica en **dos fases**:
+
+1. **Fase 1 — habilitar los tags sin romper nada.** En la consola, anade SOLO el bloque
+   `tagOwners` al ACL actual, sin tocar las reglas de red. Guarda.
+2. **Etiquetar los dispositivos** (paso siguiente). Al etiquetar, el dispositivo se
+   re-autentica, asi que habra un corte breve de su conexion Tailscale.
+3. **Fase 2 — aplicar el ACL completo** de `tailscale/acl.hujson` con Preview/Tests.
+4. **Verificar**: un `curl` por el proxy debe seguir funcionando y `tailscale ping`
+   debe responder entre gateway y exits.
+
+Si algo sale mal, la **consola de administracion no se ve afectada por el ACL** (el
+owner siempre puede entrar), asi que puedes revertir el ACL desde ahi.
+
 ### Etiquetar los dispositivos
 
 Los tags agrupan dispositivos de servicio y permiten escribir reglas por rol. Solo
