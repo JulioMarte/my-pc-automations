@@ -1,0 +1,18 @@
+[
+  {
+    "name": "home",
+    "location": "do-santiago",
+    "host": "100.110.109.28",
+    "port": 8899,
+    "user": "exituser",
+    "pass": "exitpass"
+  },
+  {
+    "name": "vps",
+    "location": "us-east",
+    "host": "100.112.184.84",
+    "port": 8899,
+    "user": "exituser",
+    "pass": "exitpass"
+  }
+]

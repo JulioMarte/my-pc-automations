@@ -1,0 +1,31 @@
+{
+  "name": "local-proxy",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Proxy residencial local estilo proveedor (HTTP + SOCKS5) sobre Tailscale",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "gateway": "node src/gateway.ts",
+    "exit": "node src/exit.ts",
+    "dev:gateway": "node --watch src/gateway.ts",
+    "dev:exit": "node --watch src/exit.ts",
+    "bun:gateway": "bun src/gateway.ts",
+    "bun:exit": "bun src/exit.ts",
+    "test": "node --test",
+    "test:bun": "bun test",
+    "start": "node dist/gateway.js",
+    "start:exit": "node dist/exit.js",
+    "autostart:install": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-autostart.ps1",
+    "autostart:uninstall": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/uninstall-autostart.ps1",
+    "autostart:run": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/proxy-autostart.ps1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.8.0"
+  }
+}
