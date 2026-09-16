@@ -90,3 +90,44 @@ test('exit: HTTP absoluto a 127.0.0.1 con blockPrivate devuelve 403', async (t) 
   });
   assert.equal(response.status, 403);
 });
+
+test('exit: /metrics abierto por defecto', async (t) => {
+  const exit = await startExit({ name: 'exit-a' });
+  t.after(async () => {
+    await closeServer(exit.server);
+  });
+  const response = await httpGet({ port: exit.port, path: '/metrics' });
+  assert.equal(response.status, 200);
+  assert.ok(String(response.headers['content-type']).startsWith('text/plain'));
+  assert.match(response.body, /localproxy_build_info/);
+  assert.match(response.body, /localproxy_uptime_seconds/);
+});
+
+test('exit: /metrics exige token cuando esta configurado', async (t) => {
+  const exit = await startExit({ name: 'exit-a', metricsToken: 'tok' });
+  t.after(async () => {
+    await closeServer(exit.server);
+  });
+  assert.equal((await httpGet({ port: exit.port, path: '/metrics' })).status, 403);
+  assert.equal((await httpGet({ port: exit.port, path: '/metrics?token=malo' })).status, 403);
+  assert.equal((await httpGet({ port: exit.port, path: '/metrics?token=tok' })).status, 200);
+});
+
+test('exit: URL absoluta a /metrics se proxya al origen, no colisiona con las metricas', async (t) => {
+  const origin = await startOrigin();
+  const exit = await startExit({ name: 'exit-a', blockPrivate: false });
+  t.after(async () => {
+    await closeServer(origin.server);
+    await closeServer(exit.server);
+  });
+  const response = await httpGetThroughProxy({
+    proxyPort: exit.port,
+    targetUrl: `${origin.url}/metrics`,
+    username: '',
+    password: '',
+  });
+  assert.equal(response.status, 200);
+  assert.equal(response.body, 'origin-ok');
+  assert.equal(response.headers['x-origin'], 'yes');
+  assert.doesNotMatch(response.body, /# HELP/);
+});
