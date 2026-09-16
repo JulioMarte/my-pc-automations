@@ -136,23 +136,48 @@ compila `src/*.ts` a `dist/`.
 ]
 ```
 
+### Recarga en caliente (.env)
+
+El gateway y el exit **vigilan `.env`** y aplican los cambios al guardar, sin reiniciar (con
+un debounce de ~1 s). Solo se aplican las claves **presentes** en el archivo: si `PROXY_USERS`
+no aparece, los usuarios actuales **no** se borran.
+
+| Proceso | Claves que recargan en caliente |
+|---|---|
+| Gateway | `PROXY_USERS` (un usuario quitado deja de autenticarse en las peticiones **nuevas**), `STATS_TOKEN`, `METRICS_TOKEN` |
+| Exit | `EXIT_USERS` y el fallback `EXIT_USER` / `EXIT_PASS` |
+
+Esto hace que la rotación de credenciales sea **sin reinicio** (zero-restart), combinada con
+el solapamiento de credenciales de `EXIT_USERS` del
+[runbook de rotación](#rotación-de-credenciales).
+
+Sigue requiriendo **reinicio** (no se recarga en caliente): puertos
+(`GATEWAY_HOST`/`GATEWAY_HTTP_PORT`/`GATEWAY_SOCKS_PORT`, `EXIT_HOST`/`EXIT_PORT`), timeouts
+(`CONNECT_TIMEOUT_MS`, `EXIT_CONNECT_TIMEOUT_MS`, `HEALTH_TIMEOUT_MS`), `HEALTH_INTERVAL_MS`,
+`HEALTH_TARGETS`/`HEALTH_TARGET`, `SESSION_TTL_MS`, `MAX_CONNECTIONS`,
+`MAX_CONNECTIONS_PER_USER`, `EXIT_BLOCK_PRIVATE`, `EXIT_IDLE_TIMEOUT_MS`, `EXIT_ALLOW` y
+`LOG_LEVEL`/`LOG_FORMAT`.
+
 ### Rotación de credenciales
 
 Cada exit puede aceptar **varias credenciales** a la vez vía `EXIT_USERS`, lo que permite
 rotar **sin cortar el servicio** (overlap): se agrega la nueva conservando la vieja, se
 verifica, se cambia en `exits.json` (que el gateway recarga en caliente) y recién entonces
-se quita la vieja. Runbook de 5 pasos:
+se quita la vieja. Como el exit también recarga `.env` en caliente, la rotación es
+**zero-restart**. Runbook de 5 pasos:
 
 1. **Superponer en el exit**: en el `.env` del exit agrega la credencial nueva a
    `EXIT_USERS` **conservando la actual**, p. ej.
-   `EXIT_USERS=exit-home:claveVieja,exit-home:claveNueva`, y reinicia el exit.
+   `EXIT_USERS=exit-home:claveVieja,exit-home:claveNueva`; guarda y el exit lo recarga
+   solo (sin reiniciar).
 2. **Verificar el exit**: desde la máquina del gateway (la única autorizada por
    `EXIT_ALLOW`), `curl -x http://exit-home:claveNueva@100.x.x.x:8899 https://api.ipify.org`.
 3. **Actualizar `exits.json`**: cambia `user`/`pass` de ese exit; el gateway recarga el
    archivo solo (hot reload), sin reiniciar.
 4. **Verificar por el gateway**: fuerza ese exit con
    `curl -x http://USUARIO-exit-home:CLAVE@100.110.109.28:8888 https://api.ipify.org`.
-5. **Quitar la vieja**: deja solo la credencial nueva en `EXIT_USERS` y reinicia el exit.
+5. **Quitar la vieja**: deja solo la credencial nueva en `EXIT_USERS`; el exit lo aplica en
+   caliente (sin reiniciar).
 
 El helper `scripts/rotate-cred.ts` genera la clave, imprime el runbook y (con `--apply`)
 actualiza `exits.json`:
@@ -740,7 +765,8 @@ campos de contexto (`role`, `name`, `exit`, etc.). Los secretos (`authorization`
 
 | Síntoma | Causa probable | Qué hacer |
 |---|---|---|
-| `407 Proxy Authentication Required` | Usuario o clave mal escritos | Revisa `PROXY_USERS` en `.env` y reinicia el gateway. El usuario base no lleva `-exit-...` |
+| `407 Proxy Authentication Required` | Usuario o clave mal escritos | Revisa `PROXY_USERS` en `.env` (se recarga solo). El usuario base no lleva `-exit-...` |
+| Cambié `PROXY_USERS` (o `EXIT_USERS`) y no aplica | La recarga es perezosa (~1 s) y solo afecta peticiones/conexiones **nuevas** | Espera un momento; las conexiones ya abiertas siguen con las credenciales anteriores |
 | `429 Too Many Requests` | Demasiados fallos de auth seguidos desde ese cliente, **o** alcanzaste tu límite de conexiones concurrentes por usuario (`MAX_CONNECTIONS_PER_USER`) | Si es auth: espera (viene con `Retry-After`) y corrige las credenciales. Si es el límite por usuario: cierra conexiones o súbelo en `.env` (`MAX_CONNECTIONS_PER_USER`; `0` = ilimitado) y reinicia el gateway |
 | `502 Bad Gateway` | No hay exits sanos o el destino no responde | Mira `/__stats`; revisa que Tailscale esté arriba en el exit |
 | `503 Service Unavailable` | No hay ningún exit usable | Consulta `GET /readyz`; revisa salud y `exits.json` |
