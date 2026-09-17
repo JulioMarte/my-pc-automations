@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Plantilla de servicio real de Windows (WinSW v2.12.0) para el exit de local-proxy.
+  OPCIONAL: alternativa a Task Scheduler. Antes de usarla desactiva las tareas viejas
+  para no arrancar dos veces (ver docs/service.md).
+
+  Placeholders que reemplaza install-windows-service.ps1:
+    {{NODE}}        - ruta absoluta a node.exe
+    {{PROJECT_DIR}} - ruta absoluta del proyecto local-proxy
+
+  El XML final se escribe en service/windows/runtime/exit-service.xml, junto al
+  ejecutable WinSW renombrado como exit-service.exe (WinSW exige que el .xml se
+  llame igual que el .exe y este a su lado).
+-->
+<service>
+  <id>local-proxy-exit</id>
+  <name>local-proxy exit</name>
+  <description>local-proxy: exit HTTP CONNECT sobre Tailscale (gestionado por WinSW).</description>
+
+  <executable>{{NODE}}</executable>
+  <arguments>dist\exit.js</arguments>
+  <workingdirectory>{{PROJECT_DIR}}</workingdirectory>
+
+  <startmode>Automatic</startmode>
+  <delayedAutoStart>true</delayedAutoStart>
+
+  <!-- La app maneja Ctrl+C/SIGTERM para drenar tuneles en vuelo (EXIT_SHUTDOWN_GRACE_MS). -->
+  <stoptimeout>30sec</stoptimeout>
+
+  <onfailure action="restart" delay="10 sec"/>
+
+  <!-- stdout/stderr a {{PROJECT_DIR}}\logs\exit-service.out.log y .err.log -->
+  <logpath>{{PROJECT_DIR}}\logs</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>8</keepFiles>
+  </log>
+
+  <env name="NODE_ENV" value="production"/>
+</service>
