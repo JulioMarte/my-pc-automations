@@ -1,4 +1,4 @@
-# VPS Backup + Disaster Recovery v1.4.1
+# VPS Backup + Disaster Recovery v1.4.3
 
 This project deliberately separates **data backup** from **recovery acceleration**.
 
@@ -34,11 +34,11 @@ Use `critical` when bookings, customer transactions, or operational records make
 This is the cheapest and most provider-independent path.
 
 1. Provision a clean Debian/Ubuntu VPS with the **same distro ID, VERSION_ID and architecture** as the protected server.
-2. Copy the v1.4.1 script to the new VPS.
+2. Copy the v1.4.3 script to the new VPS.
 3. Run:
 
 ```bash
-sudo ./vps-backup-v1.4.1.sh recovery-bootstrap --require-same-os
+sudo ./vps-backup-v1.4.3.sh recovery-bootstrap --require-same-os
 ```
 
 The command installs prerequisites, asks for S3/Restic recovery credentials, opens the existing repository, selects the latest system snapshot and validates the DR manifest. It does **not** execute destructive recovery without `--execute`.

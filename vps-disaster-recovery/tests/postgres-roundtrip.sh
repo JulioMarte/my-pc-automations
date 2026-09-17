@@ -14,7 +14,7 @@ printf 'db integration fixture\n' > /srv/vps-dr-ci-data/fixture.txt
 
 docker volume create ci-pg-data >/dev/null
 docker run -d --name ci-postgres -e POSTGRES_PASSWORD=ci-secret -e POSTGRES_USER=ciuser -e POSTGRES_DB=app -v ci-pg-data:/var/lib/postgresql/data postgres:16 >/dev/null
-for _ in $(seq 1 60); do docker exec ci-postgres pg_isready -U ciuser -d app >/dev/null 2>&1 && break; sleep 1; done
+wait_container_ready ci-postgres 3 60 -- pg_isready -U ciuser -d app
 docker exec ci-postgres psql -U ciuser -d app -v ON_ERROR_STOP=1 -c 'CREATE TABLE dr_probe(id integer primary key, payload text); INSERT INTO dr_probe SELECT g, md5(g::text) FROM generate_series(1,5000) g;' >/dev/null
 expected=$(docker exec ci-postgres psql -U ciuser -d app -Atc "SELECT md5(string_agg(id::text||payload, ',' ORDER BY id)) FROM dr_probe;")
 
@@ -35,7 +35,7 @@ docker rm -f ci-postgres >/dev/null
 docker volume rm ci-pg-data >/dev/null
 docker volume create ci-pg-data >/dev/null
 docker run -d --name ci-postgres -e POSTGRES_PASSWORD=ci-secret -e POSTGRES_USER=ciuser -e POSTGRES_DB=app -v ci-pg-data:/var/lib/postgresql/data postgres:16 >/dev/null
-for _ in $(seq 1 60); do docker exec ci-postgres pg_isready -U ciuser -d app >/dev/null 2>&1 && break; sleep 1; done
+wait_container_ready ci-postgres 3 60 -- pg_isready -U ciuser -d app
 
 source_candidate_once
 restore_policy_databases /tmp/pg-restore-root

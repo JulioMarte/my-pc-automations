@@ -16,17 +16,43 @@ same_os_recovery_read_os_value() {
   ' "$file"
 }
 
+# Normalize the architecture aliases that differ between dpkg and uname so the
+# DR manifest (dpkg --print-architecture) and the running host compare cleanly.
+same_os_recovery_normalize_arch() {
+  case "$1" in
+    x86_64|amd64) printf '%s\n' amd64 ;;
+    aarch64|arm64) printf '%s\n' arm64 ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+
 same_os_recovery_verify_os() {
-  local sid="$1" tmp source_id source_ver current_id current_ver arch manifest_arch=""
-  tmp=$(mktemp "${TMP_DIR}/same-os-release.XXXXXX")
-  if ! restic_cmd dump "$sid" /var/lib/vps-backup/staging/system/os-release > "$tmp"; then
-    rm -f "$tmp"
-    err "Same-OS recovery: el snapshot no contiene system/os-release verificable."
-    return 1
+  local sid="$1" tmp manifest_tmp source_id="" source_ver="" source_arch=""
+  local current_id current_ver arch manifest_arch="" src_norm cur_norm
+
+  # Prefer dr-manifest.json: it is a regular file whose .os block carries the
+  # captured identity, so restic dump never trips over the /etc/os-release
+  # symlink that modern Ubuntu/Debian snapshots contain.
+  manifest_tmp=$(mktemp "${TMP_DIR}/same-os-dr-manifest.XXXXXX.json")
+  if restic_cmd dump "$sid" /var/lib/vps-backup/staging/system/dr-manifest.json > "$manifest_tmp" 2>/dev/null; then
+    source_id=$(jq -r '.os.id // empty' "$manifest_tmp" 2>/dev/null || true)
+    source_ver=$(jq -r '.os.version_id // empty' "$manifest_tmp" 2>/dev/null || true)
+    source_arch=$(jq -r '.os.arch // empty' "$manifest_tmp" 2>/dev/null || true)
   fi
-  source_id=$(same_os_recovery_read_os_value "$tmp" ID)
-  source_ver=$(same_os_recovery_read_os_value "$tmp" VERSION_ID)
-  rm -f "$tmp"
+  rm -f "$manifest_tmp"
+
+  # Compatibility path for older snapshots without the regular manifest.
+  if [[ -z "$source_id" || -z "$source_ver" ]]; then
+    tmp=$(mktemp "${TMP_DIR}/same-os-release.XXXXXX")
+    if ! restic_cmd dump "$sid" /var/lib/vps-backup/staging/system/os-release > "$tmp"; then
+      rm -f "$tmp"
+      err "Same-OS recovery: el snapshot no contiene system/os-release verificable."
+      return 1
+    fi
+    source_id=$(same_os_recovery_read_os_value "$tmp" ID)
+    source_ver=$(same_os_recovery_read_os_value "$tmp" VERSION_ID)
+    rm -f "$tmp"
+  fi
 
   current_id=$(same_os_recovery_read_os_value /etc/os-release ID)
   current_ver=$(same_os_recovery_read_os_value /etc/os-release VERSION_ID)
@@ -36,6 +62,17 @@ same_os_recovery_verify_os() {
     err "Same-OS recovery bloqueado: fuente=${source_id} ${source_ver}, destino=${current_id} ${current_ver}."
     return 1
   }
+
+  # The manifest records dpkg --print-architecture; compare it as the primary
+  # architecture guard when present.
+  if [[ -n "$source_arch" ]]; then
+    src_norm=$(same_os_recovery_normalize_arch "$source_arch")
+    cur_norm=$(same_os_recovery_normalize_arch "$(dpkg --print-architecture 2>/dev/null || uname -m)")
+    [[ "$src_norm" == "$cur_norm" ]] || {
+      err "Same-OS recovery bloqueado: arquitectura del snapshot=${source_arch} no coincide con ${arch}."
+      return 1
+    }
+  fi
 
   # The captured system manifest includes uname -a. Use it as a second guard
   # where available, but do not parse provider/kernel versions as identity.

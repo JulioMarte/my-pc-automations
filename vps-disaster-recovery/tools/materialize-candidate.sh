@@ -3,7 +3,7 @@ set -Eeuo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 OUT=${1:-"$ROOT/build/vps-backup-v1.4.3.sh"}
 EXPECTED_V142=5e94be6c3790bccb28dc071665b7c8c17921624eb6d3cc5f5d656ba03b8aa232
-EXPECTED_SAME_OS_MODULE_GIT_BLOB=96e80aeb353ca8523fc1cfb897d695b9976ec3a0
+EXPECTED_SAME_OS_MODULE_GIT_BLOB=d6c42366d3b9ca22de7e981e8394eb880e37835d
 MODULE="$ROOT/modules/same-os-recovery.sh"
 TMP_OUT=$(mktemp)
 trap 'rm -f "$TMP_OUT"' EXIT

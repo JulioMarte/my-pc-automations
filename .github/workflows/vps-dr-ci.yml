@@ -2,13 +2,16 @@ name: VPS Disaster Recovery CI
 
 on:
   pull_request:
+    branches:
+      - dev
+      - main
     paths:
       - 'vps-disaster-recovery/**'
       - '.github/workflows/vps-dr-ci.yml'
   push:
     branches:
+      - dev
       - main
-      - 'feat/vps-disaster-recovery-ci'
     paths:
       - 'vps-disaster-recovery/**'
       - '.github/workflows/vps-dr-ci.yml'

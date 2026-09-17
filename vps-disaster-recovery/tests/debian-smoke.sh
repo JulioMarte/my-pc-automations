@@ -3,9 +3,9 @@ set -Eeuo pipefail
 ROOT=${1:-/workspace/vps-disaster-recovery}
 apt-get update >/dev/null
 apt-get install -y --no-install-recommends ca-certificates curl bzip2 dpkg bash coreutils grep sed gawk patch git >/dev/null
-SCRIPT=$(bash "$ROOT/tools/materialize-candidate.sh" /tmp/vps-backup-v1.4.2.sh)
+SCRIPT=$(bash "$ROOT/tools/materialize-candidate.sh" /tmp/vps-backup-v1.4.3.sh)
 bash -n "$SCRIPT"
-"$SCRIPT" version | grep -qx 'vps-backup v1.4.2'
+"$SCRIPT" version | grep -qx 'vps-backup v1.4.3'
 # Source-only helper tests validate Debian/Ubuntu os-release handling and dpkg comparison.
 # shellcheck disable=SC1090
 source "$SCRIPT"

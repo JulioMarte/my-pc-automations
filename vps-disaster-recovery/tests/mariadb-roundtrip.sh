@@ -18,7 +18,7 @@ docker run -d --name ci-mariadb \
   -e MARIADB_DATABASE=app \
   -v ci-maria-data:/var/lib/mysql \
   mariadb:11.4 >/dev/null
-for _ in $(seq 1 90); do docker exec -e MYSQL_PWD=ci-secret ci-mariadb mariadb -uroot -e 'SELECT 1' >/dev/null 2>&1 && break; sleep 1; done
+wait_container_ready ci-mariadb 3 90 -- env MYSQL_PWD=ci-secret mariadb -uroot -e 'SELECT 1'
 docker exec -e MYSQL_PWD=ci-secret ci-mariadb mariadb -uroot app -e \
   "CREATE TABLE dr_probe(id INT PRIMARY KEY, payload CHAR(32)) ENGINE=InnoDB; INSERT INTO dr_probe SELECT seq, MD5(seq) FROM seq_1_to_5000;" >/dev/null
 expected=$(docker exec -e MYSQL_PWD=ci-secret ci-mariadb mariadb -uroot app --batch --skip-column-names -e \
@@ -45,7 +45,7 @@ docker run -d --name ci-mariadb \
   -e MARIADB_ROOT_PASSWORD=ci-secret \
   -v ci-maria-data:/var/lib/mysql \
   mariadb:11.4 >/dev/null
-for _ in $(seq 1 90); do docker exec -e MYSQL_PWD=ci-secret ci-mariadb mariadb -uroot -e 'SELECT 1' >/dev/null 2>&1 && break; sleep 1; done
+wait_container_ready ci-mariadb 3 90 -- env MYSQL_PWD=ci-secret mariadb -uroot -e 'SELECT 1'
 
 source_candidate_once
 restore_policy_databases /tmp/maria-restore-root

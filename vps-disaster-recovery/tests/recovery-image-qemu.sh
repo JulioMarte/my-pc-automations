@@ -20,8 +20,19 @@ cleanup() {
   rm -f /usr/local/share/ca-certificates/vps-dr-ci.crt
   update-ca-certificates >/dev/null 2>&1 || true
 }
+# Root-owned artifacts would break actions/upload-artifact with EACCES when the
+# run fails early, so normalize results/ permissions on every exit path.
+fix_results_perms() {
+  local f
+  mkdir -p "$ROOT/results"
+  chmod 0755 "$ROOT/results" || true
+  for f in "$ROOT/results"/*.log "$ROOT/results"/*.json; do
+    [[ -e "$f" ]] || continue
+    chmod 0644 "$f" || true
+  done
+}
 trap cleanup EXIT
-trap 'rc=$?; write_failure_context /tmp/vps-dr-failure-context.txt; [[ -f "$T/qemu-console.log" ]] && tail -n 250 "$T/qemu-console.log" >&2 || true; exit $rc' ERR
+trap 'rc=$?; write_failure_context /tmp/vps-dr-failure-context.txt; fix_results_perms; [[ -f "$T/qemu-console.log" ]] && tail -n 250 "$T/qemu-console.log" >&2 || true; exit $rc' ERR
 
 install_candidate_dependencies
 start_minio
@@ -59,7 +70,7 @@ update-ca-certificates >/dev/null
 MINIO_ENDPOINT=https://127.0.0.1:9443
 cleanup_candidate_state
 install -d -m 0755 /srv/vps-dr-qemu-source
-printf '%s\n' 'recovered-from-s3-v1.4.2' > /srv/vps-dr-qemu-source/marker.txt
+printf '%s\n' 'recovered-from-s3-v1.4.3' > /srv/vps-dr-qemu-source/marker.txt
 SOURCE_SHA=$(sha256sum /srv/vps-dr-qemu-source/marker.txt | awk '{print $1}')
 write_ci_config ci-qemu ci-qemu /srv/vps-dr-qemu-source false
 init_repo
@@ -145,7 +156,7 @@ if [[ "$RECOVERY_RC" != 0 ]]; then
 fi
 
 [[ "$(virt-cat -a "$IMAGE" /var/tmp/vps-dr-qemu-pass)" == PASS ]]
-[[ "$(virt-cat -a "$IMAGE" /var/tmp/vps-backup-version.txt | tr -d '\r\n')" == 'vps-backup v1.4.2' ]]
+[[ "$(virt-cat -a "$IMAGE" /var/tmp/vps-backup-version.txt | tr -d '\r\n')" == 'vps-backup v1.4.3' ]]
 RECOVERED_SHA=$(virt-cat -a "$IMAGE" /var/tmp/recovered-marker.sha256 | awk '{print $1}')
 [[ "$RECOVERED_SHA" == "$SOURCE_SHA" ]]
 [[ -n "$(virt-cat -a "$IMAGE" /etc/machine-id | tr -d '\r\n')" ]]
@@ -154,8 +165,7 @@ virt-ls -a "$IMAGE" /etc/ssh | grep -Eq '^ssh_host_.*_key$'
 cat > "$ROOT/results/recovery-image-qemu.json" <<EOF_JSON
 {"snapshot":"$SID","candidate_sha256":"$(sha256sum "$SCRIPT" | awk '{print $1}')","source_sha256":"$SOURCE_SHA","restored_sha256":"$RECOVERED_SHA","qemu":"PASS","cloud_init":"PASS","same_os_recovery":"PASS"}
 EOF_JSON
-chmod 0755 "$ROOT/results"
-chmod 0644 "$ROOT/results/recovery-bootstrap-qemu.log" "$ROOT/results/cloud-init-output-qemu.log" "$ROOT/results/cloud-init-qemu.log" "$ROOT/results/qemu-console.log" "$ROOT/results/recovery-image-qemu.json"
+fix_results_perms
 if [[ -n "${SUDO_UID:-}" && -n "${SUDO_GID:-}" ]]; then
   chown -R "$SUDO_UID:$SUDO_GID" "$ROOT/results" || true
 fi

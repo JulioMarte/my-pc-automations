@@ -18,6 +18,39 @@ wait_http() {
   return 1
 }
 
+# wait_container_ready <container> <intentos_consecutivos> <timeout_seg> -- <comando...>
+# Ejecuta <comando...> con docker exec y solo devuelve 0 tras <intentos_consecutivos>
+# exitos seguidos separados por 1s, dentro de <timeout_seg>. Evita dar por listo un
+# servidor temporal (p.ej. el arranque de MariaDB) que luego se reinicia.
+# Si expira, imprime un error claro con los ultimos logs del contenedor y devuelve 1.
+wait_container_ready() {
+  if (($# < 4)); then
+    echo 'usage: wait_container_ready <container> <consecutive> <timeout_sec> -- <command...>' >&2
+    return 2
+  fi
+  local container=$1 consecutive=$2 timeout=$3
+  shift 3
+  if [[ $1 == -- ]]; then shift; fi
+  local ok=0 elapsed=0
+  while ((elapsed < timeout)); do
+    if docker exec "$container" "$@" >/dev/null 2>&1; then
+      ok=$((ok + 1))
+      if ((ok >= consecutive)); then
+        return 0
+      fi
+    else
+      ok=0
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+  echo "ERROR: container '$container' no respondio $consecutive veces seguidas en ${timeout}s" >&2
+  echo "--- docker logs --tail 50 $container ---" >&2
+  docker logs --tail 50 "$container" >&2 2>&1 || true
+  echo "---------------------------------------" >&2
+  return 1
+}
+
 start_minio() {
   docker rm -f vps-dr-minio >/dev/null 2>&1 || true
   docker pull "$MINIO_IMAGE" >/dev/null

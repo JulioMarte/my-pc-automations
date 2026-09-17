@@ -12,17 +12,24 @@ The blocking CI uses real binaries and real protocols where practical:
 - Ubuntu 22.04/24.04 end-to-end Restic backup -> S3-compatible MinIO -> restore -> checksum verification.
 - Real `restic check --read-data-subset=1/1` and staged DR validation.
 - PostgreSQL 16 logical backup and restore using the candidate's own Docker DB implementation.
+- MariaDB 11.4 destruction/recovery using the candidate's own Docker DB implementation.
+- A QCOW2 recovery image built, booted under QEMU with cloud-init, and driven through a same-OS portable recovery from a TLS S3 snapshot, validating the restored data by SHA-256.
 - A repeatable mixed-data benchmark measuring first backup, incremental backup, restore, repository growth, and dedup effectiveness.
 
 MinIO is used only as the CI S3 endpoint. It exercises Restic's S3-compatible path without putting production Backblaze credentials in GitHub Actions. Backblaze-specific credentials should remain outside CI unless a dedicated disposable bucket/key is created later.
 
 ## Candidate snapshot
 
-`candidate/part-*` contains the immutable compressed v1.3.0 base payload. `tools/materialize-candidate.sh` applies the small deterministic v1.3.1 regression fix discovered by CI (`VERSION` collided with `/etc/os-release`), then verifies the SHA-256 of the final artifact before any test runs. This keeps the exact tested candidate reproducible and auditable.
+`candidate/part-*` contains the immutable compressed v1.3.0 base payload. The toolchain derives the tested artifact in two verified stages:
 
-Expected v1.3.1 SHA-256:
+1. `tools/materialize-v142.sh` reproduces the proven **v1.4.2** candidate deterministically (v1.3.1 regression fix where `VERSION` collided with `/etc/os-release`, plus the versioned patches) and verifies its SHA-256.
+2. `tools/materialize-candidate.sh` reproduces that exact v1.4.2 base **byte-for-byte**, then applies the **v1.4.3** same-OS portable recovery overlay (content-addressed by Git blob), and `tests/static.sh` verifies the final artifact SHA-256 against `candidate/RELEASE_SHA256`.
 
-`9e2ee8924e403e0ab4424beb6e0267d8c36673e66a902f8353ac3933838c19c9`
+This keeps the exact tested candidate reproducible and auditable.
+
+Pinned v1.4.3 SHA-256:
+
+`d3718839413ca99f48d887fa574ba13d980fecee6fa3477c6a9b3aaa5d2a9b57`
 
 ## Local commands
 
