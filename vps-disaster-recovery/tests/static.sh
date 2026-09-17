@@ -70,6 +70,13 @@ grep -Fq 'local restore_root="$1" volumes_root="$2" policy=""' "$SCRIPT"
 echo '== Restic timestamp regression =='
 ! grep -Fq -- '--time "$BACKUP_RUN_TIME"' "$SCRIPT"
 
+echo '== restic capability probe robustness =='
+# `restic check --help | grep -q ...` under pipefail flakes via SIGPIPE; the
+# patched candidate must consume the whole help output (grep -c).
+! grep -Fq -- "| grep -q -- '--read-data" "$SCRIPT"
+grep -Fq -- "grep -c -- '--read-data-subset' >/dev/null" "$SCRIPT"
+grep -Fq -- "grep -c -- '--read-data' >/dev/null" "$SCRIPT"
+
 echo '== recovery safety =='
 grep -Fq -- '--require-same-os' "$SCRIPT"
 grep -Fq 'schema:3' "$SCRIPT"
