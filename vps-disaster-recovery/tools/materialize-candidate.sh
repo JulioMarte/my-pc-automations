@@ -56,6 +56,23 @@ awk '
   END { if (!done) exit 52 }
 ' "$OUT" > "$TMP_OUT"
 mv "$TMP_OUT" "$OUT"
+
+# The base candidate probes Restic capabilities with `restic check --help |
+# grep -q ...`. Under `set -o pipefail`, `grep -q` closes the pipe on the first
+# match, restic receives SIGPIPE and the pipeline is reported as failed, so the
+# probe intermittently claims the flag is missing (observed as a flaky DR/S3
+# failure). Read the whole help output instead: `grep -c` consumes all input and
+# its exit status is equivalent for an `if` condition.
+awk -v q="'" '
+  index($0, "restic check --help 2>&1 | grep -q --") > 0 {
+    gsub("grep -q -- " q "--read-data-subset" q, "grep -c -- " q "--read-data-subset" q " >/dev/null")
+    gsub("grep -q -- " q "--read-data" q, "grep -c -- " q "--read-data" q " >/dev/null")
+    count++
+  }
+  { print }
+  END { if (count < 1) exit 53 }
+' "$OUT" > "$TMP_OUT"
+mv "$TMP_OUT" "$OUT"
 chmod 0755 "$OUT"
 
 # Release invariants for the new recovery path. Final SHA is pinned only after
@@ -64,6 +81,9 @@ grep -qx 'readonly APP_VERSION="1.4.3"' "$OUT" || { echo 'v1.4.3 version marker 
 ! grep -Fq 'Recovery automático genérico de rootfs todavía no es seguro' "$OUT" || { echo 'old generic recovery blocker still present' >&2; exit 1; }
 grep -Fq 'recover_same_os_portable "$sid"' "$OUT" || { echo 'same-OS recovery dispatch missing' >&2; exit 1; }
 grep -Fq 'Same-OS portable recovery completado' "$OUT" || { echo 'same-OS recovery implementation missing' >&2; exit 1; }
+! grep -Fq "grep -q -- '--read-data" "$OUT" || { echo 'restic probe still uses grep -q (pipefail SIGPIPE flake)' >&2; exit 1; }
+grep -Fq "grep -c -- '--read-data-subset' >/dev/null" "$OUT" || { echo 'restic probe patch missing (subset)' >&2; exit 1; }
+grep -Fq "grep -c -- '--read-data' >/dev/null" "$OUT" || { echo 'restic probe patch missing (read-data)' >&2; exit 1; }
 actual=$(sha256sum "$OUT" | awk '{print $1}')
 echo "v1.4.3 candidate SHA256: $actual" >&2
 printf '%s\n' "$OUT"
