@@ -1,0 +1,32 @@
+# Gobernanza: valida el manifiesto declarativo de suites y los limites/adaptadores.
+# Delgado a proposito: no instala dependencias ni ejecuta suites pesadas.
+name: governance
+
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [dev, main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  governance:
+    name: manifiesto + arquitectura
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Validar manifiesto de suites
+        run: node scripts/validate-suites.mjs
+      - name: Tests de gobernanza
+        run: node --test "tests/architecture/**/*.test.mjs"

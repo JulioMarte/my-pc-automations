@@ -1,6 +1,8 @@
 # AGENTS.md
 
-Reglas de trabajo para este repositorio (`my-pc-automations`).
+Reglas de trabajo para este repositorio (`my-pc-automations`). Este archivo es
+la guia de operacion de alcance repositorio completo. Los `AGENTS.md` anidados
+anaden reglas especificas de su ruta; nunca contradicen las de aqui.
 
 ## Flujo de ramas
 
@@ -24,6 +26,48 @@ feat/<feature>  --(tests + verificacion OK)-->  dev  --(PR + review)-->  main
 5. Antes de integrar en `dev`: typecheck + tests en verde.
 6. `main` esta protegida en GitHub (requiere PR; sin push directo, sin force-push,
    sin borrado).
+
+## Mapa de instrucciones
+
+- `AGENTS.md` (este archivo): alcance repositorio completo.
+- `local-proxy/AGENTS.md`: alcance `local-proxy/**`.
+- `vps-disaster-recovery/AGENTS.md`: alcance `vps-disaster-recovery/**`.
+- `tests/AGENTS.md`: alcance `tests/**`.
+- `scripts/AGENTS.md`: alcance `scripts/**`.
+- `.github/AGENTS.md`: alcance `.github/**`.
+
+Regla de cercania: el archivo mas cercano al path editado manda para ese path,
+siempre que no contradiga este archivo raiz. Los adaptadores (`CLAUDE.md`,
+`GEMINI.md`, `.github/copilot-instructions.md`, `.github/instructions/*`) son
+imports finos hacia los `AGENTS.md`, no manuales independientes.
+
+## Disciplina de reporte (obligatoria)
+
+1. Explicar que cambio en terminos del sistema (que comportamiento o contrato se
+   movio), no solo que archivos se tocaron.
+2. Indicar explicitamente que **no** se cambio y que problemas son
+   preexistentes y quedan fuera de alcance.
+3. Exponer las decisiones tomadas y las decisiones pendientes.
+4. **Nunca** afirmar que una verificacion paso salvo que se haya ejecutado de
+   verdad en esta sesion; si no se corrio, decirlo.
+
+## Clasificacion de gobernanza
+
+Toda regla estructural se clasifica con una de estas etiquetas; la etiqueta
+indica cuanto puede evolucionar y quien la aprueba.
+
+- **HARD**: invariante o semantica que no se negocia; si se rompe, se falla
+  cerrado. Ejemplos: no push a `main`, `*.sh` en LF (un shebang CRLF rompe en
+  Linux), sin dependencias de runtime en `local-proxy`.
+- **CONTROLLED**: forma aceptada que evoluciona de manera deliberada y
+  aprobada. Ejemplos: estructura de sub-proyectos, taxonomia de tests
+  (`unit`/`integration`/`e2e`/`stress`/`architecture`), contrato de suites.
+- **FLEXIBLE**: implementacion privada; puede cambiar sin aviso si mantiene el
+  contrato publico. Ejemplos: nombres de helpers privados, numero exacto de
+  tests, formato interno de un modulo.
+- **HISTORICAL**: material de procedencia, no autoridad vigente. Ejemplos:
+  `vps-disaster-recovery/candidate/`, `patches/` de versiones pasadas. Se
+  conserva por trazabilidad; no se usa para decidir el presente.
 
 ## Proyecto `local-proxy`
 
@@ -70,6 +114,33 @@ feat/<feature>  --(tests + verificacion OK)-->  dev  --(PR + review)-->  main
   Evita `pkill` con el patron en la linea de comandos (se auto-mata).
 - **Tailscale ACLs**: politica versionada en `tailscale/acl.hujson` (**no aplicada**; ver
   el orden seguro de aplicacion en el README).
+
+## Proyecto `vps-disaster-recovery`
+
+Laboratorio de recuperacion ante desastres para `vps-backup`, en bash puro y sin
+`npm` ni dependencias de runtime.
+
+- **Gate obligatorio**: `tests/static.sh` debe pasar antes de integrar. Verifica
+  el SHA-256 del candidato contra `candidate/RELEASE_SHA256`, sintaxis bash,
+  ShellCheck (nivel error), invariantes de helpers y la matriz de calendario
+  systemd. `make static` es el atajo.
+- **Materializacion determinista**: `tools/materialize-candidate.sh` reproduce el
+  candidato byte-for-byte (base v1.4.2 verificada + overlay same-OS v1.4.3) y el
+  SHA final se fija en `candidate/RELEASE_SHA256`. No editar `candidate/` a mano.
+- **Tests destructivos**: `s3-roundtrip.sh`, `postgres-roundtrip.sh`,
+  `mariadb-roundtrip.sh`, `docker-policy.sh`, `ops-integrations.sh`,
+  `performance.sh` y `recovery-image-qemu.sh` requieren `sudo`, Docker/MinIO y
+  escriben en namespaces propios (`/srv/vps-dr-*`, `/etc/vps-backup`,
+  `/var/lib/vps-backup`, contenedores/volumenes `ci-*`). **No ejecutarlos en un
+  host de backup de produccion.**
+- **Fin de linea**: los `*.sh` van en LF (ver `.gitattributes`); un shebang CRLF
+  rompe en Linux.
+- **Flake ya corregido**: el probe de capacidades de Restic usaba
+  `restic check --help | grep -q ...`, que bajo `pipefail` provoca SIGPIPE y
+  falsos negativos. El candidato usa `grep -c ... >/dev/null`; no reintroducir
+  `grep -q` en ese probe.
+- **No usar `pkill`** con el patron en la linea de comandos (el propio proceso
+  hace match y se auto-mata).
 
 ## Idioma y estilo
 
