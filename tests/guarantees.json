@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "guarantees": [
+    {
+      "id": "G-NO-RUNTIME-DEPS",
+      "statement": "local-proxy no tiene dependencias de runtime: su produccion corre solo con modulos built-in de Node.js y las dependencias externas quedan limitadas a tooling de desarrollo.",
+      "severity": "critical",
+      "proven_by": ["gov-architecture"]
+    },
+    {
+      "id": "G-SHELL-LF",
+      "statement": "Los scripts de shell del repositorio usan fin de linea LF, de modo que un shebang no se rompe al ejecutarse en Linux.",
+      "severity": "critical",
+      "proven_by": ["gov-architecture"]
+    },
+    {
+      "id": "G-SUITE-MANIFEST",
+      "statement": "El manifiesto declarativo de suites es valido y mantiene selectores y namespaces de artefactos unicos, garantizando una seleccion por politica inequivoca.",
+      "severity": "high",
+      "proven_by": ["gov-architecture"]
+    },
+    {
+      "id": "G-AGENTS-ROUTING",
+      "statement": "Los adaptadores enrutan hacia la politica del repositorio y existen todos los limites anidados, de modo que ninguna ruta queda sin reglas de gobernanza aplicables.",
+      "severity": "high",
+      "proven_by": ["gov-architecture"]
+    },
+    {
+      "id": "G-DR-STATIC-GATE",
+      "statement": "El candidato de recuperacion ante desastres es reproducible, esta pinneado por SHA-256 y pasa las invariantes estaticas y de calendario antes de integrarse.",
+      "severity": "critical",
+      "proven_by": ["dr-static"]
+    },
+    {
+      "id": "G-RESTIC-PROBE",
+      "statement": "El probe de capacidades de Restic es robusto frente a pipefail, sin falsos negativos por SIGPIPE al detectar caracteristicas del binario.",
+      "severity": "high",
+      "proven_by": ["dr-static"]
+    },
+    {
+      "id": "G-LP-JOURNEY",
+      "statement": "Las jornadas end-to-end de local-proxy completan sus flujos de proxy y sesion sin regresiones funcionales.",
+      "severity": "high",
+      "proven_by": ["lp-journey"]
+    },
+    {
+      "id": "G-DR-S3-ROUNDTRIP",
+      "statement": "El ciclo backup a S3 y restore conserva la integridad de los datos, verificada con checksum y con restic check.",
+      "severity": "critical",
+      "proven_by": ["dr-s3-roundtrip"]
+    },
+    {
+      "id": "G-DR-DB-RECOVERY",
+      "statement": "La recuperacion de PostgreSQL y MariaDB restaura los datos con checksum correcto tras un ciclo de backup y destruccion.",
+      "severity": "high",
+      "proven_by": ["dr-postgres-roundtrip", "dr-mariadb-roundtrip"]
+    }
+  ]
+}
