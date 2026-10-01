@@ -171,3 +171,50 @@ jobs:
             /tmp/vps-dr-failure-context.txt
           if-no-files-found: warn
           retention-days: 30
+
+  release-candidate:
+    name: Release candidate bundle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    if: ${{ always() }}
+    needs:
+      - static
+      - debian-smoke
+      - docker-policy
+      - ops-integrations
+      - s3-roundtrip
+      - postgres-roundtrip
+      - mariadb-roundtrip
+      - performance
+      - recovery-image-qemu
+    steps:
+      - name: Fail closed unless every release gate succeeded
+        run: |
+          results=(
+            "${{ needs.static.result }}"
+            "${{ needs.debian-smoke.result }}"
+            "${{ needs.docker-policy.result }}"
+            "${{ needs.ops-integrations.result }}"
+            "${{ needs.s3-roundtrip.result }}"
+            "${{ needs.postgres-roundtrip.result }}"
+            "${{ needs.mariadb-roundtrip.result }}"
+            "${{ needs.performance.result }}"
+            "${{ needs.recovery-image-qemu.result }}"
+          )
+          for result in "${results[@]}"; do
+            [[ "$result" == success ]] || {
+              printf 'Release gate no exitoso: %s\n' "$result" >&2
+              exit 1
+            }
+          done
+      - uses: actions/checkout@v4
+      - name: Package exact tested candidate
+        working-directory: vps-disaster-recovery
+        run: bash ./tools/package-release.sh
+      - name: Publish release candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: vps-dr-v1.4.3-${{ github.sha }}
+          path: vps-disaster-recovery/dist/
+          if-no-files-found: error
+          retention-days: 30

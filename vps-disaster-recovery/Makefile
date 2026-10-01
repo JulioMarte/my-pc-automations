@@ -1,12 +1,21 @@
 SHELL := /usr/bin/env bash
-.PHONY: candidate static s3 postgres perf
+.PHONY: candidate static s3 postgres mariadb ops qemu perf release
+
 candidate:
-	./tools/materialize-candidate.sh
+	bash ./tools/materialize-candidate.sh
 static:
-	./tests/static.sh
+	bash ./tests/static.sh
 s3:
-	sudo ./tests/s3-roundtrip.sh
+	sudo bash ./tests/s3-roundtrip.sh
 postgres:
-	sudo ./tests/postgres-roundtrip.sh
+	sudo bash ./tests/postgres-roundtrip.sh
+mariadb:
+	sudo bash ./tests/mariadb-roundtrip.sh
+ops:
+	sudo bash ./tests/ops-integrations.sh
+qemu:
+	sudo bash ./tests/recovery-image-qemu.sh
 perf:
-	sudo ./tests/performance.sh
+	sudo SIZE_MIB=256 SMALL_FILES=10000 bash ./tests/performance.sh
+release:
+	bash ./tools/package-release.sh

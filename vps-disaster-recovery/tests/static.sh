@@ -16,6 +16,7 @@ echo '== shellcheck errors =='
 if command -v shellcheck >/dev/null 2>&1; then
   shellcheck -S error -e SC1090,SC1091 "$SCRIPT"
   shellcheck -S error "$ROOT/tools/build-recovery-image.sh"
+  shellcheck -S error "$ROOT/tools/package-release.sh"
   shellcheck -S error -s bash -e SC1090,SC1091 "$ROOT/modules/ops-integrations.sh"
   shellcheck -S error -s bash -e SC1090,SC1091 "$ROOT/modules/ops-contabo-safety.sh"
   shellcheck -S error -s bash -e SC1090,SC1091 "$ROOT/modules/same-os-recovery.sh"
@@ -105,5 +106,19 @@ grep -Fq 'no rotaré con inventario paginado incompleto' "$SCRIPT"
 grep -Fq 'COOLIFY_DB_BACKUP_AUTHORITY="vps-backup"' "$SCRIPT"
 grep -Fq 'COOLIFY_DB_NATIVE_SUPPLEMENTAL="false"' "$SCRIPT"
 grep -Fq 'coolify-native no puede declarar AUTO_DR_READY' "$SCRIPT"
+
+echo '== release bundle identity =='
+release_tmp=$(mktemp -d)
+bash "$ROOT/tools/package-release.sh" "$release_tmp" >/dev/null
+[[ -x "$release_tmp/vps-backup-v1.4.3.sh" ]]
+(
+  cd "$release_tmp"
+  sha256sum -c SHA256SUMS >/dev/null
+)
+grep -Fqx 'version=1.4.3' "$release_tmp/RELEASE-MANIFEST.txt"
+grep -Fqx "sha256=$actual_sha" "$release_tmp/RELEASE-MANIFEST.txt"
+[[ -s "$release_tmp/PRODUCTION-DRILL.md" ]]
+[[ -s "$release_tmp/recovery-cloud-init.example.yaml" ]]
+rm -rf "$release_tmp"
 
 echo 'STATIC PASS'
