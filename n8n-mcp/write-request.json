@@ -1,5 +1,5 @@
 {
-  "requestId": "d7f7cb7b-1cf6-49a0-8f56-21e24c7fcf2b",
+  "requestId": "54d51be7-0537-4e25-975f-a0857e2c4f6f",
   "targetRef": "refs/heads/feat/n8n-mcp-client",
   "tool": "update_folder",
   "arguments": {
@@ -7,7 +7,7 @@
     "folderId": "REPLACE_WITH_FOLDER_ID",
     "name": "REPLACE_WITH_NEW_NAME"
   },
-  "expectedTargetName": "REPLACE_WITH_CURRENT_TARGET_NAME",
+  "expectedTargetName": "REPLACE_WITH_CURRENT_NAME",
   "outputMode": "summary",
   "confirmWrite": false,
   "confirmRisk": false
