@@ -1,9 +1,8 @@
 {
-  "tool": "get_workflow_versions_diff",
+  "tool": "search_workflow_executions",
   "arguments": {
     "workflowId": "3hSBgYsImJuHy5hg",
-    "fromVersionId": "bc384275-371b-4a5e-9979-2fbfa5e59fe5",
-    "toVersionId": "bc384275-371b-4a5e-9979-2fbfa5e59fe5"
+    "limit": 20
   },
   "outputMode": "summary",
   "confirmWrite": false
