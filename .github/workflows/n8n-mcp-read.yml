@@ -2,17 +2,16 @@ name: n8n MCP read
 
 on:
   push:
-    branches:
-      - feat/n8n-mcp-client
     paths:
       - "n8n-mcp/read-request.json"
-      - "n8n-mcp/src/invoke.mjs"
-      - "n8n-mcp/src/tools.mjs"
-      - ".github/workflows/n8n-mcp-read.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: n8n-mcp-read-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   read:
