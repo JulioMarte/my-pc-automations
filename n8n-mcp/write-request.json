@@ -1,9 +1,6 @@
 {
-  "tool": "create_folder",
-  "arguments": {
-    "projectId": "REPLACE_WITH_PROJECT_ID",
-    "name": "__MCP_EXPLICIT_WRITE__"
-  },
+  "tool": "search_projects",
+  "arguments": {},
   "outputMode": "summary",
-  "confirmWrite": false
+  "confirmWrite": true
 }
