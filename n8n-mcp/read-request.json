@@ -1,8 +1,13 @@
 {
-  "tool": "search_workflow_executions",
+  "tool": "get_workflow_execution",
   "arguments": {
     "workflowId": "QBCmQypRRV25Ln8F",
-    "limit": 20
+    "executionId": "1217",
+    "includeData": true,
+    "nodeNames": [
+      "Recibo de turno CFO"
+    ],
+    "truncateData": 8000
   },
   "outputMode": "summary",
   "confirmWrite": false
