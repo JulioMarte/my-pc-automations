@@ -1,9 +1,16 @@
 {
-  "tool": "get_workflow_versions_diff",
+  "tool": "get_workflow_version",
   "arguments": {
     "workflowId": "QBCmQypRRV25Ln8F",
-    "fromVersionId": "48fb44ea-fcbd-4027-9222-dc6b5dc9846e",
-    "toVersionId": "bddc7fab-99b6-4400-93c5-597737bbc633"
+    "versionId": "73dbf2f0-0222-4f08-91d2-ec2657a138d2"
+  },
+  "projection": {
+    "type": "nodeRuntime",
+    "nodeNames": [
+      "CFO Conversacional",
+      "DeepSeek CFO Model",
+      "Memoria por conversación"
+    ]
   },
   "outputMode": "summary",
   "confirmWrite": false
