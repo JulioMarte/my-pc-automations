@@ -5,13 +5,10 @@
     "executionId": "1270",
     "includeData": true,
     "nodeNames": [
-      "DeepSeek CFO Model",
-      "CFO Conversacional",
-      "Preparar respuesta CFO",
-      "Responder como CFO",
-      "Recibo de turno CFO"
+      "Recibo de turno CFO",
+      "Preparar respuesta CFO"
     ],
-    "truncateData": 12000
+    "truncateData": 10000
   },
   "outputMode": "summary",
   "confirmWrite": false
