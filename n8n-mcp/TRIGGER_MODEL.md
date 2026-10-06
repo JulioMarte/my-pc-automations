@@ -36,15 +36,21 @@ A path-filtered request file is therefore the narrowest usable trigger:
 
 GitHub evaluates `paths` against files changed by a push. If at least one changed path matches, the workflow can run.
 
-This means a commit that changes `write-request.json` **and** unrelated files still triggers the write workflow. Operationally, keep MCP request commits single-purpose.
+A matching path is enough for GitHub to create a workflow run, so `paths` alone does not prove that the commit changed only the request file. The write job therefore performs a second check using the push range and rejects the run unless the only changed file is `n8n-mcp/write-request.json`.
 
 For manual workflows, `workflow_dispatch` becomes useful after these workflow files reach the default branch.
 
 ## Concurrency
 
-Read and write runners use separate concurrency groups with `cancel-in-progress: true` to avoid stacking obsolete requests on the same branch.
+Read and write use separate concurrency groups.
 
-Do not share a concurrency group between read and write; a read should never cancel a write or vice versa.
+For writes, `cancel-in-progress:false` is mandatory. A write runner that has started must never be canceled merely because a newer request arrived: the remote n8n mutation may already have happened.
+
+GitHub's compatible concurrency behavior here does **not** provide a durable FIFO queue for an arbitrary number of pending writes. Only submit one write at a time and wait for the current run to finish before committing another write request.
+
+For reads, cancellation of obsolete runs is acceptable because reads do not mutate n8n.
+
+Do not share a concurrency group between read and write.
 
 ## Secret model
 
