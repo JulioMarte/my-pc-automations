@@ -4,7 +4,7 @@
     "workflowId": "QBCmQypRRV25Ln8F",
     "executionId": "1217",
     "includeData": true,
-    "truncateData": true
+    "truncateData": 500
   },
   "outputMode": "summary",
   "confirmWrite": false
