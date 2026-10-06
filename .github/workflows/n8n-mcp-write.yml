@@ -78,7 +78,7 @@ jobs:
         run: node n8n-mcp/src/invoke.mjs
 
       - name: Upload sanitized write result
-        if: steps.gate.outputs.confirmed == 'true' && always()
+        if: success() && steps.gate.outputs.confirmed == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: n8n-mcp-write-result
