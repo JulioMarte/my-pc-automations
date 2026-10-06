@@ -1,12 +1,11 @@
 {
-  "requestId": "7f516cb5-9351-4dda-a28a-63e45fa03db4",
+  "requestId": "0f74849a-ff58-43f0-9acf-8077d743ba7e",
   "targetRef": "refs/heads/feat/n8n-mcp-client",
-  "tool": "archive_workflow",
+  "tool": "move_workflows_to_folder",
   "arguments": {
-    "workflowId": "__adversarial_never_called__"
+    "workflowIds": [],
+    "folderId": "0"
   },
-  "expectedTargetName": "__adversarial_never_called__",
   "outputMode": "summary",
-  "confirmWrite": true,
-  "confirmRisk": false
+  "confirmWrite": true
 }
