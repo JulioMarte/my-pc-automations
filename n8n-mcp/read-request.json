@@ -4,7 +4,12 @@
     "workflowId": "QBCmQypRRV25Ln8F",
     "executionId": "1292",
     "includeData": true,
-    "truncateData": 3000
+    "nodeNames": [
+      "DeepSeek CFO Model",
+      "CFO Conversacional",
+      "Preparar respuesta CFO"
+    ],
+    "truncateData": 12000
   },
   "outputMode": "summary",
   "confirmWrite": false
