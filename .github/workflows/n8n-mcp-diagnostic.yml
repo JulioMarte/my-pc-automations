@@ -1,16 +1,14 @@
 name: n8n MCP diagnostic
 
 on:
-  push:
-    branches:
-      - feat/n8n-mcp-client
-    paths:
-      - "n8n-mcp/src/diagnose.mjs"
-      - ".github/workflows/n8n-mcp-diagnostic.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: n8n-mcp-diagnostic-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   discover:
