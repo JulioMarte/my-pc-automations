@@ -1,0 +1,44 @@
+name: n8n MCP read suite
+
+on:
+  push:
+    branches:
+      - feat/n8n-mcp-client
+    paths:
+      - "n8n-mcp/src/read-suite.mjs"
+      - "n8n-mcp/src/tools.mjs"
+      - ".github/workflows/n8n-mcp-read-suite.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  read-suite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      N8N_MCP_URL: ${{ vars.N8N_MCP_URL }}
+      N8N_MCP_TOKEN: ${{ secrets.N8N_MCP_TOKEN }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify configuration
+        shell: bash
+        run: |
+          test -n "$N8N_MCP_URL" || (echo "N8N_MCP_URL repository variable is missing" && exit 1)
+          test -n "$N8N_MCP_TOKEN" || (echo "N8N_MCP_TOKEN secret is missing" && exit 1)
+
+      - name: Run comprehensive read-only MCP suite
+        run: node n8n-mcp/src/read-suite.mjs
+
+      - name: Upload read-suite report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: n8n-mcp-read-suite
+          path: n8n-mcp/out/read-suite.json
+          if-no-files-found: warn
+          retention-days: 1
