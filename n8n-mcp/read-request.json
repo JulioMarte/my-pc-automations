@@ -1,8 +1,12 @@
 {
-  "tool": "search_workflow_executions",
+  "tool": "get_workflow_execution_stats",
   "arguments": {
     "workflowId": "QBCmQypRRV25Ln8F",
-    "limit": 8
+    "executionId": "1323",
+    "nodeNames": [
+      "DeepSeek CFO Model",
+      "CFO Conversacional"
+    ]
   },
   "outputMode": "summary",
   "confirmWrite": false
