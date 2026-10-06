@@ -311,7 +311,8 @@ if (nodeId) {
 const agentPayload = roots.agents?.payload;
 const agentId = findFirstByKeys(agentPayload, ["agentId", "id"]);
 if (agentId) {
-  await test("get_agent", { agentId });\n  await test("validate_agent", { agentId }, { allowToolError: true });
+  await test("get_agent", { agentId });
+  await test("validate_agent", { agentId }, { allowToolError: true });
   const versionsSchema = toolMap.get("list_agent_versions")?.inputSchema;
   const versionsArgs = minimalFromSchema(versionsSchema);
   for (const key of Object.keys(versionsSchema?.properties || {})) if (/agent.*id/i.test(key)) versionsArgs[key] = agentId;
