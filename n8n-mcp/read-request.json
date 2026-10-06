@@ -1,8 +1,9 @@
 {
-  "tool": "archive_workflow",
+  "tool": "search_workflows",
   "arguments": {
-    "workflowId": "__must_never_be_sent__"
+    "limit": 20,
+    "bogusArgument": true
   },
   "outputMode": "summary",
-  "confirmWrite": true
+  "confirmWrite": false
 }
