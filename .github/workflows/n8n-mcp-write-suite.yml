@@ -1,0 +1,46 @@
+name: n8n MCP write suite
+
+on:
+  push:
+    branches:
+      - feat/n8n-mcp-client
+    paths:
+      - "n8n-mcp/src/write-suite.mjs"
+      - ".github/workflows/n8n-mcp-write-suite.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: n8n-mcp-write-suite-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  write-suite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      N8N_MCP_URL: ${{ vars.N8N_MCP_URL }}
+      N8N_MCP_TOKEN: ${{ secrets.N8N_MCP_TOKEN }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify configuration
+        shell: bash
+        run: |
+          test -n "$N8N_MCP_URL" || (echo "N8N_MCP_URL repository variable is missing" && exit 1)
+          test -n "$N8N_MCP_TOKEN" || (echo "N8N_MCP_TOKEN secret is missing" && exit 1)
+
+      - name: Run controlled MCP write suite
+        run: node n8n-mcp/src/write-suite.mjs
+
+      - name: Upload sanitized write-suite report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: n8n-mcp-write-suite
+          path: n8n-mcp/out/write-suite.json
+          if-no-files-found: warn
+          retention-days: 1
