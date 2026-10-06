@@ -5,13 +5,9 @@
     "executionId": "1217",
     "includeData": true,
     "nodeNames": [
-      "Avisar recepción del turno",
-      "Preparar respuesta CFO",
-      "¿Responder en Telegram?",
-      "Responder como CFO",
-      "Recibo de turno CFO"
+      "Responder como CFO"
     ],
-    "truncateData": 2000
+    "truncateData": 5000
   },
   "outputMode": "summary",
   "confirmWrite": false
