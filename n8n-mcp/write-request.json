@@ -1,5 +1,5 @@
 {
-  "requestId": "3d4de06e-0e56-4bd7-a85d-c942c19c59b0",
+  "requestId": "67c3fd15-5f2f-47df-a765-c36cf4ec0ec0",
   "targetRef": "refs/heads/feat/n8n-mcp-client",
   "tool": "update_folder",
   "arguments": {
@@ -7,7 +7,7 @@
     "folderId": "LIsmirp0mG6wJ9CJ",
     "name": "__MCP_WRITE_SUITE__"
   },
-  "expectedTargetName": "WRONG_NAME_ADVERSARIAL",
+  "expectedTargetName": "__MCP_WRITE_SUITE__",
   "outputMode": "summary",
   "confirmWrite": true
 }
