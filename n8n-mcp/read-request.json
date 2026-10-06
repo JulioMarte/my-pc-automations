@@ -1,15 +1,8 @@
 {
-  "tool": "get_workflow_version",
+  "tool": "search_workflow_executions",
   "arguments": {
     "workflowId": "QBCmQypRRV25Ln8F",
-    "versionId": "c245fc7a-2b9f-40c4-b138-cb935d684f0b"
-  },
-  "projection": {
-    "type": "connections",
-    "sourceNames": [
-      "CFO Conversacional",
-      "Preparar respuesta CFO"
-    ]
+    "limit": 15
   },
   "outputMode": "summary",
   "confirmWrite": false
