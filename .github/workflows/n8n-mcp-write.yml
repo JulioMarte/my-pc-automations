@@ -2,19 +2,22 @@ name: n8n MCP write
 
 on:
   push:
+    branches:
+      - main
+      - feat/n8n-mcp-client
     paths:
       - "n8n-mcp/write-request.json"
-  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
   group: n8n-mcp-write-${{ github.ref }}
-  cancel-in-progress: true
+  queue: max
 
 jobs:
   write:
+    if: github.actor == github.repository_owner && github.run_attempt == 1
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -27,6 +30,21 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Require a single-purpose request push
+        shell: bash
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          mapfile -t CHANGED < <(git diff --name-only "$BEFORE_SHA" "$HEAD_SHA")
+          printf 'Changed files:\n%s\n' "${CHANGED[*]}"
+          if [ "${#CHANGED[@]}" -ne 1 ] || [ "${CHANGED[0]}" != "n8n-mcp/write-request.json" ]; then
+            echo "Write pushes must change only n8n-mcp/write-request.json"
+            exit 1
+          fi
 
       - name: Verify configuration
         shell: bash
