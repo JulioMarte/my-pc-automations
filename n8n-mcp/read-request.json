@@ -4,7 +4,13 @@
     "workflowId": "QBCmQypRRV25Ln8F",
     "executionId": "1270",
     "includeData": true,
-    "truncateData": 1200
+    "nodeNames": [
+      "FF Tool: Actividad cuenta",
+      "CFO Tool: Consultar BHD",
+      "CFO Tool: Investigar correos bancarios",
+      "CFO Conversacional"
+    ],
+    "truncateData": 8000
   },
   "outputMode": "summary",
   "confirmWrite": false
