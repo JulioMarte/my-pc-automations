@@ -1,8 +1,14 @@
 {
-  "tool": "get_workflow_details",
+  "tool": "get_workflow_version",
   "arguments": {
     "workflowId": "QBCmQypRRV25Ln8F",
-    "detailLevel": "execution"
+    "versionId": "9940fc47-b550-48d8-b0d3-bf5dc8a68f0a"
+  },
+  "projection": {
+    "type": "nodeRuntime",
+    "nodeNames": [
+      "DeepSeek CFO Model"
+    ]
   },
   "outputMode": "summary",
   "confirmWrite": false
