@@ -1,9 +1,10 @@
 {
   "tool": "search_workflows",
   "arguments": {
-    "limit": 20,
+    "query": "CFO",
+    "limit": 100,
     "sortBy": "updatedAt:desc"
   },
-  "outputMode": "summary",
+  "outputMode": "full",
   "confirmWrite": false
 }
