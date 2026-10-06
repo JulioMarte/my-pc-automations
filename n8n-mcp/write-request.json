@@ -1,5 +1,5 @@
 {
-  "requestId": "0d6f4f7d-758e-4f1b-b9b1-3f4f42e8c497",
+  "requestId": "2a74a2a7-1b29-4fef-b8df-a14f2b0d88c3",
   "targetRef": "refs/heads/feat/n8n-mcp-client",
   "tool": "update_workflow",
   "arguments": {
@@ -19,5 +19,5 @@
   "expectedTargetName": "11 - CFO Conversacional",
   "outputMode": "summary",
   "confirmWrite": true,
-  "confirmRisk": false
+  "confirmRisk": true
 }
