@@ -1,19 +1,8 @@
 {
-  "tool": "get_workflow_execution",
+  "tool": "search_workflow_executions",
   "arguments": {
-    "workflowId": "3hSBgYsImJuHy5hg",
-    "executionId": "1058",
-    "includeData": true,
-    "nodeNames": [
-      "Registrar intencion",
-      "Adquirir escritor exclusivo",
-      "¿Escritor adquirido?",
-      "¿Escritura necesaria?",
-      "Escribir Firefly",
-      "Recibo verificado",
-      "Resultado final verificado"
-    ],
-    "truncateData": 10000
+    "workflowId": "QBCmQypRRV25Ln8F",
+    "limit": 50
   },
   "outputMode": "summary",
   "confirmWrite": false
