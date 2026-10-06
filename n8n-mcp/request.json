@@ -1,6 +1,9 @@
 {
-  "tool": "get_workflow_best_practices",
-  "arguments": {},
+  "tool": "search_nodes",
+  "arguments": {
+    "queries": ["http request"],
+    "usage": "workflow"
+  },
   "outputMode": "summary",
   "confirmWrite": false
 }
