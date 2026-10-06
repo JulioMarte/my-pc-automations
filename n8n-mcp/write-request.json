@@ -1,17 +1,9 @@
 {
-  "requestId": "b624d795-4a0a-45d7-a720-b46f9eb24c3a",
+  "requestId": "ecf775c0-c70d-40e8-b1ea-c29d433ad62b",
   "targetRef": "refs/heads/feat/n8n-mcp-client",
-  "tool": "update_workflow",
+  "tool": "publish_workflow",
   "arguments": {
-    "workflowId": "QBCmQypRRV25Ln8F",
-    "operations": [
-      {
-        "type": "setNodeParameter",
-        "nodeName": "DeepSeek CFO Model",
-        "path": "/model",
-        "value": "openai/gpt-4.1-mini"
-      }
-    ]
+    "workflowId": "QBCmQypRRV25Ln8F"
   },
   "expectedTargetName": "11 - CFO Conversacional",
   "outputMode": "summary",
