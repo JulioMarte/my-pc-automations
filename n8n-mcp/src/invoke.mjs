@@ -89,6 +89,9 @@ if (HIGH_RISK_TOOLS.has(cfg.tool) && cfg.confirmRisk !== true) {
 if (forcedWriteOnly && TARGET_ASSERTION_TOOLS.has(cfg.tool) && typeof cfg.expectedTargetName !== "string") {
   throw new Error(`${cfg.tool} requiere expectedTargetName para proteger contra IDs equivocados`);
 }
+if (forcedWriteOnly && ["delete_data_table_column", "rename_data_table_column"].includes(cfg.tool) && typeof cfg.expectedColumnName !== "string") {
+  throw new Error(`${cfg.tool} requiere expectedColumnName para proteger contra columnId equivocado`);
+}
 if (cfg.outputMode === "full" && repoVisibility === "public") {
   throw new Error("outputMode=full no se permite en un repo publico.");
 }
@@ -268,6 +271,7 @@ function firstName(value) {
 async function resolveTargetName(tool, args) {
   let result;
   let targetId;
+  let requiresExactListMatch = false;
 
   if (args.workflowId) {
     targetId = args.workflowId;
@@ -277,9 +281,11 @@ async function resolveTargetName(tool, args) {
     result = await request("tools/call", { name: "get_agent", arguments: { agentId: targetId } });
   } else if (args.folderId && args.projectId) {
     targetId = args.folderId;
+    requiresExactListMatch = true;
     result = await request("tools/call", { name: "search_folders", arguments: { projectId: args.projectId, limit: 100 } });
   } else if ((args.dataTableId || args.tableId) && args.projectId) {
     targetId = args.dataTableId || args.tableId;
+    requiresExactListMatch = true;
     result = await request("tools/call", { name: "search_data_tables", arguments: {} });
   } else {
     return null;
@@ -288,7 +294,25 @@ async function resolveTargetName(tool, args) {
   if (result?.isError) throw new Error("No se pudo verificar el recurso objetivo antes de escribir.");
   const body = structuredPayload(result);
   const exact = findObjectById(body, targetId);
+  if (requiresExactListMatch && !exact) return null;
   return firstName(exact || body);
+}
+
+async function assertColumnIdentity(args, expectedColumnName) {
+  if (!args.dataTableId || !args.projectId || !args.columnId) return;
+  const result = await request("tools/call", {
+    name: "search_data_tables",
+    arguments: {},
+  });
+  if (result?.isError) throw new Error("No se pudo verificar la columna objetivo.");
+  const table = findObjectById(structuredPayload(result), args.dataTableId);
+  if (!table) throw new Error("No se encontro la Data Table por ID; write bloqueado.");
+  const column = findObjectById(table, args.columnId);
+  if (!column) throw new Error("No se encontro la columna por ID; write bloqueado.");
+  const actualColumnName = firstName(column);
+  if (!actualColumnName || actualColumnName !== expectedColumnName) {
+    throw new Error("expectedColumnName no coincide con la columna resuelta; write bloqueado.");
+  }
 }
 
 function publicWriteSummary(result) {
@@ -339,6 +363,9 @@ if (forcedWriteOnly && TARGET_ASSERTION_TOOLS.has(cfg.tool)) {
   if (actualTargetName !== cfg.expectedTargetName) {
     throw new Error("expectedTargetName no coincide con el recurso resuelto; write bloqueado.");
   }
+}
+if (forcedWriteOnly && ["delete_data_table_column", "rename_data_table_column"].includes(cfg.tool)) {
+  await assertColumnIdentity(cfg.arguments || {}, cfg.expectedColumnName);
 }
 
 const result = await request("tools/call", {
