@@ -1,0 +1,6 @@
+{
+  "tool": "get_workflow_best_practices",
+  "arguments": {},
+  "outputMode": "summary",
+  "confirmWrite": false
+}
