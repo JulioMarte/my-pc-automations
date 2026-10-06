@@ -315,6 +315,70 @@ async function assertColumnIdentity(args, expectedColumnName) {
   }
 }
 
+const SAFE_RUNTIME_PARAMETER_KEYS = new Set([
+  "contextWindowLength",
+  "model",
+  "maxIterations",
+  "maxTokens",
+  "temperature",
+  "timeout",
+  "topP",
+  "frequencyPenalty",
+  "presencePenalty"
+]);
+
+function findObjectsByNames(value, names) {
+  const wanted = new Set(names);
+  const found = new Map();
+  const walk = (v) => {
+    if (!v || found.size === wanted.size) return;
+    if (Array.isArray(v)) return v.forEach(walk);
+    if (typeof v !== "object") return;
+    if (typeof v.name === "string" && wanted.has(v.name) && !found.has(v.name)) found.set(v.name, v);
+    Object.values(v).forEach(walk);
+  };
+  walk(value);
+  return found;
+}
+
+function pickSafeRuntimeParameters(value, depth = 0) {
+  if (!value || typeof value !== "object" || depth > 4) return {};
+  const out = {};
+  for (const [key, val] of Object.entries(value)) {
+    if (SAFE_RUNTIME_PARAMETER_KEYS.has(key) && (val === null || ["string","number","boolean"].includes(typeof val))) {
+      out[key] = val;
+    } else if (key === "options" && val && typeof val === "object" && !Array.isArray(val)) {
+      const nested = pickSafeRuntimeParameters(val, depth + 1);
+      if (Object.keys(nested).length) out.options = nested;
+    }
+  }
+  return out;
+}
+
+function projectNodeRuntime(result, nodeNames) {
+  if (!Array.isArray(nodeNames) || nodeNames.length < 1 || nodeNames.length > 10 || nodeNames.some((n) => typeof n !== "string")) {
+    throw new Error("projection.nodeNames debe contener entre 1 y 10 nombres de nodo.");
+  }
+  const found = findObjectsByNames(structuredPayload(result), nodeNames);
+  return nodeNames.map((name) => {
+    const node = found.get(name);
+    if (!node) return { name, found: false };
+    return {
+      name,
+      found: true,
+      type: node.type || null,
+      typeVersion: node.typeVersion ?? null,
+      retryOnFail: Boolean(node.retryOnFail),
+      maxTries: node.maxTries ?? null,
+      waitBetweenTries: node.waitBetweenTries ?? null,
+      onError: node.onError ?? null,
+      executeOnce: Boolean(node.executeOnce),
+      disabled: Boolean(node.disabled),
+      parameters: pickSafeRuntimeParameters(node.parameters || {}),
+    };
+  });
+}
+
 function publicWriteSummary(result) {
   return {
     isError: Boolean(result?.isError),
@@ -378,9 +442,20 @@ if (result?.isError) {
 }
 
 const isWrite = !READ_ONLY_TOOLS.has(cfg.tool);
-const safeResult = isWrite && repoVisibility === "public"
-  ? publicWriteSummary(result)
-  : (cfg.outputMode === "full" ? result : sanitize(result));
+let safeResult;
+if (!isWrite && cfg.projection) {
+  if (!["get_workflow_version", "get_workflow_details"].includes(cfg.tool)) {
+    throw new Error("projection solo se permite para get_workflow_version/get_workflow_details.");
+  }
+  if (cfg.projection.type !== "nodeRuntime") {
+    throw new Error("projection.type no permitido.");
+  }
+  safeResult = { nodeRuntime: projectNodeRuntime(result, cfg.projection.nodeNames) };
+} else {
+  safeResult = isWrite && repoVisibility === "public"
+    ? publicWriteSummary(result)
+    : (cfg.outputMode === "full" ? result : sanitize(result));
+}
 
 const payload = {
   ok: true,
