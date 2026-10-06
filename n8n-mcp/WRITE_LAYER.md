@@ -1,5 +1,7 @@
 # n8n MCP Write Layer
 
+Detailed threat-model evidence: [WRITE_ADVERSARIAL_REVIEW.md](./WRITE_ADVERSARIAL_REVIEW.md)
+
 ## Purpose
 
 This layer gives ChatGPT a deliberately explicit path for mutating the instance-level n8n MCP without coupling MCP calls to ordinary repository changes.
@@ -135,16 +137,22 @@ Example shape:
 
 ```json
 {
+  "requestId": "<new-uuid>",
+  "targetRef": "refs/heads/<control-branch>",
   "tool": "update_folder",
   "arguments": {
     "projectId": "<project-id>",
     "folderId": "<folder-id>",
     "name": "<new-name>"
   },
+  "expectedTargetName": "<current-folder-name>",
   "outputMode": "summary",
-  "confirmWrite": true
+  "confirmWrite": true,
+  "confirmRisk": false
 }
 ```
+
+For high-risk tools, `confirmRisk` must be `true`. For Data Table column rename/delete, also include `expectedColumnName`.
 
 Never store tokens, credentials, passwords, API keys, webhook secrets, execution payloads, or private business data in the request file.
 
