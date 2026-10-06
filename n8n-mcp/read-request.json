@@ -5,9 +5,9 @@
     "executionId": "1217",
     "includeData": true,
     "nodeNames": [
-      "CFO Conversacional"
+      "Preparar respuesta CFO"
     ],
-    "truncateData": 20000
+    "truncateData": 6000
   },
   "outputMode": "summary",
   "confirmWrite": false
