@@ -1,10 +1,8 @@
 {
-  "tool": "get_workflow_execution",
+  "tool": "get_workflow_version",
   "arguments": {
-    "workflowId": "1Ox4nvJaxmqy0tHi",
-    "executionId": "1215",
-    "includeData": true,
-    "truncateData": 500
+    "workflowId": "QBCmQypRRV25Ln8F",
+    "versionId": "ff8aa93f-27d2-4c10-9588-1868fd956de9"
   },
   "outputMode": "summary",
   "confirmWrite": false
