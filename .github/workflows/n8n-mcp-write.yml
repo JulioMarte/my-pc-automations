@@ -1,0 +1,49 @@
+name: n8n MCP write
+
+on:
+  push:
+    branches:
+      - feat/n8n-mcp-client
+    paths:
+      - "n8n-mcp/write-request.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: n8n-mcp-write-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  write:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      N8N_MCP_URL: ${{ vars.N8N_MCP_URL }}
+      N8N_MCP_TOKEN: ${{ secrets.N8N_MCP_TOKEN }}
+      REPO_VISIBILITY: ${{ github.event.repository.visibility }}
+      MCP_REQUEST_FILE: n8n-mcp/write-request.json
+      MCP_WRITE_ONLY: "true"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify configuration
+        shell: bash
+        run: |
+          test -n "$N8N_MCP_URL" || (echo "N8N_MCP_URL repository variable is missing" && exit 1)
+          test -n "$N8N_MCP_TOKEN" || (echo "N8N_MCP_TOKEN secret is missing" && exit 1)
+
+      - name: Invoke write-only n8n MCP tool
+        run: node n8n-mcp/src/invoke.mjs
+
+      - name: Upload sanitized write result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: n8n-mcp-write-result
+          path: n8n-mcp/out/result.json
+          if-no-files-found: warn
+          retention-days: 1
