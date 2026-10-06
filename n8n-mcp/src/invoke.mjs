@@ -358,6 +358,91 @@ function pickSafeRuntimeParameters(value, depth = 0) {
   return out;
 }
 
+function categorizeExecutionText(text) {
+  const s = String(text || "").toLowerCase();
+  const cats = [];
+  if (/429|rate.?limit|too many requests/.test(s)) cats.push("rate_limit");
+  if (/timeout|timed out|etimedout|aborterror/.test(s)) cats.push("timeout");
+  if (/credit|balance|insufficient funds|payment required|402/.test(s)) cats.push("credits");
+  if (/context length|context window|too many tokens|maximum context|token limit/.test(s)) cats.push("context_limit");
+  if (/401|403|unauthor|forbidden|api.?key|credential/.test(s)) cats.push("auth");
+  if (/provider|no response|sin respuesta|empty response|upstream/.test(s)) cats.push("provider_response");
+  if (/tool.?call|tool_calls|function.?call/.test(s)) cats.push("tool_call");
+  return [...new Set(cats)];
+}
+
+function collectRuntimeSignals(value) {
+  const state = {
+    tokenUsage: [],
+    finishReasons: new Set(),
+    categories: new Set(),
+    toolNames: new Set(),
+    toolActionCount: 0,
+  };
+  const walk = (v) => {
+    if (v == null) return;
+    if (typeof v === "string") {
+      categorizeExecutionText(v).forEach((x) => state.categories.add(x));
+      return;
+    }
+    if (typeof v !== "object") return;
+    if (Array.isArray(v)) {
+      v.forEach(walk);
+      return;
+    }
+    if (v.tokenUsage && typeof v.tokenUsage === "object") {
+      const t = v.tokenUsage;
+      state.tokenUsage.push({
+        promptTokens: Number.isFinite(t.promptTokens) ? t.promptTokens : null,
+        completionTokens: Number.isFinite(t.completionTokens) ? t.completionTokens : null,
+        totalTokens: Number.isFinite(t.totalTokens) ? t.totalTokens : null,
+      });
+    }
+    if (typeof v.finish_reason === "string") state.finishReasons.add(v.finish_reason);
+    if (typeof v.finishReason === "string") state.finishReasons.add(v.finishReason);
+    if (typeof v.toolName === "string") state.toolNames.add(v.toolName);
+    if (v.actionType === "ExecutionNodeAction" || v.type === "ai_tool") state.toolActionCount++;
+    Object.values(v).forEach(walk);
+  };
+  walk(value);
+  return {
+    tokenUsage: state.tokenUsage,
+    finishReasons: [...state.finishReasons],
+    categories: [...state.categories],
+    toolNames: [...state.toolNames].slice(0, 30),
+    toolActionCount: state.toolActionCount,
+  };
+}
+
+function projectExecutionNodeStats(result, nodeNames) {
+  if (!Array.isArray(nodeNames) || nodeNames.length < 1 || nodeNames.length > 10 || nodeNames.some((n) => typeof n !== "string")) {
+    throw new Error("projection.nodeNames debe contener entre 1 y 10 nombres.");
+  }
+  const body = structuredPayload(result);
+  const runData = body?.data?.resultData?.runData || body?.execution?.data?.resultData?.runData || {};
+  return nodeNames.map((name) => {
+    const runs = Array.isArray(runData[name]) ? runData[name] : [];
+    return {
+      name,
+      runCount: runs.length,
+      runs: runs.map((run) => {
+        const signals = collectRuntimeSignals(run);
+        return {
+          executionIndex: run?.executionIndex ?? null,
+          executionStatus: run?.executionStatus ?? null,
+          executionTimeMs: run?.executionTime ?? null,
+          startTime: run?.startTime ?? null,
+          tokenUsage: signals.tokenUsage,
+          finishReasons: signals.finishReasons,
+          categories: signals.categories,
+          toolNames: signals.toolNames,
+          toolActionCount: signals.toolActionCount,
+        };
+      }),
+    };
+  });
+}
+
 function projectConnections(result, sourceNames) {
   if (!Array.isArray(sourceNames) || sourceNames.length < 1 || sourceNames.length > 10 || sourceNames.some((n) => typeof n !== "string")) {
     throw new Error("projection.sourceNames debe contener entre 1 y 10 nombres.");
@@ -481,13 +566,21 @@ if (result?.isError) {
 const isWrite = !READ_ONLY_TOOLS.has(cfg.tool);
 let safeResult;
 if (!isWrite && cfg.projection) {
-  if (!["get_workflow_version", "get_workflow_details"].includes(cfg.tool)) {
-    throw new Error("projection solo se permite para get_workflow_version/get_workflow_details.");
-  }
   if (cfg.projection.type === "nodeRuntime") {
+    if (!["get_workflow_version", "get_workflow_details"].includes(cfg.tool)) {
+      throw new Error("nodeRuntime projection solo se permite para get_workflow_version/get_workflow_details.");
+    }
     safeResult = { nodeRuntime: projectNodeRuntime(result, cfg.projection.nodeNames) };
   } else if (cfg.projection.type === "connections") {
+    if (!["get_workflow_version", "get_workflow_details"].includes(cfg.tool)) {
+      throw new Error("connections projection solo se permite para get_workflow_version/get_workflow_details.");
+    }
     safeResult = { connections: projectConnections(result, cfg.projection.sourceNames) };
+  } else if (cfg.projection.type === "executionNodeStats") {
+    if (cfg.tool !== "get_workflow_execution") {
+      throw new Error("executionNodeStats projection solo se permite para get_workflow_execution.");
+    }
+    safeResult = { executionNodeStats: projectExecutionNodeStats(result, cfg.projection.nodeNames) };
   } else {
     throw new Error("projection.type no permitido.");
   }
