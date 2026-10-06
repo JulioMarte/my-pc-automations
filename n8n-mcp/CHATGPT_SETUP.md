@@ -1,38 +1,149 @@
-# Conexion del MCP de n8n
+# Conexión de ChatGPT con el MCP de n8n
 
-## Conexion recomendada para ChatGPT
+Este repositorio soporta dos formas distintas de trabajar con el MCP de instancia de n8n.
 
-La conexion debe hacerse directamente contra el MCP de instancia de n8n. El repositorio no actua como proxy de credenciales.
+## 1. Conexión directa del cliente
 
-1. En n8n: Settings > Instance-level MCP.
+Cuando ChatGPT/Codex soporte configurar directamente el servidor MCP, la ruta preferida es conectar el cliente directamente a n8n.
+
+En n8n:
+
+1. Abrir **Settings > Instance-level MCP**.
 2. Habilitar MCP access.
-3. Abrir Connect / Connect a client.
-4. Elegir ChatGPT cuando aparezca como cliente web y preferir OAuth.
-5. Si se usa API key, copiar el Server URL y el token solo al almacenamiento privado del cliente. Nunca guardarlos en este repositorio.
-6. El Server URL oficial termina en `/mcp-server/http`.
+3. Abrir la opción para conectar un cliente.
+4. Preferir OAuth cuando esté disponible.
+5. Si se usa token/API key, guardarlo únicamente en el almacenamiento privado del cliente.
+6. El endpoint de esta instancia usa `/mcp-server/http`.
 
-## Verificacion posterior
+Nunca guardar tokens en este repositorio.
 
-Una vez conectado el cliente:
+## 2. Bridge actual mediante GitHub Actions
 
-1. Inspeccionar las tools anunciadas por el servidor.
-2. Confirmar busqueda de workflows.
-3. Confirmar lectura de un workflow MCP-enabled no critico.
-4. Crear un workflow de prueba.
-5. Modificarlo y validarlo.
-6. Ejecutarlo en modo de prueba cuando corresponda.
-7. Confirmar operaciones de data tables si el servidor las anuncia.
-8. Confirmar operaciones de agents si la version/instancia las anuncia.
-9. Solo despues trabajar sobre workflows reales.
+Para esta conversación se implementó además un bridge controlado usando GitHub Actions.
 
-## Restricciones de n8n
+Este bridge existe porque el conector GitHub disponible en ChatGPT permite editar archivos del repositorio y consultar Actions, pero no expone actualmente una acción para crear un `workflow_dispatch` arbitrario.
 
-- `search_workflows` puede descubrir previews de workflows que el usuario conectado puede ver.
-- Leer datos completos, ejecutar o modificar un workflow existente puede requerir que ese workflow este expuesto a MCP.
-- Los permisos siguen siendo los del usuario autenticado.
-- La disponibilidad exacta de tools depende de la version y funciones habilitadas en la instancia.
-- No asumir una tool: descubrir primero el catalogo que anuncia el servidor.
+Por eso existen dos envelopes explícitos:
 
-## Secretos
+```text
+n8n-mcp/read-request.json
+n8n-mcp/write-request.json
+```
 
-Este repositorio es publico. No guardar aqui tokens, API keys, cookies, OAuth refresh tokens ni archivos de configuracion que los contengan.
+### Lectura
+
+Modificar `read-request.json` ejecuta únicamente:
+
+```text
+n8n MCP read
+```
+
+Ese workflow establece:
+
+```text
+MCP_READ_ONLY=true
+```
+
+y rechaza cualquier tool clasificada como escritura/efecto antes de enviar `tools/call`.
+
+### Escritura
+
+Modificar `write-request.json` ejecuta únicamente:
+
+```text
+n8n MCP write
+```
+
+Ese workflow establece:
+
+```text
+MCP_WRITE_ONLY=true
+```
+
+y además toda operación write requiere:
+
+```json
+"confirmWrite": true
+```
+
+Una tool read enviada por el canal write se bloquea localmente. Una tool write sin confirmación también se bloquea localmente.
+
+## Qué NO dispara el MCP
+
+Los cambios normales en:
+
+- scripts;
+- documentación;
+- README;
+- otros workflows;
+- código de tests;
+- archivos fuera de los dos request envelopes;
+
+no disparan operaciones MCP.
+
+Los workflows siguientes son manual-only:
+
+- `n8n MCP diagnostic`
+- `n8n MCP invoke`
+- `n8n MCP read suite`
+- `n8n MCP write suite`
+
+## Procedimiento recomendado para una operación real
+
+1. Usar la capa read para resolver IDs y contexto.
+2. Revisar el schema vivo anunciado por `tools/list`.
+3. Elegir la operación mínima necesaria.
+4. Para escritura, preparar `write-request.json` con `confirmWrite:true`.
+5. Ejecutar una sola mutación.
+6. Volver a leer el recurso para verificar el estado posterior.
+7. Si se modifica un workflow, conservar historial/versiones como mecanismo de recuperación.
+
+No asumir que una tool existe o que mantiene el mismo schema entre versiones: el schema vivo del servidor desplegado es la fuente operativa final.
+
+## Validación realizada
+
+La instancia anunció 54 tools:
+
+```text
+28 read
+26 write/effect
+```
+
+Resultados:
+
+```text
+Read:  28/28 cubiertas, 0 FAIL
+Write: 26/26 cubiertas, 0 FAIL
+```
+
+La suite write utiliza recursos de prueba aislados y evita integraciones externas reales.
+
+## Seguridad del repositorio público
+
+`my-pc-automations` es público.
+
+No colocar en los request JSON:
+
+- tokens;
+- contraseñas;
+- cookies;
+- refresh tokens;
+- payloads privados;
+- secretos de workflows;
+- datos personales o empresariales sensibles.
+
+Además, `outputMode=full` está bloqueado en el runner mientras el repositorio sea público.
+
+Para tareas administrativas de alta fidelidad o contenido sensible, mover el bridge a un repositorio privado o a otro canal de ejecución privado.
+
+## Documentación oficial
+
+n8n:
+
+- https://docs.n8n.io/connect/connect-to-n8n-mcp-server.md
+- https://docs.n8n.io/connect/connect-to-n8n-mcp-server/mcp-server-tools-reference.md
+
+GitHub Actions:
+
+- https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow
+- https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax
