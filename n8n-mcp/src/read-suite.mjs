@@ -271,7 +271,7 @@ if (tableId) {
     if (/table.*id|dataTableId/i.test(key)) args[key] = tableId;
   }
   await test("get_data_table_rows", args);
-} else add("get_data_table_rows", "SKIP-CONTEXT", "No se encontro una Data Table real accesible.");
+} else add("get_data_table_rows", "SKIP-CONTEXT", "No se encontro una Data Table real con projectId accesible.");
 
 // Node metadata reads.
 const nodePayload = roots.nodes?.payload;
@@ -311,7 +311,7 @@ if (nodeId) {
 const agentPayload = roots.agents?.payload;
 const agentId = findFirstByKeys(agentPayload, ["agentId", "id"]);
 if (agentId) {
-  await test("get_agent", { agentId });
+  await test("get_agent", { agentId });\n  await test("validate_agent", { agentId }, { allowToolError: true });
   const versionsSchema = toolMap.get("list_agent_versions")?.inputSchema;
   const versionsArgs = minimalFromSchema(versionsSchema);
   for (const key of Object.keys(versionsSchema?.properties || {})) if (/agent.*id/i.test(key)) versionsArgs[key] = agentId;
@@ -332,7 +332,7 @@ if (agentId) {
   if (verifyCan) await test("verify_agent_mcp_server", verifyArgs, { allowToolError: true });
   else add("verify_agent_mcp_server", "SKIP-CONTEXT", "La tool requiere contexto MCP externo adicional; no se invento un endpoint.");
 } else {
-  for (const name of ["get_agent","list_agent_versions","discover_agent_assets","verify_agent_mcp_server"]) {
+  for (const name of ["get_agent","validate_agent","list_agent_versions","discover_agent_assets"]) {
     add(name, "SKIP-CONTEXT", "No se encontro un agente real accesible.");
   }
 }
