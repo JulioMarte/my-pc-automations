@@ -2,8 +2,6 @@ name: n8n MCP write
 
 on:
   push:
-    branches:
-      - feat/n8n-mcp-client
     paths:
       - "n8n-mcp/write-request.json"
   workflow_dispatch:
