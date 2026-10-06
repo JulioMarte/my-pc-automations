@@ -5,11 +5,9 @@
     "executionId": "1292",
     "includeData": true,
     "nodeNames": [
-      "DeepSeek CFO Model",
-      "CFO Conversacional",
-      "Preparar respuesta CFO"
+      "DeepSeek CFO Model"
     ],
-    "truncateData": 12000
+    "truncateData": 30000
   },
   "outputMode": "summary",
   "confirmWrite": false
