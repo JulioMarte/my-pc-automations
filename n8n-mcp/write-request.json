@@ -1,13 +1,12 @@
 {
-  "requestId": "4fc87f3f-466e-4a52-a71b-22882241460f",
+  "requestId": "f4d8295e-02c7-4e9f-9a97-5eea6bb01281",
   "targetRef": "refs/heads/feat/n8n-mcp-client",
-  "tool": "update_workflow",
+  "tool": "publish_workflow",
   "arguments": {
-    "workflowId": "REPLACE_WITH_WORKFLOW_ID",
-    "operations": []
+    "workflowId": "QBCmQypRRV25Ln8F"
   },
-  "expectedTargetName": "REPLACE_WITH_CURRENT_TARGET_NAME",
+  "expectedTargetName": "11 - CFO Conversacional",
   "outputMode": "summary",
-  "confirmWrite": false,
-  "confirmRisk": false
+  "confirmWrite": true,
+  "confirmRisk": true
 }
