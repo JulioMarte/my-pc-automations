@@ -40,7 +40,7 @@ async function send(payload, expectResponse = true) {
     "mcp-protocol-version": protocolVersion,
   };
   if (sessionId) headers["mcp-session-id"] = sessionId;
-  const res = await fetch(endpoint, { method: "POST", headers, body: JSON.stringify(payload) });
+  const res = await fetch(endpoint, { method: "POST", headers, body: JSON.stringify(payload), signal: AbortSignal.timeout(15000) });
   const sid = res.headers.get("mcp-session-id");
   if (sid) sessionId = sid;
   const body = await res.text();
