@@ -1,18 +1,15 @@
 {
-  "requestId": "7c508aef-8351-4bfa-9eb2-2d9f4f67a612",
+  "requestId": "12d20d77-648a-4dd5-8c89-dc78349cae2e",
   "targetRef": "refs/heads/feat/n8n-mcp-client",
   "tool": "update_workflow",
   "arguments": {
     "workflowId": "QBCmQypRRV25Ln8F",
     "operations": [
       {
-        "type": "updateNode",
+        "type": "setNodeParameter",
         "nodeName": "DeepSeek CFO Model",
-        "updates": {
-          "parameters.model": "deepseek/deepseek-v4.1-flash",
-          "parameters.options.maxTokens": 32768,
-          "parameters.options.timeout": 300000
-        }
+        "path": "/model",
+        "value": "deepseek/deepseek-v4.1-flash"
       }
     ]
   },
