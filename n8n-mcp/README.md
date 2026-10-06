@@ -1,66 +1,205 @@
-# Cliente MCP de n8n
+# Bridge MCP de n8n
 
-Cliente de diagnostico y operacion para el MCP de instancia de n8n. Vive aislado del resto de `my-pc-automations` y no contiene credenciales.
+Capa aislada dentro de `my-pc-automations` para que ChatGPT pueda consultar y operar el MCP de instancia de n8n mediante GitHub Actions sin guardar credenciales en el repositorio.
 
-## Objetivo
+## Estado validado
 
-Conectarse al endpoint oficial `/mcp-server/http`, negociar MCP, descubrir dinamicamente las capacidades y tools que expone la instancia y permitir invocarlas sin codificar una lista fija.
+Servidor detectado durante las pruebas:
 
-## Requisitos
-
-- Node.js 20+ (usa `fetch` nativo; sin dependencias de runtime).
-- n8n con **Instance-level MCP** habilitado.
-- URL del servidor MCP y token personal generado por n8n.
-
-## Configuracion
-
-No guardes secretos en Git. Copia `.env.example` a un archivo local o exporta las variables en tu shell:
-
-```bash
-export N8N_MCP_URL="https://tu-n8n.example.com/mcp-server/http"
-export N8N_MCP_TOKEN="..."
+```text
+n8n MCP Server v1.2.0
+MCP protocol: 2025-06-18
+Tools anunciadas: 54
 ```
 
-El cliente no carga `.env` por si solo para evitar agregar dependencias. En PowerShell:
+Cobertura validada:
 
-```powershell
-$env:N8N_MCP_URL="https://tu-n8n.example.com/mcp-server/http"
-$env:N8N_MCP_TOKEN="..."
+```text
+Read layer
+  tools clasificadas: 28
+  PASS positivos:      23
+  NEGATIVE-PASS:        5
+  FAIL:                 0
+
+Write/effect layer
+  tools clasificadas: 26
+  covered unique:      26
+  missing:              0
+  FAIL:                 0
 ```
 
-## Comandos
+Detalles:
 
-```bash
-node src/mcp-client.mjs doctor
-node src/mcp-client.mjs tools
-node src/mcp-client.mjs capabilities
-node src/mcp-client.mjs call <tool> '{"parametro":"valor"}'
-node src/mcp-client.mjs rpc <metodo> '{"parametro":"valor"}'
+- [READ_LAYER.md](./READ_LAYER.md)
+- [WRITE_LAYER.md](./WRITE_LAYER.md)
+- [CHATGPT_SETUP.md](./CHATGPT_SETUP.md)
+
+## Arquitectura operativa
+
+```text
+ChatGPT
+  |
+  +-> read-request.json
+  |     -> GitHub Actions: n8n MCP read
+  |     -> MCP_READ_ONLY=true
+  |
+  +-> write-request.json
+        -> GitHub Actions: n8n MCP write
+        -> MCP_WRITE_ONLY=true
+        -> confirmWrite=true obligatorio
 ```
 
-`doctor` inicializa la sesion, muestra las capabilities negociadas y enumera todas las tools. `tools` sigue cursores de paginacion hasta obtener el catalogo completo.
+Los dos canales operativos reaccionan únicamente a cambios en su propio archivo request:
 
-## Alcance real de n8n
+- `n8n-mcp/read-request.json`
+- `n8n-mcp/write-request.json`
 
-El MCP de instancia no equivale a acceso irrestricto a toda la base de datos de n8n. El servidor decide las tools disponibles y n8n aplica los permisos del usuario y la exposicion MCP de workflows. El cliente deliberadamente respeta ese modelo: descubre y llama lo que el servidor anuncie.
+Un cambio normal de código, documentación u otro archivo del repositorio no ejecuta una operación MCP.
 
-Desde n8n 2.13, el MCP de instancia puede crear y editar workflows. Versiones recientes tambien exponen operaciones de data tables y, cuando la funcion correspondiente esta habilitada, agentes. Para workflows existentes, n8n puede exigir que esten marcados como disponibles en MCP antes de leer el contenido completo, ejecutarlos o modificarlos.
-
-## Seguridad
-
-- Nunca commitear `N8N_MCP_TOKEN`.
-- El token viaja solo en `Authorization: Bearer`.
-- El programa no imprime el token.
-- Si el token se expone, rotarlo en n8n inmediatamente.
-- Para operaciones destructivas, revisar primero el schema de la tool con `tools`.
+Los workflows de diagnóstico y suites son manuales mediante `workflow_dispatch`.
 
 ## Estructura
 
 ```text
 n8n-mcp/
   README.md
+  READ_LAYER.md
+  WRITE_LAYER.md
+  CHATGPT_SETUP.md
   .env.example
   package.json
+  read-request.json
+  write-request.json
+  request.json
   src/
     mcp-client.mjs
+    diagnose.mjs
+    invoke.mjs
+    tools.mjs
+    read-suite.mjs
+    write-suite.mjs
+
+.github/workflows/
+  n8n-mcp-read.yml
+  n8n-mcp-write.yml
+  n8n-mcp-diagnostic.yml
+  n8n-mcp-invoke.yml
+  n8n-mcp-read-suite.yml
+  n8n-mcp-write-suite.yml
 ```
+
+## Configuración
+
+GitHub Repository Variable:
+
+```text
+N8N_MCP_URL
+```
+
+GitHub Actions Secret:
+
+```text
+N8N_MCP_TOKEN
+```
+
+Nunca commitear el token.
+
+El cliente acepta la URL base y deriva `/mcp-server/http`, pero además fija el host permitido a `n8n.quisqueyatech.com`.
+
+## Uso local
+
+Requiere Node.js 20+.
+
+Linux/macOS:
+
+```bash
+export N8N_MCP_URL="https://n8n.quisqueyatech.com"
+export N8N_MCP_TOKEN="..."
+node src/mcp-client.mjs doctor
+node src/mcp-client.mjs tools
+node src/mcp-client.mjs capabilities
+```
+
+PowerShell:
+
+```powershell
+$env:N8N_MCP_URL="https://n8n.quisqueyatech.com"
+$env:N8N_MCP_TOKEN="..."
+node src/mcp-client.mjs doctor
+```
+
+El token no se carga automáticamente desde `.env` y no se imprime en salida normal.
+
+## Modelo de seguridad
+
+- allowlist explícita de las 54 tools descubiertas;
+- separación física y lógica entre read y write;
+- fail-closed si una tool entra por el canal equivocado;
+- `confirmWrite:true` obligatorio para operaciones con efecto;
+- `tools/list` y schema vivo antes de cada invocación;
+- host y path MCP fijados;
+- timeouts por llamada;
+- permisos de Actions mínimos: `contents: read`;
+- `concurrency` con cancelación de ejecuciones superadas;
+- resultados sanitizados;
+- `outputMode=full` bloqueado mientras el repositorio sea público.
+
+## Triggers
+
+GitHub Actions usa path filters para que una operación no se ejecute por cualquier cambio del repo.
+
+```text
+n8n MCP read
+  push.paths -> n8n-mcp/read-request.json
+
+n8n MCP write
+  push.paths -> n8n-mcp/write-request.json
+
+n8n MCP diagnostic
+  workflow_dispatch
+
+n8n MCP invoke
+  workflow_dispatch
+
+n8n MCP read suite
+  workflow_dispatch
+
+n8n MCP write suite
+  workflow_dispatch
+```
+
+El canal por archivo request existe porque este conector de GitHub no expone actualmente una acción para crear un `workflow_dispatch` desde ChatGPT. Cuando el workflow esté en la rama por defecto, un humano sí puede usar el botón manual de Actions.
+
+## Fuente de verdad
+
+La documentación oficial describe el contrato general:
+
+- n8n MCP: https://docs.n8n.io/connect/connect-to-n8n-mcp-server.md
+- n8n MCP tools: https://docs.n8n.io/connect/connect-to-n8n-mcp-server/mcp-server-tools-reference.md
+- GitHub Actions workflow syntax: https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax
+- GitHub workflow triggering: https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow
+
+Para ejecutar una tool concreta, la fuente operativa final es el schema vivo anunciado por `tools/list` en la instancia desplegada.
+
+## Limitación importante: repositorio público
+
+Este repositorio es público. Los logs y artifacts de GitHub Actions deben tratarse como potencialmente visibles.
+
+Por eso:
+
+- no se permite `outputMode=full`;
+- no se colocan secretos en los request JSON;
+- no se deben solicitar payloads confidenciales, definiciones completas sensibles o datos privados a través de este transporte;
+- para administración de alta fidelidad, el bridge debería migrarse a un repositorio privado o runner privado.
+
+## Estado de los fixtures de escritura
+
+La suite write conserva únicamente los recursos que no tienen delete expuesto por el MCP:
+
+```text
+Folder:     __MCP_WRITE_SUITE__
+Data Table: MCP_Write_Suite
+Row marker: write-suite-fixture
+```
+
+Los workflows temporales se despublican y archivan. Los Agents temporales se eliminan. Las columnas temporales se eliminan.
