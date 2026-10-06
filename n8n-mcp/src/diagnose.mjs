@@ -9,11 +9,16 @@ if (!rawUrl || !token) {
 }
 
 const endpoint = new URL(rawUrl);
-if (endpoint.protocol !== "https:" ||
-    endpoint.hostname !== "n8n.quisqueyatech.com" ||
-    endpoint.pathname !== "/mcp-server/http") {
-  throw new Error("N8N_MCP_URL no coincide con el endpoint n8n permitido.");
+if (endpoint.protocol !== "https:" || endpoint.hostname !== "n8n.quisqueyatech.com") {
+  throw new Error("N8N_MCP_URL no coincide con el host n8n permitido.");
 }
+if (endpoint.pathname === "/" || endpoint.pathname === "") {
+  endpoint.pathname = "/mcp-server/http";
+} else if (endpoint.pathname !== "/mcp-server/http") {
+  throw new Error("N8N_MCP_URL tiene una ruta no permitida.");
+}
+endpoint.search = "";
+endpoint.hash = "";
 
 let sessionId;
 let id = 0;
