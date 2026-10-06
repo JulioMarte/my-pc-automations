@@ -1,6 +1,8 @@
 {
-  "tool": "get_workflow_sdk_reference",
-  "arguments": { "section": "functions" },
+  "tool": "validate_workflow",
+  "arguments": {
+    "code": "import { workflow, node, trigger } from '@n8n/workflow-sdk';\n\nconst start = trigger({\n  type: 'n8n-nodes-base.manualTrigger',\n  version: 1,\n  config: { name: 'Start' }\n});\n\nconst mark = node({\n  type: 'n8n-nodes-base.set',\n  version: 3.4,\n  config: {\n    name: 'Mark Test',\n    parameters: {\n      mode: 'manual',\n      includeOtherFields: true,\n      assignments: {\n        assignments: [\n          { id: 'suite-marker', name: 'mcpWriteSuite', value: 'safe-test', type: 'string' }\n        ]\n      }\n    }\n  }\n});\n\nexport default workflow('mcp-write-suite-safe', 'MCP Write Suite Safe').add(start.to(mark));"
+  },
   "outputMode": "summary",
   "confirmWrite": false
 }
