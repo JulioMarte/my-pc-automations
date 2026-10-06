@@ -1,8 +1,6 @@
 {
   "tool": "get_workflow_sdk_reference",
-  "arguments": {
-    "section": "patterns"
-  },
+  "arguments": { "section": "functions" },
   "outputMode": "summary",
   "confirmWrite": false
 }
