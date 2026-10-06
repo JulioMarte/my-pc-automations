@@ -1,13 +1,8 @@
 {
-  "tool": "get_workflow_execution",
+  "tool": "get_workflow_details",
   "arguments": {
     "workflowId": "QBCmQypRRV25Ln8F",
-    "executionId": "1270",
-    "includeData": true,
-    "nodeNames": [
-      "Input"
-    ],
-    "truncateData": 5000
+    "detailLevel": "execution"
   },
   "outputMode": "summary",
   "confirmWrite": false
