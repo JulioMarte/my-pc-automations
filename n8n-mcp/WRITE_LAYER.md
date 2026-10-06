@@ -1,211 +1,150 @@
-# Capa de escritura del MCP de n8n
+# n8n MCP Write Layer
 
-## Objetivo
+## Purpose
 
-Permitir operaciones de escritura sobre el MCP de instancia de n8n desde ChatGPT sin ejecutar automatizaciones por cambios normales del repositorio.
+This layer gives ChatGPT a deliberately explicit path for mutating the instance-level n8n MCP without coupling MCP calls to ordinary repository changes.
 
-La entrada operativa es únicamente:
+The operational write path is physically separated from reads and sets `MCP_WRITE_ONLY=true`.
+
+## Trigger model
+
+Only a push that changes:
 
 ```text
 n8n-mcp/write-request.json
 ```
 
-El workflow `n8n MCP write` escucha cambios **solo** en ese archivo. Cambios en código, documentación, otros workflows o cualquier otro archivo del repositorio no ejecutan una operación MCP de escritura.
+can automatically start the operational workflow `n8n MCP write`.
 
-También existe `workflow_dispatch` para uso manual cuando el workflow esté disponible en la rama por defecto.
+Changes to source code, documentation, other workflows, or unrelated repository files do **not** trigger an n8n write.
 
-## Ruta de ejecución
+The diagnostic, general invoke, read-suite, and write-suite workflows are `workflow_dispatch` only. GitHub documents that `paths` filters constrain `push` workflows to matching changed paths, and that `workflow_dispatch` only receives events when the workflow file exists on the default branch.
 
-```text
-ChatGPT
-  -> modifica write-request.json explícitamente
-  -> GitHub Actions: n8n MCP write
-  -> MCP_WRITE_ONLY=true
-  -> initialize
-  -> tools/list
-  -> validación contra schema vivo
-  -> confirmWrite=true obligatorio
-  -> tools/call
-  -> resultado sanitizado
-```
+## Write gates
 
-## Guardas de seguridad
+A write request must pass all of these gates before `tools/call`:
 
-- Host fijado a `n8n.quisqueyatech.com`.
-- Ruta MCP fijada a `/mcp-server/http`.
-- `N8N_MCP_TOKEN` solo proviene de GitHub Actions Secrets.
-- `N8N_MCP_URL` proviene de Repository Variables.
-- `MCP_WRITE_ONLY=true` bloquea todas las tools clasificadas como read.
-- Toda tool no-read requiere `confirmWrite: true`.
-- Antes de `tools/call`, el runner vuelve a ejecutar `tools/list`.
-- La tool solicitada debe seguir siendo anunciada por el servidor.
-- Los argumentos se validan contra el schema vivo.
-- Cada request HTTP tiene timeout.
-- `outputMode=full` está bloqueado mientras el repositorio sea público.
-- El workflow tiene `permissions: contents: read`.
-- El workflow usa `concurrency` para evitar dos mutaciones concurrentes sobre la misma ref.
-- El artifact sanitizado se conserva un día.
+1. The MCP endpoint must be HTTPS.
+2. Host must be exactly `n8n.quisqueyatech.com`.
+3. Path must be exactly `/mcp-server/http`.
+4. The requested tool must be advertised by the live MCP `tools/list`.
+5. The request arguments must pass the live tool schema.
+6. `MCP_WRITE_ONLY=true` rejects every tool classified as read-only.
+7. Every non-read tool requires `confirmWrite: true`.
+8. `outputMode=full` is blocked while this repository is public.
 
-## Validación
+The read runner has the inverse guard: `MCP_READ_ONLY=true` rejects every non-read tool.
 
-Se clasificaron 26 tools como operaciones con potencial de escritura, ejecución o efecto externo.
+## Validation evidence
 
-La segunda corrida completa de la suite obtuvo:
+The write suite classified 26 MCP tools as write/execution tools and covered all 26.
+
+Second idempotence run:
 
 ```text
-write tools:      26
-covered unique:   26
-missing:           0
-fail:              0
+write tools:    26
+covered unique: 26
+missing:         0
+fail:            0
+positive pass:  21
+negative pass:   5
+fixture pass:    3
 ```
 
-La suite se ejecutó dos veces. La segunda corrida verificó que los fixtures persistentes se reutilizan y no se duplican.
+The three fixture passes prove that the persistent Folder, Data Table and marker row were reused instead of duplicated.
 
-### Operaciones positivas probadas
+The operational write runner was then validated independently:
 
-Se probaron con recursos exclusivos de la suite:
+- read tool through write runner -> blocked locally by `MCP_WRITE_ONLY`;
+- write tool with `confirmWrite:false` -> blocked locally;
+- confirmed idempotent `update_folder` against the dedicated fixture -> successful MCP call.
 
-- `create_workflow_from_code`
-- `update_workflow`
-- `move_workflows_to_folder`
-- `prepare_workflow_pin_data`
-- `test_workflow`
-- `execute_workflow` en modo manual
+## Inert fixtures
+
+The suite uses two persistent, clearly reserved resources because the live MCP catalog exposes no delete operation for them:
+
+- Folder: `__MCP_WRITE_SUITE__`
+- Data Table: `MCP_Write_Suite`
+- Data Table marker row: `write-suite-fixture`
+
+They are created once and reused. Temporary columns are deleted before completion.
+
+Workflow tests use an inert `Manual Trigger -> Set` workflow with no credentials, HTTP requests, files, webhooks, databases, or external services. The workflow is archived at the end.
+
+Agent tests create a temporary Agent with no model, credentials, tools, or integrations. Safe configuration mutation is tested positively. Operations that would require a real model, publication state, or external credential are exercised as controlled negative-path validations. The Agent is deleted at the end.
+
+## Covered write/execution tools
+
+- `execute_workflow`
 - `publish_workflow`
 - `unpublish_workflow`
-- `restore_workflow_version`
-- `archive_workflow`
-- `create_folder`
-- `update_folder`
+- `prepare_workflow_pin_data`
+- `test_workflow`
 - `create_data_table`
 - `rename_data_table`
 - `add_data_table_column`
-- `rename_data_table_column`
 - `delete_data_table_column`
+- `rename_data_table_column`
 - `add_data_table_rows`
+- `create_workflow_from_code`
+- `create_folder`
+- `update_folder`
+- `move_workflows_to_folder`
+- `archive_workflow`
+- `update_workflow`
+- `restore_workflow_version`
 - `create_agent`
 - `mutate_agent`
-- `delete_agent`
-
-El workflow temporal usado por la suite contiene solo:
-
-```text
-Manual Trigger -> Set
-```
-
-No contiene HTTP Request, credenciales, filesystem, Execute Command ni integraciones externas.
-
-Antes de crearlo se validó con `validate_workflow`; el servidor devolvió `valid: true` y `nodeCount: 2`.
-
-### Rutas validadas mediante rechazo controlado
-
-No se deben probar positivamente en una suite inocua cuando ello pueda usar credenciales, modelos, canales o servicios externos:
-
 - `call_agent`
 - `publish_agent`
 - `unpublish_agent`
 - `revert_agent`
+- `delete_agent`
 - `update_agent_integration`
 
-El Agent temporal se creó sin modelo ni credencial. Estas rutas se ejercitaron esperando un rechazo de dominio válido. No se conectó Telegram, Slack, Linear, LLM ni otra integración real.
+## Operations deliberately treated as high risk
 
-## Fixtures persistentes
+A successful transport/schema test is not permission to use a tool casually.
 
-El MCP actual no expone delete para Folder ni Data Table. Para no generar basura en cada corrida se conservan exactamente estos fixtures:
+Before calling these against a real object, inspect the target and obtain an explicit user instruction:
 
-```text
-Folder:     __MCP_WRITE_SUITE__
-Data Table: MCP_Write_Suite
-Row marker: write-suite-fixture
-```
+- `execute_workflow`: may trigger downstream effects.
+- `test_workflow`: can still execute nodes; use pin data and inert workflows for tests.
+- `publish_workflow` / `unpublish_workflow`: changes availability/runtime state.
+- `archive_workflow`: removes a workflow from normal active views.
+- `restore_workflow_version`: replaces current workflow state with a historical version.
+- `call_agent`: may invoke models/tools and incur external effects or cost.
+- `publish_agent` / `unpublish_agent` / `revert_agent`: changes Agent lifecycle state.
+- `update_agent_integration`: can connect an Agent to an external channel/credential.
+- Data Table mutations: can alter persistent business data.
 
-La segunda corrida confirmó que se reutilizan.
+For a real destructive operation, prefer read-before-write, narrow arguments, explicit confirmation, and read-after-write verification.
 
-Las columnas temporales creadas durante la prueba sí se eliminan. Los Agents temporales se eliminan. Los workflows temporales se despublican y archivan.
+## Explicit usage
 
-## Fail-closed comprobado
+To request one write, edit only `n8n-mcp/write-request.json`.
 
-Se hicieron pruebas específicas sobre el runner operativo:
-
-1. Se intentó ejecutar `search_projects` desde el canal write.
-   Resultado: `MCP_WRITE_ONLY` la bloqueó antes de `tools/call`.
-
-2. Se intentó `archive_workflow` con `confirmWrite:false`.
-   Resultado: el runner lo bloqueó antes de `tools/call`.
-
-3. Se ejecutó `update_folder` sobre el fixture, asignándole su mismo nombre y con `confirmWrite:true`.
-   Resultado: ejecución exitosa y sin cambio neto de estado.
-
-## Uso normal desde ChatGPT
-
-Una operación debe expresarse explícitamente en `write-request.json`.
-
-Ejemplo conceptual:
+Example shape:
 
 ```json
 {
-  "tool": "update_workflow",
+  "tool": "update_folder",
   "arguments": {
-    "workflowId": "<id>",
-    "operations": []
+    "projectId": "<project-id>",
+    "folderId": "<folder-id>",
+    "name": "<new-name>"
   },
   "outputMode": "summary",
   "confirmWrite": true
 }
 ```
 
-Nunca poner tokens, contraseñas, cookies o secretos dentro del request.
+Never store tokens, credentials, passwords, API keys, webhook secrets, execution payloads, or private business data in the request file.
 
-Para una operación real, el flujo recomendado es:
+## Public repository limitation
 
-1. Resolver IDs y contexto mediante la capa read.
-2. Revisar el schema vivo.
-3. Preparar la mutación mínima.
-4. Ejecutar una sola tool write.
-5. Leer nuevamente el recurso para verificar el estado posterior.
-6. Para cambios de workflow, usar historial/versiones como mecanismo de recuperación cuando corresponda.
+This repository is public. Workflow logs, request files and uploaded artifacts must be treated as public-facing output.
 
-## Triggers de GitHub Actions
+The token remains a GitHub Actions secret, but **request arguments are committed to Git**. Therefore this bridge is suitable only for identifiers and non-sensitive control data. Do not use it to send secret values or confidential payloads.
 
-Los runners operativos read/write usan un `push.paths` extremadamente estrecho:
-
-- `n8n MCP read` -> solo `n8n-mcp/read-request.json`
-- `n8n MCP write` -> solo `n8n-mcp/write-request.json`
-
-Esto es intencional: permite que ChatGPT dispare una operación concreta modificando el envelope de request, sin ejecutar MCP por cambios generales del repo.
-
-Los workflows de diagnóstico y suites no tienen trigger por push; son `workflow_dispatch`.
-
-GitHub documenta que los filtros `paths` limitan un workflow de `push` a cambios que coincidan con las rutas indicadas:
-https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow
-
-GitHub también documenta que `workflow_dispatch` solo recibe eventos si el archivo del workflow existe en la rama por defecto:
-https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax
-
-El endpoint REST para crear un dispatch requiere permiso de Actions de escritura:
-https://docs.github.com/en/rest/actions/workflows#create-a-workflow-dispatch-event
-
-El conector GitHub disponible actualmente en este chat no expone esa acción de dispatch. Por eso read/write conservan el canal explícito por archivo request.
-
-## Documentación oficial de n8n
-
-Referencia oficial del MCP:
-https://docs.n8n.io/connect/connect-to-n8n-mcp-server.md
-
-Referencia oficial de las tools:
-https://docs.n8n.io/connect/connect-to-n8n-mcp-server/mcp-server-tools-reference.md
-
-Los schemas vivos anunciados por `tools/list` en esta instancia son la fuente operativa final para construir cada llamada, porque reflejan la versión realmente desplegada.
-
-## Limitación del repositorio público
-
-`my-pc-automations` es público.
-
-Por eso:
-
-- no se permite `outputMode=full`;
-- no se deben meter payloads sensibles en los request JSON;
-- logs/artifacts se tratan como potencialmente públicos;
-- no se deben volcar definiciones completas de workflows, datos confidenciales de ejecuciones, Data Tables sensibles o secretos.
-
-Para administración de alta fidelidad, el bridge debería vivir en un repositorio privado o un runner privado.
+For full-fidelity administrative writes containing sensitive arguments, move the bridge to a private repository or another private execution channel.
