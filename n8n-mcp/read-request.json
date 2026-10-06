@@ -5,12 +5,17 @@
     "executionId": "1270",
     "includeData": true,
     "nodeNames": [
-      "FF Tool: Actividad cuenta",
-      "CFO Tool: Consultar BHD",
-      "CFO Tool: Investigar correos bancarios",
+      "DeepSeek CFO Model",
       "CFO Conversacional"
     ],
-    "truncateData": 8000
+    "truncateData": 25000
+  },
+  "projection": {
+    "type": "executionNodeStats",
+    "nodeNames": [
+      "DeepSeek CFO Model",
+      "CFO Conversacional"
+    ]
   },
   "outputMode": "summary",
   "confirmWrite": false
