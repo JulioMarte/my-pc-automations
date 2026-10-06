@@ -2,7 +2,7 @@
   "tool": "get_workflow_execution",
   "arguments": {
     "workflowId": "QBCmQypRRV25Ln8F",
-    "executionId": "1323",
+    "executionId": "1308",
     "includeData": true,
     "nodeNames": [
       "DeepSeek CFO Model",
