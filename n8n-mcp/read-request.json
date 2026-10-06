@@ -1,9 +1,13 @@
 {
-  "tool": "search_workflows",
+  "tool": "get_workflow_execution",
   "arguments": {
-    "query": "Actividad cuenta",
-    "limit": 50,
-    "sortBy": "updatedAt:desc"
+    "workflowId": "QBCmQypRRV25Ln8F",
+    "executionId": "1044",
+    "includeData": true,
+    "nodeNames": [
+      "Preparar respuesta CFO"
+    ],
+    "truncateData": 4000
   },
   "outputMode": "summary",
   "confirmWrite": false
