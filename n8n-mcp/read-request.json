@@ -2,7 +2,7 @@
   "tool": "search_workflows",
   "arguments": {
     "limit": 20,
-    "bogusArgument": true
+    "sortBy": "updatedAt:desc"
   },
   "outputMode": "summary",
   "confirmWrite": false
