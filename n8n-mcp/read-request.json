@@ -1,8 +1,7 @@
 {
-  "tool": "get_workflow_details",
+  "tool": "get_workflow_history",
   "arguments": {
-    "workflowId": "QBCmQypRRV25Ln8F",
-    "detailLevel": "execution"
+    "workflowId": "QBCmQypRRV25Ln8F"
   },
   "outputMode": "summary",
   "confirmWrite": false
