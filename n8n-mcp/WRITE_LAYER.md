@@ -16,6 +16,8 @@ n8n-mcp/write-request.json
 
 can automatically start the operational workflow `n8n MCP write`.
 
+A parked request with `confirmWrite:false` is a successful no-op: the workflow exits without opening an MCP connection or sending `tools/call`. This lets HEAD remain safely parked without leaving an intentionally failing check.
+
 Changes to source code, documentation, other workflows, or unrelated repository files do **not** trigger an n8n write.
 
 The diagnostic, general invoke, read-suite, and write-suite workflows are `workflow_dispatch` only. GitHub documents that `paths` filters constrain `push` workflows to matching changed paths, and that `workflow_dispatch` only receives events when the workflow file exists on the default branch.
