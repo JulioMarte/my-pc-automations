@@ -1,10 +1,10 @@
 {
   "tool": "update_folder",
   "arguments": {
-    "projectId": "YJ7lwcmcxGN31kAM",
-    "folderId": "LIsmirp0mG6wJ9CJ",
-    "name": "__MCP_WRITE_SUITE__"
+    "projectId": "REPLACE_WITH_PROJECT_ID",
+    "folderId": "REPLACE_WITH_FOLDER_ID",
+    "name": "REPLACE_WITH_NEW_NAME"
   },
   "outputMode": "summary",
-  "confirmWrite": true
+  "confirmWrite": false
 }
