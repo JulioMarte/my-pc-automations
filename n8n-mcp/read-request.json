@@ -5,9 +5,9 @@
     "executionId": "1270",
     "includeData": true,
     "nodeNames": [
-      "CFO Conversacional"
+      "Input"
     ],
-    "truncateData": 12000
+    "truncateData": 5000
   },
   "outputMode": "summary",
   "confirmWrite": false
