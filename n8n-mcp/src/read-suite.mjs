@@ -91,6 +91,9 @@ function textFromToolResult(result) {
 }
 
 function parsedToolPayload(result) {
+  if (result?.structuredContent && typeof result.structuredContent === "object") {
+    return result.structuredContent;
+  }
   const text = textFromToolResult(result);
   if (!text) return result;
   try { return JSON.parse(text); } catch { return { text }; }
@@ -198,7 +201,9 @@ roots.tags = await test("list_workflow_tags", minimalFromSchema(toolMap.get("lis
 roots.tables = await test("search_data_tables", minimalFromSchema(toolMap.get("search_data_tables")?.inputSchema));
 roots.nodes = await test("search_nodes", { queries: ["http request"], usage: "workflow" });
 roots.projects = await test("search_projects", minimalFromSchema(toolMap.get("search_projects")?.inputSchema));
-roots.folders = await test("search_folders", minimalFromSchema(toolMap.get("search_folders")?.inputSchema));
+const projectId = findFirstByKeys(roots.projects?.payload, ["projectId", "id"]);
+if (projectId) roots.folders = await test("search_folders", { projectId, limit: 20 });
+else { add("search_folders", "SKIP-CONTEXT", "No se encontro un projectId real accesible."); roots.folders = null; }
 roots.agents = await test("search_agents", minimalFromSchema(toolMap.get("search_agents")?.inputSchema));
 roots.sdk = await test("get_workflow_sdk_reference", minimalFromSchema(toolMap.get("get_workflow_sdk_reference")?.inputSchema));
 roots.agentBuilder = await test("get_agent_builder_reference", minimalFromSchema(toolMap.get("get_agent_builder_reference")?.inputSchema));
@@ -264,32 +269,28 @@ if (executionId && executionWorkflowId) {
 // Data table rows.
 const tablePayload = roots.tables?.payload;
 const tableId = findFirstByKeys(tablePayload, ["dataTableId", "tableId", "id"]);
-if (tableId) {
+const tableProjectId = findFirstByKeys(tablePayload, ["projectId"]) || projectId;
+if (tableId && tableProjectId) {
   const schema = toolMap.get("get_data_table_rows")?.inputSchema;
   const args = minimalFromSchema(schema);
   for (const key of Object.keys(schema?.properties || {})) {
     if (/table.*id|dataTableId/i.test(key)) args[key] = tableId;
+    else if (/project.*id/i.test(key)) args[key] = tableProjectId;
   }
   await test("get_data_table_rows", args);
 } else add("get_data_table_rows", "SKIP-CONTEXT", "No se encontro una Data Table real con projectId accesible.");
 
 // Node metadata reads.
 const nodePayload = roots.nodes?.payload;
-const nodeId = findFirstByKeys(nodePayload, ["nodeId", "id"]);
+const nodeText = textFromToolResult(roots.nodes?.result);
+const nodeId = findFirstByKeys(nodePayload, ["nodeId", "id"]) ||
+  nodeText.match(/-\s+((?:@[^\s]+\/)?n8n-[^\s]+|n8n-nodes-base\.[A-Za-z0-9_]+)/)?.[1];
 if (nodeId) {
   await test("get_node_types", { nodeIds: [{ nodeId }] });
-  const exploreSchema = toolMap.get("explore_node_resources")?.inputSchema;
-  const exploreArgs = minimalFromSchema(exploreSchema);
-  for (const key of Object.keys(exploreSchema?.properties || {})) {
-    if (/node.*id/i.test(key)) exploreArgs[key] = nodeId;
-  }
-  await test("explore_node_resources", exploreArgs);
-  const validateSchema = toolMap.get("validate_node_config")?.inputSchema;
-  const validateArgs = minimalFromSchema(validateSchema);
-  for (const key of Object.keys(validateSchema?.properties || {})) {
-    if (/node.*id|type/i.test(key) && typeof validateArgs[key] === "string") validateArgs[key] = nodeId;
-  }
-  await test("validate_node_config", validateArgs, { allowToolError: true });
+  add("explore_node_resources", "SKIP-CONTEXT", "Requiere credentialId y methodName reales de un nodo con resource locator; no se inventaron.");
+  const versionMatch = nodeText.match(/Version:\s*([0-9.]+)/);
+  const typeVersion = versionMatch ? Number(versionMatch[1]) : 1;
+  await test("validate_node_config", { nodes: [{ name: "ReadSuiteNode", type: nodeId, typeVersion, parameters: {} }] }, { allowToolError: true });
 } else {
   for (const name of ["get_node_types","explore_node_resources","validate_node_config"]) add(name, "SKIP-CONTEXT", "No se obtuvo un nodeId real.");
 }
@@ -336,6 +337,17 @@ if (agentId) {
   for (const name of ["get_agent","validate_agent","list_agent_versions","discover_agent_assets"]) {
     add(name, "SKIP-CONTEXT", "No se encontro un agente real accesible.");
   }
+}
+
+if (projectId) {
+  await test("verify_agent_mcp_server", {
+    projectId,
+    name: "self_read_test",
+    url: endpoint.toString(),
+    transport: "streamableHttp",
+    authentication: "none",
+    connectionTimeoutMs: 5000
+  }, { allowToolError: true });
 }
 
 // Ensure every current read-only tool is accounted for exactly once.
