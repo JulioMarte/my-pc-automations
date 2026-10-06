@@ -1,20 +1,15 @@
 {
-  "tool": "get_workflow_execution",
+  "tool": "get_workflow_version",
   "arguments": {
     "workflowId": "QBCmQypRRV25Ln8F",
-    "executionId": "1270",
-    "includeData": true,
-    "nodeNames": [
-      "DeepSeek CFO Model",
-      "CFO Conversacional"
-    ],
-    "truncateData": 25000
+    "versionId": "c245fc7a-2b9f-40c4-b138-cb935d684f0b"
   },
   "projection": {
-    "type": "executionNodeStats",
+    "type": "nodeRuntime",
     "nodeNames": [
       "DeepSeek CFO Model",
-      "CFO Conversacional"
+      "CFO Conversacional",
+      "Memoria por conversación"
     ]
   },
   "outputMode": "summary",
