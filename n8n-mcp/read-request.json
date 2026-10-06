@@ -4,7 +4,7 @@
     "nodeIds": [
       {
         "nodeId": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
-        "version": 1
+        "version": "1"
       }
     ]
   },
