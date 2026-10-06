@@ -1,8 +1,8 @@
 {
-  "tool": "get_workflow_details",
+  "tool": "get_workflow_version",
   "arguments": {
     "workflowId": "QBCmQypRRV25Ln8F",
-    "detailLevel": "execution"
+    "versionId": "86203ca8-452b-48f4-a440-7cc871b949c4"
   },
   "outputMode": "summary",
   "confirmWrite": false
