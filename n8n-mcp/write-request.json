@@ -5,7 +5,7 @@
   "arguments": {
     "projectId": "REPLACE_WITH_PROJECT_ID",
     "folderId": "REPLACE_WITH_FOLDER_ID",
-    "name": "REPLACE_WITH_NEW_NAME"
+    "name": "REPLACE_WITH_NEW_NAME_DUPLICATE_TEST"
   },
   "expectedTargetName": "REPLACE_WITH_CURRENT_NAME",
   "outputMode": "summary",
