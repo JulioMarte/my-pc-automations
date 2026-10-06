@@ -1,0 +1,13 @@
+{
+  "name": "my-pc-automations-n8n-mcp",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "doctor": "node src/mcp-client.mjs doctor",
+    "tools": "node src/mcp-client.mjs tools",
+    "capabilities": "node src/mcp-client.mjs capabilities"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
