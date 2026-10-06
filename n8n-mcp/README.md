@@ -71,8 +71,16 @@ n8n-mcp/
   read-request.json
   write-request.json
   request.json
+  read-request.json
+  write-request.json
+  READ_LAYER.md
+  WRITE_LAYER.md
+  TRIGGER_MODEL.md
   src/
     mcp-client.mjs
+    invoke.mjs
+    read-suite.mjs
+    write-suite.mjs
     diagnose.mjs
     invoke.mjs
     tools.mjs
