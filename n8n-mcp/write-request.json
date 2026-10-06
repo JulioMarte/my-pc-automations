@@ -1,32 +1,13 @@
 {
-  "requestId": "6ffca6f8-cb44-4a90-98ac-17fc4c5418f4",
+  "requestId": "4fc87f3f-466e-4a52-a71b-22882241460f",
   "targetRef": "refs/heads/feat/n8n-mcp-client",
   "tool": "update_workflow",
   "arguments": {
-    "workflowId": "QBCmQypRRV25Ln8F",
-    "operations": [
-      {
-        "type": "setNodeParameter",
-        "nodeName": "Memoria por conversación",
-        "path": "/contextWindowLength",
-        "value": 8
-      },
-      {
-        "type": "setNodeParameter",
-        "nodeName": "DeepSeek CFO Model",
-        "path": "/options/maxTokens",
-        "value": "={{ ['daily_reconciliation','weekly_report'].includes($('Input').first().json.capture_type) ? 8192 : 4096 }}"
-      },
-      {
-        "type": "setNodeParameter",
-        "nodeName": "DeepSeek CFO Model",
-        "path": "/options/timeout",
-        "value": 90000
-      }
-    ]
+    "workflowId": "REPLACE_WITH_WORKFLOW_ID",
+    "operations": []
   },
-  "expectedTargetName": "11 - CFO Conversacional",
+  "expectedTargetName": "REPLACE_WITH_CURRENT_TARGET_NAME",
   "outputMode": "summary",
-  "confirmWrite": true,
-  "confirmRisk": true
+  "confirmWrite": false,
+  "confirmRisk": false
 }
