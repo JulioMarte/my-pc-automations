@@ -1,8 +1,13 @@
 {
-  "tool": "get_workflow_details",
+  "tool": "get_workflow_execution",
   "arguments": {
     "workflowId": "QBCmQypRRV25Ln8F",
-    "detailLevel": "execution"
+    "executionId": "1217",
+    "includeData": true,
+    "nodeNames": [
+      "DeepSeek CFO Model"
+    ],
+    "truncateData": 20000
   },
   "outputMode": "summary",
   "confirmWrite": false
