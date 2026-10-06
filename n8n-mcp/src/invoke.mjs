@@ -358,6 +358,40 @@ function pickSafeRuntimeParameters(value, depth = 0) {
   return out;
 }
 
+function projectConnections(result, sourceNames) {
+  if (!Array.isArray(sourceNames) || sourceNames.length < 1 || sourceNames.length > 10 || sourceNames.some((n) => typeof n !== "string")) {
+    throw new Error("projection.sourceNames debe contener entre 1 y 10 nombres.");
+  }
+  const body = structuredPayload(result);
+  const connections = body?.connections || body?.workflow?.connections || {};
+  const out = [];
+  for (const source of sourceNames) {
+    const sourceConn = connections[source];
+    if (!sourceConn || typeof sourceConn !== "object") {
+      out.push({ source, found: false, edges: [] });
+      continue;
+    }
+    const edges = [];
+    for (const [connectionType, groups] of Object.entries(sourceConn)) {
+      if (!Array.isArray(groups)) continue;
+      groups.forEach((group, sourceIndex) => {
+        if (!Array.isArray(group)) return;
+        group.forEach((edge) => {
+          if (!edge || typeof edge !== "object") return;
+          edges.push({
+            connectionType,
+            sourceIndex,
+            target: edge.node || null,
+            targetInput: edge.index ?? 0,
+          });
+        });
+      });
+    }
+    out.push({ source, found: true, edges });
+  }
+  return out;
+}
+
 function projectNodeRuntime(result, nodeNames) {
   if (!Array.isArray(nodeNames) || nodeNames.length < 1 || nodeNames.length > 10 || nodeNames.some((n) => typeof n !== "string")) {
     throw new Error("projection.nodeNames debe contener entre 1 y 10 nombres de nodo.");
@@ -450,10 +484,13 @@ if (!isWrite && cfg.projection) {
   if (!["get_workflow_version", "get_workflow_details"].includes(cfg.tool)) {
     throw new Error("projection solo se permite para get_workflow_version/get_workflow_details.");
   }
-  if (cfg.projection.type !== "nodeRuntime") {
+  if (cfg.projection.type === "nodeRuntime") {
+    safeResult = { nodeRuntime: projectNodeRuntime(result, cfg.projection.nodeNames) };
+  } else if (cfg.projection.type === "connections") {
+    safeResult = { connections: projectConnections(result, cfg.projection.sourceNames) };
+  } else {
     throw new Error("projection.type no permitido.");
   }
-  safeResult = { nodeRuntime: projectNodeRuntime(result, cfg.projection.nodeNames) };
 } else {
   safeResult = isWrite && repoVisibility === "public"
     ? publicWriteSummary(result)
