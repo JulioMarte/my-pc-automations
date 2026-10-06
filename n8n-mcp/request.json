@@ -1,6 +1,8 @@
 {
-  "tool": "search_projects",
-  "arguments": {},
+  "tool": "get_workflow_sdk_reference",
+  "arguments": {
+    "section": "patterns"
+  },
   "outputMode": "summary",
   "confirmWrite": false
 }
