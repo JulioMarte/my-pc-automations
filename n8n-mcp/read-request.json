@@ -1,0 +1,9 @@
+{
+  "tool": "search_workflows",
+  "arguments": {
+    "limit": 20,
+    "sortBy": "updatedAt:desc"
+  },
+  "outputMode": "summary",
+  "confirmWrite": false
+}
