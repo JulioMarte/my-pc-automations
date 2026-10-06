@@ -324,7 +324,10 @@ const SAFE_RUNTIME_PARAMETER_KEYS = new Set([
   "timeout",
   "topP",
   "frequencyPenalty",
-  "presencePenalty"
+  "presencePenalty",
+  "workflowId",
+  "operation",
+  "resource"
 ]);
 
 function findObjectsByNames(value, names) {
