@@ -1,14 +1,23 @@
 {
-  "requestId": "b1fca0ce-1a06-4cc4-a6f1-b9c4fb1f0f46",
+  "requestId": "0d6f4f7d-758e-4f1b-b9b1-3f4f42e8c497",
   "targetRef": "refs/heads/feat/n8n-mcp-client",
-  "tool": "update_folder",
+  "tool": "update_workflow",
   "arguments": {
-    "projectId": "REPLACE_WITH_PROJECT_ID",
-    "folderId": "REPLACE_WITH_FOLDER_ID",
-    "name": "REPLACE_WITH_NEW_NAME"
+    "workflowId": "QBCmQypRRV25Ln8F",
+    "operations": [
+      {
+        "type": "setNodeSettings",
+        "nodeName": "DeepSeek CFO Model",
+        "settings": {
+          "retryOnFail": true,
+          "maxTries": 3,
+          "waitBetweenTries": 1500
+        }
+      }
+    ]
   },
-  "expectedTargetName": "REPLACE_WITH_CURRENT_NAME",
+  "expectedTargetName": "11 - CFO Conversacional",
   "outputMode": "summary",
-  "confirmWrite": false,
+  "confirmWrite": true,
   "confirmRisk": false
 }
