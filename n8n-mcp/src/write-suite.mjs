@@ -369,6 +369,11 @@ for (const name of WRITE_TOOLS) {
 }
 
 report.tests.sort((a, b) => a.name.localeCompare(b.name));
+report.coverage = {
+  writeToolCount: WRITE_TOOLS.length,
+  coveredUnique: new Set(report.tests.map((t) => t.name)).size,
+  missing: WRITE_TOOLS.filter((name) => !report.tests.some((t) => t.name === name)),
+};
 fs.mkdirSync("n8n-mcp/out", { recursive: true });
 fs.writeFileSync("n8n-mcp/out/write-suite.json", JSON.stringify(report, null, 2));
 console.log(JSON.stringify(report, null, 2));
