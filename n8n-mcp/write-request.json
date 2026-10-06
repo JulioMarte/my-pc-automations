@@ -1,6 +1,8 @@
 {
-  "tool": "search_projects",
-  "arguments": {},
+  "tool": "archive_workflow",
+  "arguments": {
+    "workflowId": "__must_never_be_sent_without_confirmation__"
+  },
   "outputMode": "summary",
-  "confirmWrite": true
+  "confirmWrite": false
 }
