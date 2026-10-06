@@ -57,6 +57,7 @@ jobs:
           CURRENT_REF: ${{ github.ref }}
         run: |
           node <<'NODE' > /tmp/mcp-write-gate.env
+          const { execFileSync } = require('node:child_process');
           const r = require('./n8n-mcp/write-request.json');
           const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
           if (typeof r.requestId !== 'string' || !uuid.test(r.requestId)) {
@@ -65,6 +66,25 @@ jobs:
           if (typeof r.targetRef !== 'string' || r.targetRef !== process.env.CURRENT_REF) {
             throw new Error('targetRef does not match github.ref');
           }
+
+          const commits = execFileSync('git', [
+            'log', 'HEAD^', '--format=%H', '--', 'n8n-mcp/write-request.json'
+          ], { encoding: 'utf8' }).trim().split(/\s+/).filter(Boolean);
+
+          for (const commit of commits) {
+            try {
+              const previous = execFileSync('git', [
+                'show', `${commit}:n8n-mcp/write-request.json`
+              ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+              const parsed = JSON.parse(previous);
+              if (parsed.requestId === r.requestId) {
+                throw new Error('duplicate requestId found in write-request history');
+              }
+            } catch (error) {
+              if (String(error.message).includes('duplicate requestId')) throw error;
+            }
+          }
+
           process.stdout.write('confirmed=' + String(r.confirmWrite === true) + '\n');
           NODE
 
