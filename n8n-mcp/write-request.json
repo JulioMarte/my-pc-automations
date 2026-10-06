@@ -1,17 +1,9 @@
 {
-  "requestId": "5a688934-81dc-4dbf-9bd7-f36a7081e41e",
+  "requestId": "16b2ff7f-5fa9-46d4-8aef-c25fb64183c9",
   "targetRef": "refs/heads/feat/n8n-mcp-client",
-  "tool": "update_workflow",
+  "tool": "publish_workflow",
   "arguments": {
-    "workflowId": "QBCmQypRRV25Ln8F",
-    "operations": [
-      {
-        "type": "setNodeParameter",
-        "nodeName": "DeepSeek CFO Model",
-        "path": "/options/maxTokens",
-        "value": -1
-      }
-    ]
+    "workflowId": "QBCmQypRRV25Ln8F"
   },
   "expectedTargetName": "11 - CFO Conversacional",
   "outputMode": "summary",
