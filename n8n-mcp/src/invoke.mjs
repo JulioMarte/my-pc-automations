@@ -9,9 +9,50 @@ const repoVisibility = (process.env.REPO_VISIBILITY || "unknown").toLowerCase();
 
 if (!rawUrl || !token) throw new Error("Faltan N8N_MCP_URL o N8N_MCP_TOKEN.");
 if (!fs.existsSync(requestPath)) throw new Error(`No existe ${requestPath}`);
+const requestStat = fs.statSync(requestPath);
+if (requestStat.size > 65536) throw new Error("Request file demasiado grande; maximo 64 KiB.");
 
 const cfg = JSON.parse(fs.readFileSync(requestPath, "utf8"));
 if (!N8N_MCP_TOOLS.includes(cfg.tool)) throw new Error(`Tool no permitida: ${cfg.tool}`);
+
+const HIGH_RISK_TOOLS = new Set([
+  "execute_workflow",
+  "test_workflow",
+  "publish_workflow",
+  "unpublish_workflow",
+  "archive_workflow",
+  "restore_workflow_version",
+  "delete_data_table_column",
+  "call_agent",
+  "publish_agent",
+  "unpublish_agent",
+  "revert_agent",
+  "delete_agent",
+  "update_agent_integration"
+]);
+
+const TARGET_ASSERTION_TOOLS = new Set([
+  "execute_workflow",
+  "test_workflow",
+  "publish_workflow",
+  "unpublish_workflow",
+  "archive_workflow",
+  "update_workflow",
+  "restore_workflow_version",
+  "rename_data_table",
+  "add_data_table_column",
+  "delete_data_table_column",
+  "rename_data_table_column",
+  "add_data_table_rows",
+  "update_folder",
+  "mutate_agent",
+  "call_agent",
+  "publish_agent",
+  "unpublish_agent",
+  "revert_agent",
+  "delete_agent",
+  "update_agent_integration"
+]);
 
 const endpoint = new URL(rawUrl);
 if (endpoint.protocol !== "https:" || endpoint.hostname !== "n8n.quisqueyatech.com") {
@@ -35,6 +76,12 @@ if (forcedWriteOnly && READ_ONLY_TOOLS.has(cfg.tool)) {
 }
 if (!READ_ONLY_TOOLS.has(cfg.tool) && cfg.confirmWrite !== true) {
   throw new Error(`${cfg.tool} requiere confirmWrite=true`);
+}
+if (HIGH_RISK_TOOLS.has(cfg.tool) && cfg.confirmRisk !== true) {
+  throw new Error(`${cfg.tool} requiere confirmRisk=true por su impacto potencial`);
+}
+if (forcedWriteOnly && TARGET_ASSERTION_TOOLS.has(cfg.tool) && typeof cfg.expectedTargetName !== "string") {
+  throw new Error(`${cfg.tool} requiere expectedTargetName para proteger contra IDs equivocados`);
 }
 if (cfg.outputMode === "full" && repoVisibility === "public") {
   throw new Error("outputMode=full no se permite en un repo publico.");
@@ -90,30 +137,75 @@ async function request(method, params) {
   return msg.result;
 }
 
-function validateArgumentsAgainstSchema(schema, args) {
-  if (!schema || schema.type !== "object") return [];
+function validateValue(schema, value, path = "$") {
+  if (!schema || typeof schema !== "object") return [];
+
+  if (schema.allOf) {
+    return schema.allOf.flatMap((s) => validateValue(s, value, path));
+  }
+  if (schema.anyOf) {
+    const branches = schema.anyOf.map((s) => validateValue(s, value, path));
+    if (branches.some((errors) => errors.length === 0)) return [];
+    return [`${path} no coincide con ningun anyOf`];
+  }
+  if (schema.oneOf) {
+    const validCount = schema.oneOf.filter((s) => validateValue(s, value, path).length === 0).length;
+    return validCount === 1 ? [] : [`${path} debe coincidir exactamente con un oneOf`];
+  }
+
   const errors = [];
-  const properties = schema.properties || {};
-  for (const key of schema.required || []) {
-    if (!(key in args)) errors.push(`Missing required argument: ${key}`);
+  if (schema.const !== undefined && value !== schema.const) errors.push(`${path} debe ser ${JSON.stringify(schema.const)}`);
+  if (Array.isArray(schema.enum) && !schema.enum.some((x) => JSON.stringify(x) === JSON.stringify(value))) {
+    errors.push(`${path} no pertenece al enum permitido`);
   }
-  if (schema.additionalProperties === false) {
-    for (const key of Object.keys(args)) {
-      if (!(key in properties)) errors.push(`Unknown argument: ${key}`);
+
+  if (schema.type) {
+    const expected = Array.isArray(schema.type) ? schema.type : [schema.type];
+    const actual = value === null ? "null" : Array.isArray(value) ? "array" : (Number.isInteger(value) ? "integer" : typeof value);
+    const aliases = actual === "integer" ? ["integer", "number"] : [actual];
+    if (!expected.some((t) => aliases.includes(t))) return [`${path} esperaba ${expected.join("|")}, recibio ${actual}`];
+  }
+
+  if (typeof value === "string") {
+    if (schema.minLength !== undefined && value.length < schema.minLength) errors.push(`${path} demasiado corto`);
+    if (schema.maxLength !== undefined && value.length > schema.maxLength) errors.push(`${path} demasiado largo`);
+    if (schema.pattern && !(new RegExp(schema.pattern).test(value))) errors.push(`${path} no cumple pattern`);
+  }
+
+  if (typeof value === "number") {
+    if (schema.minimum !== undefined && value < schema.minimum) errors.push(`${path} menor que minimum`);
+    if (schema.maximum !== undefined && value > schema.maximum) errors.push(`${path} mayor que maximum`);
+    if (schema.exclusiveMinimum !== undefined && value <= schema.exclusiveMinimum) errors.push(`${path} debe ser > exclusiveMinimum`);
+    if (schema.exclusiveMaximum !== undefined && value >= schema.exclusiveMaximum) errors.push(`${path} debe ser < exclusiveMaximum`);
+  }
+
+  if (Array.isArray(value)) {
+    if (schema.minItems !== undefined && value.length < schema.minItems) errors.push(`${path} tiene pocos items`);
+    if (schema.maxItems !== undefined && value.length > schema.maxItems) errors.push(`${path} tiene demasiados items`);
+    if (schema.items) value.forEach((item, i) => errors.push(...validateValue(schema.items, item, `${path}[${i}]`)));
+  }
+
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const properties = schema.properties || {};
+    for (const key of schema.required || []) {
+      if (!(key in value)) errors.push(`${path} falta campo requerido ${key}`);
+    }
+    if (schema.additionalProperties === false) {
+      for (const key of Object.keys(value)) if (!(key in properties)) errors.push(`${path} campo desconocido ${key}`);
+    }
+    for (const [key, child] of Object.entries(value)) {
+      if (properties[key]) errors.push(...validateValue(properties[key], child, `${path}.${key}`));
+      else if (schema.additionalProperties && typeof schema.additionalProperties === "object") {
+        errors.push(...validateValue(schema.additionalProperties, child, `${path}.${key}`));
+      }
     }
   }
-  for (const [key, value] of Object.entries(args)) {
-    const prop = properties[key];
-    if (!prop || value == null) continue;
-    const expected = Array.isArray(prop.type) ? prop.type : [prop.type];
-    if (!prop.type) continue;
-    const actual = Array.isArray(value) ? "array" : typeof value;
-    const normalized = actual === "number" && Number.isInteger(value) ? ["integer", "number"] : [actual];
-    if (!expected.some((t) => normalized.includes(t))) {
-      errors.push(`Argument ${key} expected ${expected.join("|")}, got ${actual}`);
-    }
-  }
+
   return errors;
+}
+
+function validateArgumentsAgainstSchema(schema, args) {
+  return validateValue(schema, args, "$arguments");
 }
 
 async function listTools() {
@@ -125,6 +217,83 @@ async function listTools() {
     cursor = page.nextCursor;
   } while (cursor);
   return all;
+}
+
+function structuredPayload(result) {
+  if (result?.structuredContent && typeof result.structuredContent === "object") return result.structuredContent;
+  if (Array.isArray(result?.content)) {
+    const text = result.content.map((x) => x?.text || "").join("\n");
+    if (text) {
+      try { return JSON.parse(text); } catch {}
+    }
+  }
+  return result;
+}
+
+function findObjectById(value, id) {
+  let found = null;
+  const walk = (v) => {
+    if (found || !v) return;
+    if (Array.isArray(v)) return v.forEach(walk);
+    if (typeof v !== "object") return;
+    if (["id","workflowId","agentId","folderId","dataTableId","tableId"].some((k) => v[k] === id)) {
+      found = v;
+      return;
+    }
+    Object.values(v).forEach(walk);
+  };
+  walk(value);
+  return found;
+}
+
+function firstName(value) {
+  let found = null;
+  const walk = (v) => {
+    if (found || !v) return;
+    if (Array.isArray(v)) return v.forEach(walk);
+    if (typeof v !== "object") return;
+    if (typeof v.name === "string" && v.name) { found = v.name; return; }
+    Object.values(v).forEach(walk);
+  };
+  walk(value);
+  return found;
+}
+
+async function resolveTargetName(tool, args) {
+  let result;
+  let targetId;
+
+  if (args.workflowId) {
+    targetId = args.workflowId;
+    result = await request("tools/call", { name: "get_workflow_details", arguments: { workflowId: targetId } });
+  } else if (args.agentId) {
+    targetId = args.agentId;
+    result = await request("tools/call", { name: "get_agent", arguments: { agentId: targetId } });
+  } else if (args.folderId && args.projectId) {
+    targetId = args.folderId;
+    result = await request("tools/call", { name: "search_folders", arguments: { projectId: args.projectId, limit: 100 } });
+  } else if ((args.dataTableId || args.tableId) && args.projectId) {
+    targetId = args.dataTableId || args.tableId;
+    result = await request("tools/call", { name: "search_data_tables", arguments: {} });
+  } else {
+    return null;
+  }
+
+  if (result?.isError) throw new Error("No se pudo verificar el recurso objetivo antes de escribir.");
+  const body = structuredPayload(result);
+  const exact = findObjectById(body, targetId);
+  return firstName(exact || body);
+}
+
+function publicWriteSummary(result) {
+  return {
+    isError: Boolean(result?.isError),
+    hasStructuredContent: Boolean(result?.structuredContent),
+    contentTypes: Array.isArray(result?.content) ? [...new Set(result.content.map((x) => x?.type).filter(Boolean))] : [],
+    structuredKeys: result?.structuredContent && typeof result.structuredContent === "object"
+      ? Object.keys(result.structuredContent).slice(0, 20)
+      : [],
+  };
 }
 
 function sanitize(value, depth = 0) {
@@ -158,17 +327,34 @@ if (argumentErrors.length) {
   throw new Error(`Argument validation failed: ${argumentErrors.join("; ")}`);
 }
 
+if (forcedWriteOnly && TARGET_ASSERTION_TOOLS.has(cfg.tool)) {
+  const actualTargetName = await resolveTargetName(cfg.tool, cfg.arguments || {});
+  if (!actualTargetName) throw new Error("No se pudo resolver el nombre del recurso objetivo; write bloqueado.");
+  if (actualTargetName !== cfg.expectedTargetName) {
+    throw new Error("expectedTargetName no coincide con el recurso resuelto; write bloqueado.");
+  }
+}
+
 const result = await request("tools/call", {
   name: cfg.tool,
   arguments: cfg.arguments || {},
 });
 
+if (result?.isError) {
+  throw new Error(`MCP tool ${cfg.tool} devolvio isError=true`);
+}
+
+const isWrite = !READ_ONLY_TOOLS.has(cfg.tool);
+const safeResult = isWrite && repoVisibility === "public"
+  ? publicWriteSummary(result)
+  : (cfg.outputMode === "full" ? result : sanitize(result));
+
 const payload = {
   ok: true,
   tool: cfg.tool,
-  mode: READ_ONLY_TOOLS.has(cfg.tool) ? "read" : "write",
+  mode: isWrite ? "write" : "read",
   serverInfo: initialized.serverInfo || null,
-  result: cfg.outputMode === "full" ? result : sanitize(result),
+  result: safeResult,
 };
 
 fs.mkdirSync("n8n-mcp/out", { recursive: true });
