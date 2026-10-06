@@ -23,8 +23,15 @@ endpoint.search = "";
 endpoint.hash = "";
 
 const forcedReadOnly = (process.env.MCP_READ_ONLY || "").toLowerCase() === "true";
+const forcedWriteOnly = (process.env.MCP_WRITE_ONLY || "").toLowerCase() === "true";
+if (forcedReadOnly && forcedWriteOnly) {
+  throw new Error("MCP_READ_ONLY y MCP_WRITE_ONLY no pueden estar activos a la vez.");
+}
 if (forcedReadOnly && !READ_ONLY_TOOLS.has(cfg.tool)) {
   throw new Error(`MCP_READ_ONLY bloquea la tool no-read: ${cfg.tool}`);
+}
+if (forcedWriteOnly && READ_ONLY_TOOLS.has(cfg.tool)) {
+  throw new Error(`MCP_WRITE_ONLY bloquea la tool read: ${cfg.tool}`);
 }
 if (!READ_ONLY_TOOLS.has(cfg.tool) && cfg.confirmWrite !== true) {
   throw new Error(`${cfg.tool} requiere confirmWrite=true`);
