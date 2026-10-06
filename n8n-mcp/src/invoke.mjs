@@ -28,6 +28,7 @@ const HIGH_RISK_TOOLS = new Set([
   "delete_data_table_column",
   "rename_data_table_column",
   "add_data_table_rows",
+  "mutate_agent",
   "call_agent",
   "publish_agent",
   "unpublish_agent",
