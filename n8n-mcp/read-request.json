@@ -1,9 +1,8 @@
 {
-  "tool": "search_workflows",
+  "tool": "search_workflow_executions",
   "arguments": {
-    "query": "CFO",
-    "limit": 100,
-    "sortBy": "updatedAt:desc"
+    "workflowId": "QBCmQypRRV25Ln8F",
+    "limit": 50
   },
   "outputMode": "summary",
   "confirmWrite": false
