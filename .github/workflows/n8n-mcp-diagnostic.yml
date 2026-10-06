@@ -1,0 +1,42 @@
+name: n8n MCP diagnostic
+
+on:
+  push:
+    branches:
+      - feat/n8n-mcp-client
+    paths:
+      - "n8n-mcp/**"
+      - ".github/workflows/n8n-mcp-diagnostic.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      N8N_MCP_URL: ${{ secrets.N8N_MCP_URL }}
+      N8N_MCP_TOKEN: ${{ secrets.N8N_MCP_TOKEN }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify required secrets exist
+        shell: bash
+        run: |
+          test -n "$N8N_MCP_URL" || (echo "N8N_MCP_URL secret is missing" && exit 1)
+          test -n "$N8N_MCP_TOKEN" || (echo "N8N_MCP_TOKEN secret is missing" && exit 1)
+
+      - name: Discover MCP capabilities and tools
+        run: node n8n-mcp/src/diagnose.mjs
+
+      - name: Upload sanitized MCP discovery
+        uses: actions/upload-artifact@v4
+        with:
+          name: n8n-mcp-tools
+          path: n8n-mcp/out/tools.json
+          if-no-files-found: error
+          retention-days: 7
