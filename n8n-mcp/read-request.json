@@ -1,8 +1,9 @@
 {
-  "tool": "get_workflow_version",
+  "tool": "get_workflow_versions_diff",
   "arguments": {
     "workflowId": "QBCmQypRRV25Ln8F",
-    "versionId": "c245fc7a-2b9f-40c4-b138-cb935d684f0b"
+    "fromVersionId": "73dbf2f0-0222-4f08-91d2-ec2657a138d2",
+    "toVersionId": "c245fc7a-2b9f-40c4-b138-cb935d684f0b"
   },
   "outputMode": "summary",
   "confirmWrite": false
