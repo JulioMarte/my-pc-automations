@@ -6,10 +6,16 @@
     "includeData": true,
     "nodeNames": [
       "DeepSeek CFO Model",
-      "CFO Conversacional",
-      "Preparar respuesta CFO"
+      "CFO Conversacional"
     ],
-    "truncateData": 20000
+    "truncateData": 25000
+  },
+  "projection": {
+    "type": "executionNodeStats",
+    "nodeNames": [
+      "DeepSeek CFO Model",
+      "CFO Conversacional"
+    ]
   },
   "outputMode": "summary",
   "confirmWrite": false
