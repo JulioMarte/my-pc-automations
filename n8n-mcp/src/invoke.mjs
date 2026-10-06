@@ -445,6 +445,8 @@ function projectExecutionNodeStats(result, nodeNames) {
           categories: signals.categories,
           toolNames: signals.toolNames,
           toolActionCount: signals.toolActionCount,
+          textLengths: signals.textLengths,
+          outputLengths: signals.outputLengths,
         };
       }),
     };
