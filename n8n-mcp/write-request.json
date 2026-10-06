@@ -1,14 +1,14 @@
 {
-  "requestId": "7dce605b-594b-4757-9591-b32e9a785c89",
+  "requestId": "8512c228-a278-4588-9eb4-5fb86d11b2bb",
   "targetRef": "refs/heads/feat/n8n-mcp-client",
-  "tool": "update_folder",
+  "tool": "delete_data_table_column",
   "arguments": {
-    "projectId": "REPLACE_WITH_PROJECT_ID",
-    "folderId": "REPLACE_WITH_FOLDER_ID",
-    "name": "REPLACE_WITH_NEW_NAME"
+    "projectId": "__never_used__",
+    "dataTableId": "__never_used__",
+    "columnId": "__never_used__"
   },
-  "expectedTargetName": "REPLACE_WITH_CURRENT_NAME",
+  "expectedTargetName": "__never_used__",
   "outputMode": "summary",
-  "confirmWrite": false,
-  "confirmRisk": false
+  "confirmWrite": true,
+  "confirmRisk": true
 }
