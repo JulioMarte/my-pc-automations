@@ -1,11 +1,13 @@
 {
-  "tool": "get_node_types",
+  "tool": "get_workflow_details",
   "arguments": {
-    "nodeIds": [
-      {
-        "nodeId": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
-        "version": "1"
-      }
+    "workflowId": "QBCmQypRRV25Ln8F",
+    "detailLevel": "execution"
+  },
+  "projection": {
+    "type": "nodeRuntime",
+    "nodeNames": [
+      "DeepSeek CFO Model"
     ]
   },
   "outputMode": "summary",
