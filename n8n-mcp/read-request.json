@@ -1,13 +1,8 @@
 {
-  "tool": "get_workflow_execution",
+  "tool": "get_workflow_version",
   "arguments": {
-    "workflowId": "QBCmQypRRV25Ln8F",
-    "executionId": "1044",
-    "includeData": true,
-    "nodeNames": [
-      "Preparar respuesta CFO"
-    ],
-    "truncateData": 4000
+    "workflowId": "3hSBgYsImJuHy5hg",
+    "versionId": "bc384275-371b-4a5e-9979-2fbfa5e59fe5"
   },
   "outputMode": "summary",
   "confirmWrite": false
