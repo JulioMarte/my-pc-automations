@@ -5,6 +5,6 @@
     "limit": 100,
     "sortBy": "updatedAt:desc"
   },
-  "outputMode": "full",
+  "outputMode": "summary",
   "confirmWrite": false
 }
