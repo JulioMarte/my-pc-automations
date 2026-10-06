@@ -5,7 +5,7 @@ on:
     branches:
       - feat/n8n-mcp-client
     paths:
-      - "n8n-mcp/**"
+      - "n8n-mcp/src/diagnose.mjs"
       - ".github/workflows/n8n-mcp-diagnostic.yml"
   workflow_dispatch:
 
