@@ -1,8 +1,17 @@
 {
-  "tool": "get_workflow_version",
+  "tool": "get_workflow_execution",
   "arguments": {
     "workflowId": "QBCmQypRRV25Ln8F",
-    "versionId": "ff8aa93f-27d2-4c10-9588-1868fd956de9"
+    "executionId": "1217",
+    "includeData": true,
+    "nodeNames": [
+      "Avisar recepción del turno",
+      "Preparar respuesta CFO",
+      "¿Responder en Telegram?",
+      "Responder como CFO",
+      "Recibo de turno CFO"
+    ],
+    "truncateData": 2000
   },
   "outputMode": "summary",
   "confirmWrite": false
