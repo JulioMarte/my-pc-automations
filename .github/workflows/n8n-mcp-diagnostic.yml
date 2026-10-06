@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
-      N8N_MCP_URL: ${{ secrets.N8N_MCP_URL }}
+      N8N_MCP_URL: ${{ vars.N8N_MCP_URL }}
       N8N_MCP_TOKEN: ${{ secrets.N8N_MCP_TOKEN }}
 
     steps:
@@ -27,7 +27,7 @@ jobs:
       - name: Verify required secrets exist
         shell: bash
         run: |
-          test -n "$N8N_MCP_URL" || (echo "N8N_MCP_URL secret is missing" && exit 1)
+          test -n "$N8N_MCP_URL" || (echo "N8N_MCP_URL repository variable is missing" && exit 1)
           test -n "$N8N_MCP_TOKEN" || (echo "N8N_MCP_TOKEN secret is missing" && exit 1)
 
       - name: Discover MCP capabilities and tools
