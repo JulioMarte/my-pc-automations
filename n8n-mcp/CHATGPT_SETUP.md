@@ -60,13 +60,33 @@ Ese workflow establece:
 MCP_WRITE_ONLY=true
 ```
 
-y además toda operación write requiere:
+y además cada request write operativo usa un envelope explícito:
 
 ```json
-"confirmWrite": true
+{
+  "requestId": "<uuid-nuevo>",
+  "targetRef": "refs/heads/<rama-control>",
+  "tool": "<write-tool>",
+  "arguments": {},
+  "expectedTargetName": "<nombre-actual-cuando-aplica>",
+  "confirmWrite": true,
+  "confirmRisk": false
+}
 ```
 
-Una tool read enviada por el canal write se bloquea localmente. Una tool write sin confirmación también se bloquea localmente.
+Reglas:
+
+- `requestId` debe ser un UUID nuevo y no reutilizado en el historial.
+- `targetRef` debe coincidir exactamente con `github.ref`.
+- `confirmWrite:true` es obligatorio para toda tool con efecto.
+- `confirmRisk:true` es obligatorio para tools de alto impacto.
+- mutaciones protegidas sobre recursos existentes requieren `expectedTargetName`;
+- borrar/renombrar columnas requiere además `expectedColumnName`;
+- el push debe modificar únicamente `write-request.json`;
+- el actor debe ser el owner del repo;
+- un rerun de GitHub Actions no vuelve a ejecutar el write.
+
+Una tool read enviada por el canal write se bloquea localmente.
 
 ## Qué NO dispara el MCP
 
@@ -93,10 +113,13 @@ Los workflows siguientes son manual-only:
 1. Usar la capa read para resolver IDs y contexto.
 2. Revisar el schema vivo anunciado por `tools/list`.
 3. Elegir la operación mínima necesaria.
-4. Para escritura, preparar `write-request.json` con `confirmWrite:true`.
-5. Ejecutar una sola mutación.
-6. Volver a leer el recurso para verificar el estado posterior.
-7. Si se modifica un workflow, conservar historial/versiones como mecanismo de recuperación.
+4. Confirmar que no haya otro run `n8n MCP write` activo o pendiente.
+5. Preparar `write-request.json` con UUID nuevo, `targetRef`, `confirmWrite:true` y las aserciones requeridas.
+6. Para high-risk, usar también `confirmRisk:true`.
+7. Ejecutar una sola mutación.
+8. Volver a leer el recurso para verificar el estado posterior.
+9. Ante timeout/desconexión, **no reintentar a ciegas**: primero leer el estado real.
+10. Si se modifica un workflow, conservar historial/versiones como mecanismo de recuperación.
 
 No asumir que una tool existe o que mantiene el mismo schema entre versiones: el schema vivo del servidor desplegado es la fuente operativa final.
 
