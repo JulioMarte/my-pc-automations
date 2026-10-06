@@ -40,7 +40,8 @@ jobs:
           HEAD_SHA: ${{ github.sha }}
         run: |
           mapfile -t CHANGED < <(git diff --name-only "$BEFORE_SHA" "$HEAD_SHA")
-          printf 'Changed files:\n%s\n' "${CHANGED[*]}"
+          printf 'Changed files:\n'
+          printf '%s\n' "${CHANGED[@]}"
           if [ "${#CHANGED[@]}" -ne 1 ] || [ "${CHANGED[0]}" != "n8n-mcp/write-request.json" ]; then
             echo "Write pushes must change only n8n-mcp/write-request.json"
             exit 1
@@ -69,22 +70,9 @@ jobs:
           }
           process.stdout.write('confirmed=' + String(r.confirmWrite === true) + '\n');
           NODE
+
           cat /tmp/mcp-write-gate.env >> "$GITHUB_OUTPUT"
-          if ! grep -q '^confirmed=true
-
-      - name: Invoke write-only n8n MCP tool
-        if: steps.gate.outputs.confirmed == 'true'
-        run: node n8n-mcp/src/invoke.mjs
-
-      - name: Upload sanitized write result
-        if: steps.gate.outputs.confirmed == 'true' && always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: n8n-mcp-write-result
-          path: n8n-mcp/out/result.json
-          if-no-files-found: warn
-          retention-days: 1
- /tmp/mcp-write-gate.env; then
+          if ! grep -q '^confirmed=true$' /tmp/mcp-write-gate.env; then
             echo "Write request is parked: confirmWrite is not true. No MCP connection will be opened."
           fi
 
