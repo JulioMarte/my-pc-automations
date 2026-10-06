@@ -160,7 +160,7 @@ const report = {
   serverInfo: init.serverInfo || null,
   protocolVersion: init.protocolVersion || null,
   testedAt: new Date().toISOString(),
-  summary: { total: readonlyNames.length, pass: 0, skipContext: 0, fail: 0 },
+  summary: { total: readonlyNames.length, pass: 0, negativePass: 0, skipContext: 0, fail: 0 },
   tests: [],
 };
 
@@ -171,8 +171,30 @@ async function call(name, args = {}) {
 function add(name, status, detail, args = undefined) {
   report.tests.push({ name, status, detail, ...(args ? { args } : {}) });
   if (status === "PASS") report.summary.pass++;
+  else if (status === "NEGATIVE-PASS") report.summary.negativePass++;
   else if (status === "SKIP-CONTEXT") report.summary.skipContext++;
   else report.summary.fail++;
+}
+
+async function negativeTest(name, args, expected = /not found|does not exist|access|credential|invalid|unknown/i) {
+  try {
+    const result = await call(name, args);
+    const detail = textFromToolResult(result) || JSON.stringify(parsedToolPayload(result) ?? {});
+    if (isToolError(result) || expected.test(detail)) {
+      add(name, "NEGATIVE-PASS", "Schema/transport/auth route validated; controlled domain rejection received.", args);
+      return { ok: true, negative: true, result };
+    }
+    add(name, "FAIL", "Expected a controlled domain rejection but call unexpectedly succeeded.", args);
+    return { ok: false, result };
+  } catch (e) {
+    const detail = String(e.message || e);
+    if (expected.test(detail)) {
+      add(name, "NEGATIVE-PASS", "Transport/schema route validated; controlled rejection received.", args);
+      return { ok: true, negative: true };
+    }
+    add(name, "FAIL", detail.slice(0, 500), args);
+    return { ok: false };
+  }
 }
 
 async function test(name, args, { allowToolError = false } = {}) {
@@ -287,7 +309,14 @@ const nodeId = findFirstByKeys(nodePayload, ["nodeId", "id"]) ||
   nodeText.match(/-\s+((?:@[^\s]+\/)?n8n-[^\s]+|n8n-nodes-base\.[A-Za-z0-9_]+)/)?.[1];
 if (nodeId) {
   await test("get_node_types", { nodeIds: [{ nodeId }] });
-  add("explore_node_resources", "SKIP-CONTEXT", "Requiere credentialId y methodName reales de un nodo con resource locator; no se inventaron.");
+  await negativeTest("explore_node_resources", {
+    nodeType: nodeId,
+    version: Number(nodeText.match(/Version:\s*([0-9.]+)/)?.[1] || 1),
+    methodName: "__read_suite_nonexistent_method__",
+    methodType: "loadOptions",
+    credentialType: "__read_suite_invalid__",
+    credentialId: "__read_suite_invalid__"
+  });
   const versionMatch = nodeText.match(/Version:\s*([0-9.]+)/);
   const typeVersion = versionMatch ? Number(versionMatch[1]) : 1;
   await test("validate_node_config", { nodes: [{ name: "ReadSuiteNode", type: nodeId, typeVersion, parameters: {} }] }, { allowToolError: true });
@@ -334,9 +363,11 @@ if (agentId) {
   if (verifyCan) await test("verify_agent_mcp_server", verifyArgs, { allowToolError: true });
   else add("verify_agent_mcp_server", "SKIP-CONTEXT", "La tool requiere contexto MCP externo adicional; no se invento un endpoint.");
 } else {
-  for (const name of ["get_agent","validate_agent","list_agent_versions","discover_agent_assets"]) {
-    add(name, "SKIP-CONTEXT", "No se encontro un agente real accesible.");
-  }
+  const missingAgentId = "__read_suite_missing_agent__";
+  await negativeTest("get_agent", { agentId: missingAgentId });
+  await negativeTest("validate_agent", { agentId: missingAgentId });
+  await negativeTest("list_agent_versions", { agentId: missingAgentId });
+  await negativeTest("discover_agent_assets", { agentId: missingAgentId });
 }
 
 if (projectId) {
@@ -353,7 +384,7 @@ if (projectId) {
 // Ensure every current read-only tool is accounted for exactly once.
 for (const name of readonlyNames) {
   if (!report.tests.some((t) => t.name === name)) {
-    add(name, "SKIP-CONTEXT", "No existe una prueba inocua automatizada para esta tool sin contexto adicional.");
+    add(name, "FAIL", "Tool de lectura no cubierta por la suite.");
   }
 }
 
