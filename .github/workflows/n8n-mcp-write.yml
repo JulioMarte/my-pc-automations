@@ -52,13 +52,39 @@ jobs:
           test -n "$N8N_MCP_URL" || (echo "N8N_MCP_URL repository variable is missing" && exit 1)
           test -n "$N8N_MCP_TOKEN" || (echo "N8N_MCP_TOKEN secret is missing" && exit 1)
 
-      - name: Check explicit write confirmation
+      - name: Validate request envelope
         id: gate
         shell: bash
+        env:
+          CURRENT_REF: ${{ github.ref }}
         run: |
-          CONFIRMED="$(node -e "const r=require('./n8n-mcp/write-request.json'); process.stdout.write(String(r.confirmWrite === true))")"
-          echo "confirmed=$CONFIRMED" >> "$GITHUB_OUTPUT"
-          if [ "$CONFIRMED" != "true" ]; then
+          node <<'NODE' > /tmp/mcp-write-gate.env
+          const r = require('./n8n-mcp/write-request.json');
+          const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+          if (typeof r.requestId !== 'string' || !uuid.test(r.requestId)) {
+            throw new Error('requestId must be a UUID');
+          }
+          if (typeof r.targetRef !== 'string' || r.targetRef !== process.env.CURRENT_REF) {
+            throw new Error('targetRef does not match github.ref');
+          }
+          process.stdout.write('confirmed=' + String(r.confirmWrite === true) + '\n');
+          NODE
+          cat /tmp/mcp-write-gate.env >> "$GITHUB_OUTPUT"
+          if ! grep -q '^confirmed=true
+
+      - name: Invoke write-only n8n MCP tool
+        if: steps.gate.outputs.confirmed == 'true'
+        run: node n8n-mcp/src/invoke.mjs
+
+      - name: Upload sanitized write result
+        if: steps.gate.outputs.confirmed == 'true' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: n8n-mcp-write-result
+          path: n8n-mcp/out/result.json
+          if-no-files-found: warn
+          retention-days: 1
+ /tmp/mcp-write-gate.env; then
             echo "Write request is parked: confirmWrite is not true. No MCP connection will be opened."
           fi
 
