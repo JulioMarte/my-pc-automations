@@ -1,13 +1,7 @@
 {
-  "tool": "get_workflow_execution",
+  "tool": "get_workflow_sdk_reference",
   "arguments": {
-    "workflowId": "QBCmQypRRV25Ln8F",
-    "executionId": "1292",
-    "includeData": true,
-    "nodeNames": [
-      "DeepSeek CFO Model"
-    ],
-    "truncateData": 30000
+    "topic": "update workflow node parameters operations syntax"
   },
   "outputMode": "summary",
   "confirmWrite": false
