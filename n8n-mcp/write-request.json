@@ -1,8 +1,10 @@
 {
-  "tool": "archive_workflow",
+  "tool": "update_folder",
   "arguments": {
-    "workflowId": "__must_never_be_sent_without_confirmation__"
+    "projectId": "YJ7lwcmcxGN31kAM",
+    "folderId": "LIsmirp0mG6wJ9CJ",
+    "name": "__MCP_WRITE_SUITE__"
   },
   "outputMode": "summary",
-  "confirmWrite": false
+  "confirmWrite": true
 }
