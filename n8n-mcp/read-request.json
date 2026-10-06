@@ -1,8 +1,17 @@
 {
-  "tool": "search_workflow_executions",
+  "tool": "get_workflow_execution",
   "arguments": {
     "workflowId": "QBCmQypRRV25Ln8F",
-    "limit": 15
+    "executionId": "1270",
+    "includeData": true,
+    "nodeNames": [
+      "DeepSeek CFO Model",
+      "CFO Conversacional",
+      "Preparar respuesta CFO",
+      "Responder como CFO",
+      "Recibo de turno CFO"
+    ],
+    "truncateData": 12000
   },
   "outputMode": "summary",
   "confirmWrite": false
