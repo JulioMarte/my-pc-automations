@@ -1,18 +1,27 @@
 {
-  "requestId": "2a74a2a7-1b29-4fef-b8df-a14f2b0d88c3",
+  "requestId": "6ffca6f8-cb44-4a90-98ac-17fc4c5418f4",
   "targetRef": "refs/heads/feat/n8n-mcp-client",
   "tool": "update_workflow",
   "arguments": {
     "workflowId": "QBCmQypRRV25Ln8F",
     "operations": [
       {
-        "type": "setNodeSettings",
+        "type": "setNodeParameter",
+        "nodeName": "Memoria por conversación",
+        "path": "/contextWindowLength",
+        "value": 8
+      },
+      {
+        "type": "setNodeParameter",
         "nodeName": "DeepSeek CFO Model",
-        "settings": {
-          "retryOnFail": true,
-          "maxTries": 3,
-          "waitBetweenTries": 1500
-        }
+        "path": "/options/maxTokens",
+        "value": "={{ ['daily_reconciliation','weekly_report'].includes($('Input').first().json.capture_type) ? 8192 : 4096 }}"
+      },
+      {
+        "type": "setNodeParameter",
+        "nodeName": "DeepSeek CFO Model",
+        "path": "/options/timeout",
+        "value": 90000
       }
     ]
   },
