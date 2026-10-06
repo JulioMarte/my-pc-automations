@@ -1,10 +1,10 @@
 {
-  "requestId": "0f74849a-ff58-43f0-9acf-8077d743ba7e",
+  "requestId": "f6f9b186-3ac4-4c4e-8ce4-f085cbdbdf63",
   "targetRef": "refs/heads/feat/n8n-mcp-client",
-  "tool": "move_workflows_to_folder",
+  "tool": "create_folder",
   "arguments": {
-    "workflowIds": [],
-    "folderId": "0"
+    "projectId": "__adversarial_invalid_project__",
+    "name": "__SHOULD_NOT_EXIST__"
   },
   "outputMode": "summary",
   "confirmWrite": true
