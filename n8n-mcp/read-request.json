@@ -1,8 +1,10 @@
 {
-  "tool": "get_workflow_details",
+  "tool": "get_workflow_execution",
   "arguments": {
     "workflowId": "1Ox4nvJaxmqy0tHi",
-    "detailLevel": "execution"
+    "executionId": "1215",
+    "includeData": true,
+    "truncateData": 500
   },
   "outputMode": "summary",
   "confirmWrite": false
