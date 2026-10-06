@@ -33,7 +33,12 @@ A write request must pass all of these gates before `tools/call`:
 5. The request arguments must pass the live tool schema.
 6. `MCP_WRITE_ONLY=true` rejects every tool classified as read-only.
 7. Every non-read tool requires `confirmWrite: true`.
-8. `outputMode=full` is blocked while this repository is public.
+8. High-risk operations require `confirmRisk:true`.
+9. Protected existing-resource mutations require an exact target-name assertion.
+10. Nested JSON Schema constraints are validated locally against the live MCP schema.
+11. MCP tool responses with `isError:true` fail the job.
+12. Write responses in this public repository are reduced to structural metadata.
+13. `outputMode=full` is blocked while this repository is public.
 
 The read runner has the inverse guard: `MCP_READ_ONLY=true` rejects every non-read tool.
 
@@ -165,7 +170,7 @@ Validated controls:
 | High-impact tool without `confirmRisk:true` | Block locally before target lookup/write | PASS |
 | Nested/schema constraint violation | Block locally using live JSON Schema | PASS |
 | MCP `tools/call` returns `isError:true` | Fail the GitHub job, never report success | PASS |
-| Multiple write pushes close together | Queue; do not cancel an active or pending write | PASS |
+| New write arrives while another is running | Do not cancel the active write | PASS; pending replacement remains a documented GitHub limitation |
 | Write output in public repository | Emit structural metadata only | PASS |
 | Oversized request | Reject above 64 KiB | IMPLEMENTED |
 | Request prepared for another branch | Reject `targetRef` mismatch | IMPLEMENTED |
@@ -186,8 +191,14 @@ High-risk tools currently include:
 - `publish_workflow`
 - `unpublish_workflow`
 - `archive_workflow`
+- `update_workflow`
 - `restore_workflow_version`
+- `rename_data_table`
+- `add_data_table_column`
 - `delete_data_table_column`
+- `rename_data_table_column`
+- `add_data_table_rows`
+- `mutate_agent`
 - `call_agent`
 - `publish_agent`
 - `unpublish_agent`
@@ -195,21 +206,49 @@ High-risk tools currently include:
 - `delete_agent`
 - `update_agent_integration`
 
+### Request envelope and replay protection
+
+Every operational write request carries:
+
+- `requestId`: UUID. The workflow searches prior versions of `write-request.json` in Git history and rejects a reused ID.
+- `targetRef`: must exactly equal the current `github.ref`, preventing a request prepared for one branch from being replayed on another.
+- `confirmWrite:true`: mandatory for every actual mutation.
+- `confirmRisk:true`: mandatory for high-risk tools.
+- `expectedTargetName`: mandatory for protected mutations against an existing workflow, folder, Data Table, or Agent.
+- `expectedColumnName`: additionally mandatory when renaming or deleting a Data Table column.
+
+GitHub reruns are blocked with `github.run_attempt == 1`. A failed or ambiguous write is retried only by issuing a **new** request with a new UUID after verifying the current n8n state.
+
+The write job also requires:
+
+- trigger actor == repository owner;
+- a supported control branch;
+- a push whose diff contains only `n8n-mcp/write-request.json`;
+- request file <= 64 KiB.
+
 ### Target identity assertion
 
-For mutations against an existing resource, the request must include `expectedTargetName`. The runner performs a read-before-write lookup using the supplied ID and blocks the operation when the resolved name does not exactly match.
+For protected mutations against an existing resource, the request must include `expectedTargetName`. The runner performs a read-before-write lookup using the supplied ID and blocks the operation when the resolved name does not exactly match.
 
-This protects against a syntactically valid request containing the ID of the wrong workflow, folder, Agent, or Data Table.
+Folder and Data Table lookups are **exact-ID-or-block**: the runner no longer falls back to the first name returned by a list query.
+
+For `delete_data_table_column` and `rename_data_table_column`, `expectedColumnName` must also match the exact resolved `columnId`. This prevents a valid table ID from masking a wrong column ID.
+
+These controls protect against syntactically valid requests that target the wrong workflow, folder, Agent, Data Table, or column.
 
 Creation operations are intentionally different: there is no pre-existing target to assert. Their payload is instead constrained by the live MCP schema and explicit write confirmation.
 
 ### Concurrency semantics
 
-Writes use one concurrency group per branch with `queue: max`. This is intentional.
+Writes use one concurrency group per branch with `cancel-in-progress:false`.
 
-A write that has started must not be canceled merely because a newer request arrives: the remote mutation may already have committed. Likewise, pending write requests must not be silently replaced. GitHub's queued concurrency mode serializes them instead.
+This guarantees the critical property: an already-running write is **not canceled** when a newer request arrives. Canceling an active runner would be unsafe because the remote mutation may already have committed even if GitHub has not recorded the response yet.
 
-Ordering still must not be treated as a transaction. Every operation should remain independently safe and use read-before-write/read-after-write where the target supports it.
+There is an important residual limitation: in the currently supported GitHub Actions concurrency behavior for this repository, only one pending run is reliably retained. A newer pending run may replace an older pending run. The attempted `queue:max` configuration was rejected by GitHub in this repository and is therefore not used.
+
+Operational rule: **never submit a second write request until the previous write run has reached a terminal state**. ChatGPT must check the current `n8n MCP write` run before committing another request.
+
+Concurrency is not a transaction or exactly-once mechanism. After any timeout, network disconnect, or ambiguous failure, perform a read-after-failure check before deciding whether to retry.
 
 ### Public-output policy
 
