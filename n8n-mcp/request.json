@@ -1,9 +1,6 @@
 {
-  "tool": "search_nodes",
-  "arguments": {
-    "queries": ["http request"],
-    "usage": "workflow"
-  },
+  "tool": "search_projects",
+  "arguments": {},
   "outputMode": "summary",
   "confirmWrite": false
 }
