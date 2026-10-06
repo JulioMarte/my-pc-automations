@@ -22,6 +22,10 @@ if (endpoint.pathname !== "/mcp-server/http") throw new Error("Ruta MCP no permi
 endpoint.search = "";
 endpoint.hash = "";
 
+const forcedReadOnly = (process.env.MCP_READ_ONLY || "").toLowerCase() === "true";
+if (forcedReadOnly && !READ_ONLY_TOOLS.has(cfg.tool)) {
+  throw new Error(`MCP_READ_ONLY bloquea la tool no-read: ${cfg.tool}`);
+}
 if (!READ_ONLY_TOOLS.has(cfg.tool) && cfg.confirmWrite !== true) {
   throw new Error(`${cfg.tool} requiere confirmWrite=true`);
 }
