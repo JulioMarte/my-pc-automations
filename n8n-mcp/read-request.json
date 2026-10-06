@@ -1,21 +1,8 @@
 {
-  "tool": "get_workflow_execution",
+  "tool": "get_workflow_version",
   "arguments": {
     "workflowId": "QBCmQypRRV25Ln8F",
-    "executionId": "1308",
-    "includeData": true,
-    "nodeNames": [
-      "DeepSeek CFO Model",
-      "CFO Conversacional"
-    ],
-    "truncateData": 25000
-  },
-  "projection": {
-    "type": "executionNodeStats",
-    "nodeNames": [
-      "DeepSeek CFO Model",
-      "CFO Conversacional"
-    ]
+    "versionId": "7109bdba-5993-42df-bee9-18ee0bbaf209"
   },
   "outputMode": "summary",
   "confirmWrite": false
