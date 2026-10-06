@@ -33,6 +33,8 @@ Detalles:
 - [READ_LAYER.md](./READ_LAYER.md)
 - [WRITE_LAYER.md](./WRITE_LAYER.md)
 - [CHATGPT_SETUP.md](./CHATGPT_SETUP.md)
+- [TRIGGER_MODEL.md](./TRIGGER_MODEL.md)
+- [WRITE_ADVERSARIAL_REVIEW.md](./WRITE_ADVERSARIAL_REVIEW.md)
 
 ## Arquitectura operativa
 
@@ -46,7 +48,10 @@ ChatGPT
   +-> write-request.json
         -> GitHub Actions: n8n MCP write
         -> MCP_WRITE_ONLY=true
-        -> confirmWrite=true obligatorio
+        -> requestId + targetRef
+        -> confirmWrite=true
+        -> confirmRisk=true cuando aplica
+        -> expectedTargetName cuando aplica
 ```
 
 Los dos canales operativos reaccionan únicamente a cambios en su propio archivo request:
@@ -65,22 +70,16 @@ n8n-mcp/
   README.md
   READ_LAYER.md
   WRITE_LAYER.md
+  WRITE_ADVERSARIAL_REVIEW.md
+  TRIGGER_MODEL.md
   CHATGPT_SETUP.md
   .env.example
   package.json
   read-request.json
   write-request.json
   request.json
-  read-request.json
-  write-request.json
-  READ_LAYER.md
-  WRITE_LAYER.md
-  TRIGGER_MODEL.md
   src/
     mcp-client.mjs
-    invoke.mjs
-    read-suite.mjs
-    write-suite.mjs
     diagnose.mjs
     invoke.mjs
     tools.mjs
@@ -148,8 +147,13 @@ El token no se carga automáticamente desde `.env` y no se imprime en salida nor
 - host y path MCP fijados;
 - timeouts por llamada;
 - permisos de Actions mínimos: `contents: read`;
-- `concurrency` con cancelación de ejecuciones superadas;
-- resultados sanitizados;
+- write concurrency con `cancel-in-progress:false` para no abortar una mutación ya iniciada;
+- UUID por request y bloqueo de reruns/replay;
+- target assertions por ID + nombre antes de mutaciones protegidas;
+- `confirmRisk:true` adicional para operaciones de alto impacto;
+- validación profunda contra el schema vivo;
+- `isError:true` del MCP se convierte en fallo real del job;
+- resultados de write reducidos a metadata estructural en el repo público;
 - `outputMode=full` bloqueado mientras el repositorio sea público.
 
 ## Triggers
