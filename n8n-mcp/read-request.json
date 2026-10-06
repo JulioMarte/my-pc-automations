@@ -1,8 +1,14 @@
 {
   "tool": "get_workflow_version",
   "arguments": {
-    "workflowId": "3hSBgYsImJuHy5hg",
-    "versionId": "bc384275-371b-4a5e-9979-2fbfa5e59fe5"
+    "workflowId": "QBCmQypRRV25Ln8F",
+    "versionId": "c245fc7a-2b9f-40c4-b138-cb935d684f0b"
+  },
+  "projection": {
+    "type": "nodeRuntime",
+    "nodeNames": [
+      "FF Tool: Actividad cuenta"
+    ]
   },
   "outputMode": "summary",
   "confirmWrite": false
