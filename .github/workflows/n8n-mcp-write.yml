@@ -10,7 +10,7 @@ permissions:
 
 concurrency:
   group: n8n-mcp-write-${{ github.ref }}
-  cancel-in-progress: false
+  queue: max
 
 jobs:
   write:
