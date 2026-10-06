@@ -1,16 +1,9 @@
 {
-  "tool": "get_workflow_version",
+  "tool": "search_workflows",
   "arguments": {
-    "workflowId": "QBCmQypRRV25Ln8F",
-    "versionId": "73dbf2f0-0222-4f08-91d2-ec2657a138d2"
-  },
-  "projection": {
-    "type": "nodeRuntime",
-    "nodeNames": [
-      "CFO Conversacional",
-      "DeepSeek CFO Model",
-      "Memoria por conversación"
-    ]
+    "query": "CFO Controlled Writer",
+    "limit": 20,
+    "sortBy": "updatedAt:desc"
   },
   "outputMode": "summary",
   "confirmWrite": false
