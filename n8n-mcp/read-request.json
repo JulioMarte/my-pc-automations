@@ -5,10 +5,9 @@
     "executionId": "1270",
     "includeData": true,
     "nodeNames": [
-      "Recibo de turno CFO",
-      "Preparar respuesta CFO"
+      "DeepSeek CFO Model"
     ],
-    "truncateData": 10000
+    "truncateData": 20000
   },
   "outputMode": "summary",
   "confirmWrite": false
