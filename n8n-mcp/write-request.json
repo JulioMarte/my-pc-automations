@@ -1,13 +1,14 @@
 {
-  "requestId": "b88f393d-6a7d-4b2f-b35e-4f5b2489a421",
+  "requestId": "d7f7cb7b-1cf6-49a0-8f56-21e24c7fcf2b",
   "targetRef": "refs/heads/feat/n8n-mcp-client",
   "tool": "update_folder",
   "arguments": {
-    "projectId": "YJ7lwcmcxGN31kAM",
-    "folderId": "LIsmirp0mG6wJ9CJ",
-    "name": "__MCP_WRITE_SUITE__"
+    "projectId": "REPLACE_WITH_PROJECT_ID",
+    "folderId": "REPLACE_WITH_FOLDER_ID",
+    "name": "REPLACE_WITH_NEW_NAME"
   },
-  "expectedTargetName": "__MCP_WRITE_SUITE__",
+  "expectedTargetName": "REPLACE_WITH_CURRENT_TARGET_NAME",
   "outputMode": "summary",
-  "confirmWrite": true
+  "confirmWrite": false,
+  "confirmRisk": false
 }
