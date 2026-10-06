@@ -1,9 +1,9 @@
 {
-  "tool": "get_workflow_execution",
+  "tool": "search_workflows",
   "arguments": {
-    "workflowId": "QBCmQypRRV25Ln8F",
-    "executionId": "1044",
-    "includeData": false
+    "query": "Actividad cuenta",
+    "limit": 50,
+    "sortBy": "updatedAt:desc"
   },
   "outputMode": "summary",
   "confirmWrite": false
