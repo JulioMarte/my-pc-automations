@@ -1,10 +1,13 @@
 {
+  "requestId": "2dc84c77-1f51-4b7b-9f88-8aa06469ea2a",
+  "targetRef": "refs/heads/feat/n8n-mcp-client",
   "tool": "update_folder",
   "arguments": {
-    "projectId": "REPLACE_WITH_PROJECT_ID",
-    "folderId": "REPLACE_WITH_FOLDER_ID",
-    "name": "REPLACE_WITH_NEW_NAME"
+    "projectId": "YJ7lwcmcxGN31kAM",
+    "folderId": "LIsmirp0mG6wJ9CJ",
+    "name": "__MCP_WRITE_SUITE__"
   },
+  "expectedTargetName": "WRONG_NAME_ADVERSARIAL",
   "outputMode": "summary",
-  "confirmWrite": false
+  "confirmWrite": true
 }
