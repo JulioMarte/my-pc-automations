@@ -1,13 +1,9 @@
 {
-  "tool": "get_workflow_execution",
+  "tool": "get_workflow_versions_diff",
   "arguments": {
-    "workflowId": "QBCmQypRRV25Ln8F",
-    "executionId": "1217",
-    "includeData": true,
-    "nodeNames": [
-      "Recibo de turno CFO"
-    ],
-    "truncateData": 8000
+    "workflowId": "3hSBgYsImJuHy5hg",
+    "fromVersionId": "bc384275-371b-4a5e-9979-2fbfa5e59fe5",
+    "toVersionId": "bc384275-371b-4a5e-9979-2fbfa5e59fe5"
   },
   "outputMode": "summary",
   "confirmWrite": false
