@@ -1,12 +1,7 @@
 name: n8n MCP write suite
 
 on:
-  push:
-    branches:
-      - feat/n8n-mcp-client
-    paths:
-      - "n8n-mcp/src/write-suite.mjs"
-      - ".github/workflows/n8n-mcp-write-suite.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read
