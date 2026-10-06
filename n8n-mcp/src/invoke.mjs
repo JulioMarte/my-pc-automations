@@ -55,7 +55,7 @@ async function send(payload, expectResponse = true) {
   };
   if (sessionId) headers["mcp-session-id"] = sessionId;
 
-  const res = await fetch(endpoint, { method: "POST", headers, body: JSON.stringify(payload) });
+  const res = await fetch(endpoint, { method: "POST", headers, body: JSON.stringify(payload), signal: AbortSignal.timeout(15000) });
   const sid = res.headers.get("mcp-session-id");
   if (sid) sessionId = sid;
   const body = await res.text();
@@ -79,6 +79,43 @@ async function request(method, params) {
   return msg.result;
 }
 
+function validateArgumentsAgainstSchema(schema, args) {
+  if (!schema || schema.type !== "object") return [];
+  const errors = [];
+  const properties = schema.properties || {};
+  for (const key of schema.required || []) {
+    if (!(key in args)) errors.push(`Missing required argument: ${key}`);
+  }
+  if (schema.additionalProperties === false) {
+    for (const key of Object.keys(args)) {
+      if (!(key in properties)) errors.push(`Unknown argument: ${key}`);
+    }
+  }
+  for (const [key, value] of Object.entries(args)) {
+    const prop = properties[key];
+    if (!prop || value == null) continue;
+    const expected = Array.isArray(prop.type) ? prop.type : [prop.type];
+    if (!prop.type) continue;
+    const actual = Array.isArray(value) ? "array" : typeof value;
+    const normalized = actual === "number" && Number.isInteger(value) ? ["integer", "number"] : [actual];
+    if (!expected.some((t) => normalized.includes(t))) {
+      errors.push(`Argument ${key} expected ${expected.join("|")}, got ${actual}`);
+    }
+  }
+  return errors;
+}
+
+async function listTools() {
+  const all = [];
+  let cursor;
+  do {
+    const page = await request("tools/list", cursor ? { cursor } : {});
+    all.push(...(page.tools || []));
+    cursor = page.nextCursor;
+  } while (cursor);
+  return all;
+}
+
 function sanitize(value, depth = 0) {
   if (depth > 4) return "[truncated]";
   if (value === null || typeof value !== "object") {
@@ -100,6 +137,15 @@ const initialized = await request("initialize", {
   clientInfo: { name: "my-pc-automations-n8n-tool-runner", version: "1.0.0" },
 });
 await send({ jsonrpc: "2.0", method: "notifications/initialized", params: {} }, false);
+
+const liveTools = await listTools();
+const liveTool = liveTools.find((tool) => tool.name === cfg.tool);
+if (!liveTool) throw new Error(`Tool no anunciada actualmente por el servidor: ${cfg.tool}`);
+
+const argumentErrors = validateArgumentsAgainstSchema(liveTool.inputSchema, cfg.arguments || {});
+if (argumentErrors.length) {
+  throw new Error(`Argument validation failed: ${argumentErrors.join("; ")}`);
+}
 
 const result = await request("tools/call", {
   name: cfg.tool,
