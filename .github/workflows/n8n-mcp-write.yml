@@ -34,11 +34,22 @@ jobs:
           test -n "$N8N_MCP_URL" || (echo "N8N_MCP_URL repository variable is missing" && exit 1)
           test -n "$N8N_MCP_TOKEN" || (echo "N8N_MCP_TOKEN secret is missing" && exit 1)
 
+      - name: Check explicit write confirmation
+        id: gate
+        shell: bash
+        run: |
+          CONFIRMED="$(node -e "const r=require('./n8n-mcp/write-request.json'); process.stdout.write(String(r.confirmWrite === true))")"
+          echo "confirmed=$CONFIRMED" >> "$GITHUB_OUTPUT"
+          if [ "$CONFIRMED" != "true" ]; then
+            echo "Write request is parked: confirmWrite is not true. No MCP connection will be opened."
+          fi
+
       - name: Invoke write-only n8n MCP tool
+        if: steps.gate.outputs.confirmed == 'true'
         run: node n8n-mcp/src/invoke.mjs
 
       - name: Upload sanitized write result
-        if: always()
+        if: steps.gate.outputs.confirmed == 'true' && always()
         uses: actions/upload-artifact@v4
         with:
           name: n8n-mcp-write-result
