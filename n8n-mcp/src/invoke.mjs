@@ -378,6 +378,8 @@ function collectRuntimeSignals(value) {
     categories: new Set(),
     toolNames: new Set(),
     toolActionCount: 0,
+    textLengths: [],
+    outputLengths: [],
   };
   const walk = (v) => {
     if (v == null) return;
@@ -400,6 +402,10 @@ function collectRuntimeSignals(value) {
     }
     if (typeof v.finish_reason === "string") state.finishReasons.add(v.finish_reason);
     if (typeof v.finishReason === "string") state.finishReasons.add(v.finishReason);
+    if (typeof v.text === "string") state.textLengths.push(v.text.length);
+    for (const key of ["output", "reply", "response_text"]) {
+      if (typeof v[key] === "string") state.outputLengths.push({ key, length: v[key].length });
+    }
     if (typeof v.toolName === "string") state.toolNames.add(v.toolName);
     if (v.actionType === "ExecutionNodeAction" || v.type === "ai_tool") state.toolActionCount++;
     Object.values(v).forEach(walk);
@@ -411,6 +417,8 @@ function collectRuntimeSignals(value) {
     categories: [...state.categories],
     toolNames: [...state.toolNames].slice(0, 30),
     toolActionCount: state.toolActionCount,
+    textLengths: state.textLengths.slice(0, 30),
+    outputLengths: state.outputLengths.slice(0, 30),
   };
 }
 
