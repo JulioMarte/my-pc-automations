@@ -16,6 +16,8 @@ Reviewed components:
 
 The write channel is suitable for non-secret control data in this public repository when used one request at a time.
 
+After the adversarial tests, `write-request.json` was returned to a parked state with `confirmWrite:false`; the resulting Actions run completed successfully while the MCP invocation step was skipped.
+
 It is **not** exactly-once transactional infrastructure and it is **not** a secure transport for confidential request arguments.
 
 ## Findings and mitigations
@@ -63,6 +65,7 @@ Mitigation:
 - mismatch blocks before the mutation.
 - folder and Data Table list lookups require an exact ID match and do not fall back to the first returned name.
 - Data Table column rename/delete additionally require `expectedColumnName` matching the exact `columnId`.
+- verified: omitting `expectedColumnName` from `delete_data_table_column` blocked locally before MCP invocation.
 
 Verified:
 
