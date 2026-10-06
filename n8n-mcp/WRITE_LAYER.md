@@ -223,3 +223,12 @@ For writes executed from this public repository, the runner does not serialize t
 If the MCP result has `isError:true`, the job fails and no success artifact is uploaded.
 
 This is stricter than key-name redaction and avoids leaking unexpected business data under innocuous field names.
+
+
+### Optional production approval gate
+
+For a stricter production posture, the write job can be attached to a protected GitHub Environment whose deployment protection rules require approval and/or restrict allowed branches. GitHub withholds environment-scoped secrets until protection rules pass.
+
+This is deliberately **not enabled** in the current bridge because it would require a human approval step for every write and reduce autonomous operation from ChatGPT. It is the recommended next control if the MCP token gains access to materially sensitive production operations.
+
+The current `github.actor == github.repository_owner` condition is defense in depth, not a substitute for repository permissions or an Environment approval boundary.
