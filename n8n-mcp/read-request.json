@@ -1,15 +1,11 @@
 {
-  "tool": "get_workflow_version",
+  "tool": "get_node_types",
   "arguments": {
-    "workflowId": "QBCmQypRRV25Ln8F",
-    "versionId": "c245fc7a-2b9f-40c4-b138-cb935d684f0b"
-  },
-  "projection": {
-    "type": "nodeRuntime",
-    "nodeNames": [
-      "DeepSeek CFO Model",
-      "CFO Conversacional",
-      "Memoria por conversación"
+    "nodeIds": [
+      {
+        "nodeId": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+        "version": 1
+      }
     ]
   },
   "outputMode": "summary",
