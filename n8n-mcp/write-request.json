@@ -1,13 +1,12 @@
 {
-  "requestId": "67c3fd15-5f2f-47df-a765-c36cf4ec0ec0",
+  "requestId": "7f516cb5-9351-4dda-a28a-63e45fa03db4",
   "targetRef": "refs/heads/feat/n8n-mcp-client",
-  "tool": "update_folder",
+  "tool": "archive_workflow",
   "arguments": {
-    "projectId": "YJ7lwcmcxGN31kAM",
-    "folderId": "LIsmirp0mG6wJ9CJ",
-    "name": "__MCP_WRITE_SUITE__"
+    "workflowId": "__adversarial_never_called__"
   },
-  "expectedTargetName": "__MCP_WRITE_SUITE__",
+  "expectedTargetName": "__adversarial_never_called__",
   "outputMode": "summary",
-  "confirmWrite": true
+  "confirmWrite": true,
+  "confirmRisk": false
 }
