@@ -5,8 +5,7 @@
     "executionId": "1270",
     "includeData": true,
     "nodeNames": [
-      "Input",
-      "Preparar contexto CFO"
+      "Input"
     ],
     "truncateData": 5000
   },
