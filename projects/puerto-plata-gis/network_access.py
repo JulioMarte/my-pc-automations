@@ -111,13 +111,18 @@ def main():
  p.add_argument("--population",default=str(ROOT/"population.json"))
  p.add_argument("--route",default=str(ROOT/"initial_route.geojson"))
  p.add_argument("--output",default=str(ROOT/"network_access_report.json"))
+ p.add_argument("--radius",type=int,default=500)
+ p.add_argument("--max-snap",type=int,default=120)
+ p.add_argument("--sensitivity",action="store_true")
  a=p.parse_args()
  g=ox.load_graphml(a.graph)
  pop=json.loads(Path(a.population).read_text())["cells"]
  fc=json.loads(Path(a.route).read_text())
  stops=[[f["geometry"]["coordinates"][1],f["geometry"]["coordinates"][0]]
    for f in fc["features"] if f["geometry"]["type"]=="Point"]
- report=coverage(g,stops,pop)
+ report=coverage(g,stops,pop,radius=a.radius,max_snap=a.max_snap)
+ if a.sensitivity:
+  report["sensitivity"]=[{"max_snap_m":m,"result":coverage(g,stops,pop,radius=a.radius,max_snap=m)} for m in (30,60,120)]
  Path(a.output).write_text(json.dumps(report,indent=2))
  print(json.dumps(report,indent=2))
 if __name__=="__main__":main()
