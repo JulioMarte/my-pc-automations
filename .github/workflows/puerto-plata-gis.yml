@@ -212,7 +212,7 @@ jobs:
 
   street-access:
     runs-on: ubuntu-latest
-    needs: [network, package]
+    needs: [network, package, destinations]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -223,7 +223,7 @@ jobs:
       - name: Regression tests for street access
         run: |
           cd projects/puerto-plata-gis
-          python -m unittest -v test_network_access.py
+          python -m unittest -v test_network_access.py test_network_scenarios.py
       - uses: actions/download-artifact@v4
         with:
           name: puerto-plata-red-vial-osmnx
@@ -245,8 +245,18 @@ jobs:
           assert p["population_outside_study_bbox"]>0
           print("Street network access:",p)
           PY
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-destinos-overture
+          path: projects/puerto-plata-gis
+      - name: Compare network-wide walking access
+        run: |
+          python projects/puerto-plata-gis/compare_network_scenarios.py
+          python -c "import json; d=json.load(open('projects/puerto-plata-gis/network_scenario_comparison.json')); assert len(d['scenarios']) == 1; assert not d['scenarios'][0]['bus_geometry_validated']"
       - uses: actions/upload-artifact@v4
         with:
           name: puerto-plata-acceso-peatonal-red
-          path: projects/puerto-plata-gis/network_access_report.json
+          path: |
+            projects/puerto-plata-gis/network_access_report.json
+            projects/puerto-plata-gis/network_scenario_comparison.json
           retention-days: 30
