@@ -171,3 +171,41 @@ jobs:
             projects/puerto-plata-gis/transit_planner.py
             projects/puerto-plata-gis/test_transit_planner.py
           retention-days: 30
+
+  synthetic-od:
+    runs-on: ubuntu-latest
+    needs: [package, destinations]
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Verify synthetic origin-destination model
+        run: |
+          cd projects/puerto-plata-gis
+          python -m unittest -v test_od_synthetic.py
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-gis-completo
+          path: projects/puerto-plata-gis
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-destinos-overture
+          path: projects/puerto-plata-gis
+      - name: Generate time-of-day OD opportunity matrix
+        run: |
+          python projects/puerto-plata-gis/build_od_synthetic.py
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=json.loads(Path('projects/puerto-plata-gis/od_synthetic.json').read_text())
+          assert len(p['periods'])==6
+          assert p['resident_coverage_estimate']>0
+          assert p['metadata']['method'].startswith('synthetic')
+          print('Synthetic, non-observed OD report validated')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: puerto-plata-od-sintetica
+          path: projects/puerto-plata-gis/od_synthetic.json
+          retention-days: 30
