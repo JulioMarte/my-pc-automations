@@ -126,3 +126,48 @@ jobs:
             projects/puerto-plata-gis/destinations.geojson
             projects/puerto-plata-gis/destinations_report.json
           retention-days: 30
+
+  service-plan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Test schedule, frequency, fleet and transfer assumptions
+        run: |
+          cd projects/puerto-plata-gis
+          python -m unittest -v test_transit_planner.py
+          python transit_planner.py --output network_scenarios.json
+          python - <<'PY'
+          import json
+          p=json.load(open('network_scenarios.json'))
+          assert p['results']['fleet']['fleet_total']==21
+          assert len(p['results']['periods'])==6
+          print('Plan validated:',p['results']['fleet'])
+          PY
+      - name: Validate offline planner JavaScript
+        run: |
+          python - <<'PY'
+          from html.parser import HTMLParser
+          from pathlib import Path
+          class Parser(HTMLParser):
+              def __init__(self):super().__init__();self.active=False;self.text=[]
+              def handle_starttag(self,tag,attrs):
+                  if tag=="script" and not any(k=="src" for k,_ in attrs):self.active=True
+              def handle_endtag(self,tag):
+                  if tag=="script":self.active=False
+              def handle_data(self,d):
+                  if self.active:self.text.append(d)
+          p=Parser();p.feed(Path('projects/puerto-plata-gis/frequency_planner.html').read_text())
+          Path('/tmp/puerto-plata-frequency.js').write_text('\n'.join(p.text))
+          PY
+          node --check /tmp/puerto-plata-frequency.js
+      - uses: actions/upload-artifact@v4
+        with:
+          name: puerto-plata-frecuencias-transbordos
+          path: |
+            projects/puerto-plata-gis/frequency_planner.html
+            projects/puerto-plata-gis/network_scenarios.json
+            projects/puerto-plata-gis/transit_planner.py
+            projects/puerto-plata-gis/test_transit_planner.py
+          retention-days: 30
