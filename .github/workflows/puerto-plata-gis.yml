@@ -234,12 +234,15 @@ jobs:
           path: projects/puerto-plata-gis
       - name: Estimate 500m directed street access
         run: |
-          python projects/puerto-plata-gis/network_access.py
+          python projects/puerto-plata-gis/network_access.py --sensitivity
           python - <<'PY'
           import json
           p=json.load(open("projects/puerto-plata-gis/network_access_report.json"))
           assert p["total_stops"]>=20 and p["snapped_stops"]>=15
           assert p["residents"]>0 and p["residents"]<=45000
+          assert p["accounting_difference"]==0
+          assert len(p["sensitivity"])==3
+          assert p["population_outside_study_bbox"]>0
           print("Street network access:",p)
           PY
       - uses: actions/upload-artifact@v4
