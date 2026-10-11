@@ -20,6 +20,8 @@ jobs:
         run: python projects/puerto-plata-gis/build_population.py
       - name: Build provisional OSM/OSRM route
         run: python projects/puerto-plata-gis/build_route.py
+      - name: Retrieve OSM road metadata (graceful fallback)
+        run: python projects/puerto-plata-gis/build_roads.py
       - name: Build standalone interactive HTML
         run: python projects/puerto-plata-gis/make_standalone.py
       - name: Verify files and provenance
@@ -47,6 +49,7 @@ jobs:
             projects/puerto-plata-gis/index.html
             projects/puerto-plata-gis/population.json
             projects/puerto-plata-gis/initial_route.geojson
+            projects/puerto-plata-gis/roads.geojson
             projects/puerto-plata-gis/Puerto_Plata_Linea_1_Mapa_Interactivo.html
             projects/puerto-plata-gis/README.md
           retention-days: 30
