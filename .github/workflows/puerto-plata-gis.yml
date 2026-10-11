@@ -305,6 +305,7 @@ jobs:
       - name: Discover competitor corridors and complementary networks
         run: |
           python projects/puerto-plata-gis/discover_transit_network.py --max-candidates 18
+          python projects/puerto-plata-gis/render_route_competition.py
           python - <<'PY'
           import json
           from pathlib import Path
@@ -323,4 +324,5 @@ jobs:
             projects/puerto-plata-gis/route_competition.json
             projects/puerto-plata-gis/discovered_routes.geojson
             projects/puerto-plata-gis/discover_transit_network.py
+            projects/puerto-plata-gis/Competencia_Rutas_Puerto_Plata.html
           retention-days: 30
