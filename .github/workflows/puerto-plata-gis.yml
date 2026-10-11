@@ -275,3 +275,52 @@ jobs:
             projects/puerto-plata-gis/network_access_report.json
             projects/puerto-plata-gis/network_scenario_comparison.json
           retention-days: 30
+
+  route-competition:
+    runs-on: ubuntu-latest
+    needs: [network, package, destinations]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Install graph search dependencies
+        run: python -m pip install "osmnx==2.0.6" scipy
+      - name: Test candidate ranking invariants
+        run: |
+          cd projects/puerto-plata-gis
+          python -m unittest -v test_discover_transit_network.py
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-red-vial-osmnx
+          path: projects/puerto-plata-gis
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-gis-completo
+          path: projects/puerto-plata-gis
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-destinos-overture
+          path: projects/puerto-plata-gis
+      - name: Discover competitor corridors and complementary networks
+        run: |
+          python projects/puerto-plata-gis/discover_transit_network.py --max-candidates 18
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path("projects/puerto-plata-gis")
+          r=json.loads((p/"route_competition.json").read_text())
+          assert r["metadata"]["candidates"] >= 3
+          assert len(r["network_combinations"]) >= 3
+          assert all(not c["operationally_validated"] for c in r["network_combinations"])
+          assert all(c["incremental_residents"] >= 0 for c in r["network_combinations"])
+          print("Competition verified; unvalidated corridors:",r["metadata"]["candidates"])
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: puerto-plata-competencia-redes
+          path: |
+            projects/puerto-plata-gis/route_competition.json
+            projects/puerto-plata-gis/discovered_routes.geojson
+            projects/puerto-plata-gis/discover_transit_network.py
+          retention-days: 30
