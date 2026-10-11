@@ -59,7 +59,7 @@ class Network:
     seeds[u]=min(seeds.get(u,float("inf")),gap+f*length)
   return seeds,projections
 
-def coverage(g,stops,cells,radius=500,max_snap=120):
+def coverage(g,stops,cells,radius=500,max_snap=120,bbox=(-70.752,19.740,-70.620,19.836)):
  if radius<=0 or max_snap<0:raise ValueError("Invalid cutoff")
  idx=Network(g)
  seeds,source_pts=idx.sources(stops,max_snap)
@@ -68,9 +68,12 @@ def coverage(g,stops,cells,radius=500,max_snap=120):
  aux=g.copy();root="__TRANSIT_COVERAGE_ORIGIN__"
  for node,cost in seeds.items():aux.add_edge(root,node,length=cost)
  lengths=nx.single_source_dijkstra_path_length(aux,root,weight="length",cutoff=radius+max_snap)
- total=0.;covered=0;excluded=0.;snap_coverage=0
+ total=0.;covered=0;excluded=0.;outside=0.;within_bbox=0.;too_far=0.
+ west,south,east,north=bbox
  for lat,lon,pop in cells:
   if pop<=0:continue
+  if not(west<=lon<=east and south<=lat<=north):outside+=pop;continue
+  within_bbox+=pop
   hit=idx.snap(lat,lon,max_snap)
   if hit is None:excluded+=pop;continue
   gap,u,v,k,edge_len,f,_=hit
@@ -84,11 +87,17 @@ def coverage(g,stops,cells,radius=500,max_snap=120):
     if sf>f and g.has_edge(v,u):dist=min(dist,sgap+(sf-f)*edge_len)
   if gap+dist<=radius:
    total+=pop;covered+=1
+  else:too_far+=pop
  return {"residents":round(total),"covered_cells":covered,
-  "excluded_people_due_to_snap":round(excluded),
+  "population_inside_study_bbox":round(within_bbox),
+  "population_outside_study_bbox":round(outside),
+  "excluded_people_due_to_snap_inside_bbox":round(excluded),
+  "inside_bbox_over_500m_network":round(too_far),
+  "accounting_difference":round(within_bbox-total-excluded-too_far),
   "snapped_stops":len(source_pts),"total_stops":len(stops),
   "network_type":"OSMnx walk directed edges","radius_m":radius,"max_snap_m":max_snap,
   "method":"STRtree nearest line, partial edge traversal, directed Dijkstra",
+  "study_bbox_wsen":list(bbox),
   "caveats":["Snap connectors are assumed walkable; barriers and crossings unverified",
    "Walking graph may contain missing or wrong OSM connections",
    "Nearest directed edge can misrepresent access when carriageways differ",
