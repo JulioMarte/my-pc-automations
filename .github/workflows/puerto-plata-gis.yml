@@ -53,3 +53,41 @@ jobs:
             projects/puerto-plata-gis/Puerto_Plata_Linea_1_Mapa_Interactivo.html
             projects/puerto-plata-gis/README.md
           retention-days: 30
+
+  network:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Install graph dependencies
+        run: python -m pip install "osmnx==2.0.6" "networkx>=3.4,<4"
+      - name: Download directed road and pedestrian networks
+        run: python projects/puerto-plata-gis/build_network.py
+      - name: Verify network export
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('projects/puerto-plata-gis')
+          r=json.loads((p/'network_report.json').read_text())
+          for kind in ('drive','walk'):
+              assert r['networks'][kind]['nodes']>100
+              assert r['networks'][kind]['directed_edges']>100
+              g=json.loads((p/f'{kind}_network.geojson').read_text())
+              assert len(g['features'])==r['networks'][kind]['directed_edges']
+              assert (p/f'{kind}.graphml').stat().st_size>1000
+          print('Verified directed networks',r['networks'])
+          PY
+      - name: Publish network graphs
+        uses: actions/upload-artifact@v4
+        with:
+          name: puerto-plata-red-vial-osmnx
+          path: |
+            projects/puerto-plata-gis/drive.graphml
+            projects/puerto-plata-gis/walk.graphml
+            projects/puerto-plata-gis/drive_network.geojson
+            projects/puerto-plata-gis/walk_network.geojson
+            projects/puerto-plata-gis/network_report.json
+          retention-days: 30
