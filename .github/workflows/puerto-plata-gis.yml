@@ -209,3 +209,41 @@ jobs:
           name: puerto-plata-od-sintetica
           path: projects/puerto-plata-gis/od_synthetic.json
           retention-days: 30
+
+  street-access:
+    runs-on: ubuntu-latest
+    needs: [network, package]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Install geographic graph analysis
+        run: python -m pip install "osmnx==2.0.6" "networkx>=3.4,<4" scipy
+      - name: Regression tests for street access
+        run: |
+          cd projects/puerto-plata-gis
+          python -m unittest -v test_network_access.py
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-red-vial-osmnx
+          path: projects/puerto-plata-gis
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-gis-completo
+          path: projects/puerto-plata-gis
+      - name: Estimate 500m directed street access
+        run: |
+          python projects/puerto-plata-gis/network_access.py
+          python - <<'PY'
+          import json
+          p=json.load(open("projects/puerto-plata-gis/network_access_report.json"))
+          assert p["total_stops"]>=20 and p["snapped_stops"]>=15
+          assert p["residents"]>0 and p["residents"]<=45000
+          print("Street network access:",p)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: puerto-plata-acceso-peatonal-red
+          path: projects/puerto-plata-gis/network_access_report.json
+          retention-days: 30
