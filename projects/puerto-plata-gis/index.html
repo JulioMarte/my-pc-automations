@@ -17,7 +17,7 @@
 </aside><div id="map" role="application" aria-label="Mapa de transporte de Puerto Plata"></div></div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script>
 (()=>{"use strict";
-const map=L.map("map").setView([19.782,-70.678],12);
+const map=L.map("map",{preferCanvas:true}).setView([19.782,-70.678],12);
 const streets=L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"© OpenStreetMap contributors"}).addTo(map);
 const sat=L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",{maxZoom:19,attribution:"Tiles © Esri"});
 const labels=L.tileLayer("https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}.png",{maxZoom:19,attribution:"Labels © OpenStreetMap, CARTO"});
