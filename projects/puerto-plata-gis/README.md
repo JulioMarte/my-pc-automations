@@ -1,6 +1,6 @@
 # Puerto Plata Línea 1 — Laboratorio GIS
 
-Aplicación web independiente dentro de `my-pc-automations`. Mapa satelital Esri, calles y rótulos OpenStreetMap/CARTO, paradas editables y cobertura ajustable. Por defecto se usa **500 m de diámetro (250 m de radio)**.
+Aplicación web independiente dentro de `my-pc-automations`. Mapa satelital Esri, calles y rótulos OpenStreetMap/CARTO, paradas editables y cobertura ajustable. Por defecto se usa **500 m de radio (1,000 m de diámetro)**.
 
 ## Datos demográficos
 
@@ -19,3 +19,7 @@ Descargar el artefacto **puerto-plata-gis-completo** desde Actions. Extraer y ej
 - La cobertura por radio euclidiano no equivale a distancia peatonal.
 - El sitio necesita internet para tiles y librería Leaflet.
 - Esta rama está aislada y no altera otros servicios del repositorio.
+
+## Evaluación actualizada
+
+Radio predeterminado: **500 m**, editable entre 100 y 1,200 m. La suma basada en centros de celdas WorldPop de las 22 paradas provisionales aumenta aproximadamente de 17,148 a **41,114 residentes modelados** al cambiar de 250 a 500 m de radio. No es población censal ONE ni cantidad de pasajeros. Las calles de un solo sentido y los anchos de calzada no se validan automáticamente; hay que corroborar con OSM por tramo y trabajo de campo. Los nombres de comercios del panel están respaldados por fuentes, pero no se colocan pines con coordenadas no confirmadas. La acción de 'sugerir mejora' ordena las paradas por aporte residencial exclusivo, sin generar rutas viales ficticias.
