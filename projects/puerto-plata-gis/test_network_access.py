@@ -25,6 +25,13 @@ class TestEdgeAccess(unittest.TestCase):
   g=graph()
   report=coverage(g,[[19.8,-70.699],[19.8,-70.698]],[[19.8,-70.699,12]],radius=500,max_snap=30)
   self.assertEqual(report["residents"],12)
+ def test_bbox_accounting(self):
+  g=graph()
+  result=coverage(g,[[19.8,-70.699]],[[19.8,-70.699,11],[20.0,-70.699,30],[19.81,-70.699,7]],radius=250,max_snap=20)
+  self.assertEqual(result["population_outside_study_bbox"],30)
+  self.assertEqual(result["population_inside_study_bbox"],18)
+  self.assertEqual(result["accounting_difference"],0)
+  self.assertEqual(result["excluded_people_due_to_snap_inside_bbox"],7)
  def test_reject_unsnapped_stop(self):
   with self.assertRaises(ValueError):coverage(graph(),[[19.9,-70.6]],[[19.8,-70.7,1]],500,30)
 
