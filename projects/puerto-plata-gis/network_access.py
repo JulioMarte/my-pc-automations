@@ -80,8 +80,8 @@ def coverage(g,stops,cells,radius=500,max_snap=120):
   # without first reaching the intersection/node.
   for sgap,su,sv,sk,slen,sf,si in source_pts:
    if si==hit[6]:
-    if sf<=f:dist=min(dist,sgap+gap+(f-sf)*edge_len)
-    if sf>f and g.has_edge(v,u):dist=min(dist,sgap+gap+(sf-f)*edge_len)
+    if sf<=f:dist=min(dist,sgap+(f-sf)*edge_len)
+    if sf>f and g.has_edge(v,u):dist=min(dist,sgap+(sf-f)*edge_len)
   if gap+dist<=radius:
    total+=pop;covered+=1
  return {"residents":round(total),"covered_cells":covered,
