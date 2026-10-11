@@ -5,7 +5,7 @@
 <h1>Puerto Plata · Línea 1</h1><p>UASD ↔ Oasis / Playa Dorada. Herramienta exploratoria para ubicar paradas, visualizar población y medir población residencial potencialmente cubierta.</p>
 <div class="stat"><span class="muted">Residentes estimados dentro de las zonas de cobertura</span><b id="coverage">—</b><span class="muted" id="coverageInfo">Esperando capa demográfica</span></div>
 <div class="stat"><span class="muted">Paradas ubicadas</span><b id="count">0</b><span class="muted">Paradas propuestas automáticamente; edítalas según la realidad local.</span></div>
-<h2>Mapa base</h2><button id="streets" class="active">Calles y nombres</button><button id="satellite">Satélite + nombres</button>
+<h2>Mapa base</h2><p id="tileStatus" class="muted" role="status">Calles: CARTO/OSM · Satélite: Esri.</p><button id="streets" class="active">Calles y nombres</button><button id="satellite">Satélite + nombres</button>
 <h2>Edición</h2><button id="addstop">Añadir parada</button><button id="routeedit">Dibujar recorrido</button><button id="undo">Deshacer último</button><button id="clearroute">Borrar ruta</button><p id="mode" class="alert">Selecciona «Añadir parada» y haz clic en el mapa. Puedes arrastrar los marcadores o hacer clic para eliminarlos.</p>
 <div class="ctrl"><label for="radius">Cobertura: <b id="radiusLabel">500 m de diámetro (250 m de radio)</b></label><input id="radius" type="range" min="200" max="1600" step="100" value="500"><span class="muted">Distancia directa, no caminata por calles.</span></div>
 <div><label><input id="heatmap" type="checkbox" checked> Ver densidad estimada de población</label><label><input id="zones" type="checkbox" checked> Ver coberturas de paradas</label></div>
@@ -30,7 +30,10 @@ window.addEventListener('load',load,{once:true});
 </script><script>
 window.startPuertoPlataMap=()=>{"use strict";
 const map=L.map("map",{preferCanvas:true}).setView([19.782,-70.678],12);
-const streets=L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"© OpenStreetMap contributors"}).addTo(map);
+const streets=L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",{subdomains:"abcd",maxZoom:19,attribution:"© OpenStreetMap contributors · © CARTO"}).addTo(map);
+const alternateStreet=L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",{maxZoom:19,attribution:"Tiles © Esri"});
+let activeStreet=streets,streetRecovered=false;
+streets.on("tileerror",()=>{if(streetRecovered||!map.hasLayer(streets))return;streetRecovered=true;map.removeLayer(streets);activeStreet=alternateStreet;alternateStreet.addTo(map);const notice=document.getElementById("tileStatus");notice.textContent="Proveedor de calles alternativo: Esri. Se detectaron fallos cargando CARTO.";});
 const sat=L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",{maxZoom:19,attribution:"Tiles © Esri"});
 const labels=L.tileLayer("https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}.png",{maxZoom:19,attribution:"Labels © OpenStreetMap, CARTO"});
 let mode="none",population=null,route=[],stops=[],heat=L.layerGroup().addTo(map),zones=L.layerGroup().addTo(map),routeLayer=L.polyline([],{color:"#0079ed",weight:6,opacity:.94}).addTo(map);
@@ -45,7 +48,9 @@ $("addstop").onclick=()=>modeSet(mode==="stop"?"none":"stop");$("routeedit").onc
 $("undo").onclick=()=>{if(mode==="route"&&route.length)route.pop();else if(stops.length)stops.pop();else route.pop();render()};
 $("clearroute").onclick=()=>{if(confirm("¿Eliminar todo el trazado?")){route=[];render()}};
 $("radius").oninput=update;$("zones").onchange=update;
-function basemap(kind){map.removeLayer(streets);map.removeLayer(sat);map.removeLayer(labels);if(kind==="sat"){sat.addTo(map);labels.addTo(map)}else streets.addTo(map);$("satellite").classList.toggle("active",kind==="sat");$("streets").classList.toggle("active",kind!=="sat")}
+function basemap(kind){map.removeLayer(streets);map.removeLayer(alternateStreet);map.removeLayer(sat);map.removeLayer(labels);if(kind==="sat"){sat.addTo(map);labels.addTo(map)}else activeStreet.addTo(map);$("satellite").classList.toggle("active",kind==="sat");$("streets").classList.toggle("active",kind!=="sat")}
+sat.on("tileerror",()=>{if(map.hasLayer(sat)){document.getElementById("tileStatus").textContent="Satélite Esri no disponible. Volviendo a calles.";basemap("street")}});
+alternateStreet.on("tileerror",()=>{if(map.hasLayer(alternateStreet))document.getElementById("tileStatus").textContent="Los proveedores de mapa base no responden. Verifica tu conexión; las capas locales siguen disponibles."});
 $("satellite").onclick=()=>basemap("sat");$("streets").onclick=()=>basemap("street");
 $("heatmap").onchange=()=>{$("heatmap").checked?heat.addTo(map):map.removeLayer(heat)};
 $("download").onclick=()=>{const f=[...stops.map(s=>({type:"Feature",properties:{name:s.name,kind:"stop"},geometry:{type:"Point",coordinates:[s.point[1],s.point[0]]}}))];if(route.length>1)f.push({type:"Feature",properties:{kind:"route"},geometry:{type:"LineString",coordinates:route.map(p=>[p[1],p[0]])}});const blob=new Blob([JSON.stringify({type:"FeatureCollection",features:f},null,2)],{type:"application/geo+json"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="linea1-puerto-plata.geojson";a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)};
