@@ -91,3 +91,38 @@ jobs:
             projects/puerto-plata-gis/walk_network.geojson
             projects/puerto-plata-gis/network_report.json
           retention-days: 30
+
+  destinations:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Install Overture Maps downloader
+        run: python -m pip install "overturemaps>=0.16,<1"
+      - name: Retrieve and classify POIs
+        run: python projects/puerto-plata-gis/build_destinations.py
+      - name: Verify nonempty georeferenced POIs
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          base=Path('projects/puerto-plata-gis')
+          d=json.loads((base/'destinations.geojson').read_text())
+          s=json.loads((base/'destinations_report.json').read_text())
+          assert d['type']=='FeatureCollection'
+          assert len(d['features'])==s['classified'] and len(d['features'])>0
+          for p in d['features']:
+              x,y=p['geometry']['coordinates'][:2]
+              assert -70.752<=x<=-70.620 and 19.740<=y<=19.836
+              assert p['properties']['name'] and p['properties']['type']!='other'
+          print('Verified Overture POIs:',s)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: puerto-plata-destinos-overture
+          path: |
+            projects/puerto-plata-gis/destinations.geojson
+            projects/puerto-plata-gis/destinations_report.json
+          retention-days: 30
