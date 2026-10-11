@@ -39,7 +39,7 @@ def name_of(props):
 
 def main():
     if not SRC.exists():
-        cmd=[sys.executable,"-m","overturemaps","download","--bbox",BOX,"-f","geojson","--type","place","-o",str(SRC)]
+        cmd=["overturemaps","download","--bbox",BOX,"-f","geojson","--type","place","-o",str(SRC)]
         print("Requesting Overture data for",BOX,flush=True)
         subprocess.run(cmd,check=True,timeout=600)
     features=[];counts=Counter();missing=0
