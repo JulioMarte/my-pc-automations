@@ -103,7 +103,7 @@ def optimize(routes,cells,stopmap,pois,budgets=(10,20,30),headways=(10,15,20),
         objective-=2*sum(h*v for (id,h),v in choice.items())
         model.maximize(objective)
         solver=cp_model.CpSolver()
-        solver.parameters.max_time_in_seconds=15
+        solver.parameters.max_time_in_seconds=6
         status=solver.solve(model)
         if status not in (cp_model.OPTIMAL,cp_model.FEASIBLE):
             reports.append({"budget":budget,"status":"INFEASIBLE_OR_UNSOLVED",
