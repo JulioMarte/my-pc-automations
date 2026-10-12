@@ -449,7 +449,7 @@ jobs:
       - name: Test fleet control and fail-closed gates
         run: |
           cd projects/puerto-plata-gis
-          python -m unittest -v test_fleet_optimization.py test_optimize_headways.py test_audit_counts.py
+          python -m unittest -v test_fleet_optimization.py test_optimize_headways.py test_audit_counts.py test_prepare_optimization_input.py
           python -m py_compile phase_gates.py optimize_headways.py audit_counts.py
           python phase_gates.py --output phase_gates.json
           python - <<'PY'
