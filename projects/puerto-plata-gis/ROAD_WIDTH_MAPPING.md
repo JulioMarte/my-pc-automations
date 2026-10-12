@@ -142,3 +142,11 @@ La compilación del inventario OSM también retiene `est_width` y etiquetas de e
 ## Visor de las nueve inspecciones del Yutong
 
 El visor `Road_Width_Review_Puerto_Plata.html` acepta ahora tres entradas opcionales: `discovered_routes.geojson`, `priority_road_width_transects.geojson` y `yutong_field_survey_queue.json`. Los puntos marcados se presentan como **giros candidatos pendientes**, sin afirmar que sus coordenadas coinciden con giros reales de calles. La capa Esri es solo para orientación visual, no una fuente autorizada de bordillos digitalizados.
+
+## Captura manual desde el navegador (versión preliminar)
+
+`Road_Width_Manual_Review.html` permite registrar puntos extremos de perfiles transversales visuales, identificador de tramo, fecha, fuente, declaración de licencia y una estimación de incertidumbre. Exporta un CSV con el mismo contrato que `road_widths_pipeline.py`, siempre con `review_status=unreviewed`.
+
+**Importante:** colocar puntos con clics sobre OSM no constituye una medida métrica precisa del bordillo, porque el mapa base no es un levantamiento topográfico. El archivo debe contrastarse con ortofotos elegibles o coordenadas tomadas con medios adecuados. El CI valida la sintaxis JavaScript del visor y sus controles principales, pero no sustituye una prueba manual de navegador.
+
+El visor `Road_Width_Review_Puerto_Plata.html` permite cargar además el archivo `yutong_field_survey_queue.json` de Actions para observar los 9 candidatos. El valor de diámetro publicado de otra variante Yutong continúa siendo una referencia exploratoria.
