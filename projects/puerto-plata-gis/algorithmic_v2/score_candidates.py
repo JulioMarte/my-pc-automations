@@ -175,6 +175,7 @@ def build(candidates,od,walk,config,zones=None):
 def main():
     p=argparse.ArgumentParser()
     for n in ("candidates","od","walk","config","output"):p.add_argument("--"+n,type=Path,required=True)
+    p.add_argument("--zones",type=Path,required=False)
     a=p.parse_args()
     report=build(json.loads(a.candidates.read_text()),json.loads(a.od.read_text()),
       ox.load_graphml(a.walk),json.loads(a.config.read_text()),
