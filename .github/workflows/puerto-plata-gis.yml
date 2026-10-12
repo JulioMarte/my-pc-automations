@@ -519,7 +519,7 @@ jobs:
       - name: Unit-test local Valhalla actor adapter without network service
         run: |
           cd projects/puerto-plata-gis
-          python -m unittest -v test_valhalla_route_shape.py test_valhalla_local.py test_operational_validation.py test_turn_risk_screen.py test_road_widths_pipeline.py test_road_width_transects.py test_imagery_eligibility.py test_road_width_priorities.py test_discover_open_aerial.py test_survey_priority_queue.py
+          python -m unittest -v test_valhalla_waypoint_route.py test_valhalla_route_shape.py test_valhalla_local.py test_operational_validation.py test_turn_risk_screen.py test_road_widths_pipeline.py test_road_width_transects.py test_imagery_eligibility.py test_road_width_priorities.py test_discover_open_aerial.py test_survey_priority_queue.py
           python -m py_compile valhalla_local.py operational_validation.py
 
   local-r5py:
@@ -652,6 +652,18 @@ jobs:
           assert d["status"]=="EXPLORATORIO_SIN_APROBACION_FISICA"
           assert len(d["risks"])>0
           PY
+      - name: Check whether three routes visit their ordered provisional waypoints
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path("projects/puerto-plata-gis/valhalla_waypoint_constrained.json").read_text())
+          assert len(r["routes"])==3
+          assert {r0["id"] for r0 in r["routes"]}=={"C00-09","C00-10","C02-04"}
+          assert r["physical_routes_approved"]==0
+          assert all(r0["segments"] for r0 in r["routes"])
+          print("Waypoint route evidence:",[(x["id"],x["complete_routable_sequence"],x["failed_segments"],x["sum_segment_distance_km"]) for x in r["routes"]])
+          PY
       - name: Export directed real road geometry
         run: |
           cd projects/puerto-plata-gis
@@ -693,6 +705,8 @@ jobs:
         with:
           name: puerto-plata-valhalla-rutas-locales
           path: |
+            projects/puerto-plata-gis/valhalla_waypoint_constrained.json
+            projects/puerto-plata-gis/valhalla_waypoint_constrained.geojson
             projects/puerto-plata-gis/valhalla_local_audit.json
             projects/puerto-plata-gis/valhalla_turn_audit.csv
             projects/puerto-plata-gis/route_waypoint_consistency.json
