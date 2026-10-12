@@ -1,0 +1,35 @@
+name: Puerto Plata - OD-first independent regressions
+on:
+  push:
+    branches: ["feat/puerto-plata-od-first-redesign"]
+    paths: ["projects/puerto-plata-gis/**", ".github/workflows/puerto-plata-od-first-tests.yml"]
+  pull_request:
+    paths: ["projects/puerto-plata-gis/**", ".github/workflows/puerto-plata-od-first-tests.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  synthetic-foundation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install only free GIS and graph modules
+        run: python -m pip install "h3>=4.1,<5" "osmnx==2.0.6" "scipy>=1.11,<2" "shapely>=2,<3"
+      - name: Run OD-first tests without private, external or hand-selected corridors
+        run: |
+          cd projects/puerto-plata-gis
+          python -m unittest -v test_od_first_h3.py test_od_first_candidate_engine.py test_yutong_physical_precheck.py test_od_first_score.py test_od_first_delivery_status.py
+      - name: Validate configuration contains no fixed route IDs
+        run: |
+          python - <<'PY'
+          import json
+          c=json.load(open('projects/puerto-plata-gis/od_first_config.json'))
+          assert c['h3_resolutions']==[8,9]
+          assert c['vehicle']['turning_circle_diameters_sensitivity_m']==[20.5,21.5]
+          assert not any(k in c for k in ('L1','fixed_routes','legacy_corridors'))
+          print('Independent OD-first configuration and physical gates valid')
+          PY
