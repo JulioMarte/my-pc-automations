@@ -901,6 +901,81 @@ jobs:
           path: projects/puerto-plata-gis/zero_budget_readiness.json
           retention-days: 30
 
+  algorithmic-v2-baseline:
+    runs-on: ubuntu-latest
+    needs: [package, network, destinations]
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Install open geospatial and H3 dependencies
+        run: python -m pip install "h3>=4.1,<5" "osmnx==2.0.6" "scipy>=1.11,<2" "shapely>=2,<3"
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-gis-completo
+          path: projects/puerto-plata-gis
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-red-vial-osmnx
+          path: projects/puerto-plata-gis
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-destinos-overture
+          path: projects/puerto-plata-gis
+      - name: Test H3, gravity OD, graph candidates and conservative vehicle screen
+        run: |
+          cd projects/puerto-plata-gis/algorithmic_v2
+          python -m unittest -v test_algorithmic_baseline.py
+      - name: Build H3 zones and nine synthetic gravity-demand scenarios
+        run: |
+          cd projects/puerto-plata-gis/algorithmic_v2
+          python zones_od.py --population ../population.json --pois ../destinations.geojson --config config.json --zones zones_h3_res8.json --output synthetic_gravity_od.json --desires desire_lines.geojson
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from zones_od import build
+          config=json.loads(Path("config.json").read_text())
+          pop=json.loads(Path("../population.json").read_text())
+          pois=json.loads(Path("../destinations.geojson").read_text())
+          zones=build(pop,pois,config,9)
+          Path("zones_h3_res9.json").write_text(json.dumps(zones))
+          assert zones["resolution"]==9 and len(zones["zones"])>0
+          PY
+      - name: Generate independent OD-derived candidate corridors on OSM graph
+        run: |
+          cd projects/puerto-plata-gis/algorithmic_v2
+          python generate_candidates.py --graph ../drive.graphml --od synthetic_gravity_od.json --config config.json --output generated_routes.geojson
+          python vehicle_screen.py --candidates generated_routes.geojson --config config.json --output yutong_turn_screen.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          routes=json.loads(Path("generated_routes.geojson").read_text())
+          turns=json.loads(Path("yutong_turn_screen.json").read_text())
+          od=json.loads(Path("synthetic_gravity_od.json").read_text())
+          assert len(od["scenarios"])==9
+          assert routes["generated_unique"]>0
+          assert routes["generated_unique"]==len(turns["results"])
+          assert not any(f["properties"]["physical_approval"] for f in routes["features"])
+          assert turns["viable_confirmed"]==0
+          print("Independent new candidates:",routes["generated_unique"],"target 100-300")
+          print("Status:",routes["status"],"; turn certification blocked:",turns["doubtful"])
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: puerto-plata-brt-v2-algorithmic-baseline
+          path: |
+            projects/puerto-plata-gis/algorithmic_v2/config.json
+            projects/puerto-plata-gis/algorithmic_v2/zones_h3_res8.json
+            projects/puerto-plata-gis/algorithmic_v2/zones_h3_res9.json
+            projects/puerto-plata-gis/algorithmic_v2/synthetic_gravity_od.json
+            projects/puerto-plata-gis/algorithmic_v2/desire_lines.geojson
+            projects/puerto-plata-gis/algorithmic_v2/generated_routes.geojson
+            projects/puerto-plata-gis/algorithmic_v2/yutong_turn_screen.json
+          if-no-files-found: warn
+          retention-days: 30
+
   network-proposal-audit:
     runs-on: ubuntu-latest
     needs: [exploratory-fleet-curve, destinations, route-competition]
