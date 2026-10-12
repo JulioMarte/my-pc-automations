@@ -150,3 +150,47 @@ El visor `Road_Width_Review_Puerto_Plata.html` acepta ahora tres entradas opcion
 **Importante:** colocar puntos con clics sobre OSM no constituye una medida métrica precisa del bordillo, porque el mapa base no es un levantamiento topográfico. El archivo debe contrastarse con ortofotos elegibles o coordenadas tomadas con medios adecuados. El CI valida la sintaxis JavaScript del visor y sus controles principales, pero no sustituye una prueba manual de navegador.
 
 El visor `Road_Width_Review_Puerto_Plata.html` permite cargar además el archivo `yutong_field_survey_queue.json` de Actions para observar los 9 candidatos. El valor de diámetro publicado de otra variante Yutong continúa siendo una referencia exploratoria.
+
+## Evaluación comparativa de imágenes para 9 giros (octubre 2026)
+
+**Decisión ejecutada:** usar OpenAerialMap/HOT como catálogo abierto para
+identificar evidencia visual histórica, **no** como fuente automática de ancho
+de bordillos. Se incorporaron `audit_aerial_for_turns.py`,
+`test_audit_aerial_for_turns.py` y el job `imagery-nine-turns-audit`.
+Este análisis cruza los STAC bbox con los nueve puntos de la cola de
+inspección y publica `image_turn_suitability.json` con bloqueadores
+por imagen y giro. No usa imágenes restringidas ni supone que todo bbox
+contiene píxeles válidos.
+
+**Hallazgo comprobable:** cada uno de los nueve puntos aparece cubierto por
+el bbox de dos registros STAC, uno CC-BY-4.0 y otro CC-BY-NC-4.0.
+Eso significa **18 coincidencias de metadatos**, no 18 imágenes distintas
+ni nueve giros medidos. Ambas series son de septiembre de 2017 y declaran
+aproximadamente 0.487 m de GSD. El GSD es separación entre píxeles,
+no exactitud horizontal; sin inspección de raster ni GCP, el margen real
+de error de los bordillos no puede estimarse.
+
+### Decisión por alternativa
+
+- **OpenAerialMap 2017:** costo cero para catálogo y revisión visual,
+  pero insuficiente para medir la envolvente del Yutong de forma confiable.
+  Las imágenes CC-BY-NC requieren revisar restricciones adicionales si
+  se busca uso comercial. Las de CC-BY también requieren atribución y
+  verificar el archivo específico.
+- **IDERD/IGN:** prioridad para explorar servicios geográficos nacionales
+  con ortofotos disponibles y términos explícitos; no se afirma que ya
+  existe una capa apta para Puerto Plata.
+- **Pléiades Neo y WorldView:** 0.30 m GSD potencial en determinados
+  productos, pero no equivalen a ±0.30 m de geolocalización; comprar
+  solo para preseleccionar donde las fuentes gratuitas no sirvan.
+- **Ortofoto aérea propia + puntos de control y mediciones terrestres:**
+  mejor fuente para **los nueve giros realmente conflictivos**, cuando
+  se cumplan permisos de vuelo y requisitos de seguridad y exactitud.
+  Puede comenzar con medición directa desde tierra para evitar esperar
+  un vuelo. Ninguna imagen sustituye el plano de barrido del vehículo.
+
+**Criterio de aceptación:** resolver licencia por raster, comprobar
+geotransformación, resolución, huella de píxeles válidos, fecha, precisión
+horizontal mediante puntos de control y contraste independiente. Mientras
+falte cualquiera de los controles decisivos, la salida es
+`COVERAGE_SCREENED_NO_VALID_ROAD_WIDTH_IMAGERY`, nunca aprobación de giro.
