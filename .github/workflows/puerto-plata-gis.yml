@@ -664,6 +664,18 @@ jobs:
           assert x['routes_with_both_shapes']==x['routes_checked']
           assert x['bus_turns_approved']==0
           PY
+      - name: Audit whether routed paths reach candidate waypoints
+        run: |
+          cd projects/puerto-plata-gis
+          python -m unittest -v test_route_waypoint_consistency.py
+          python route_waypoint_consistency.py --candidates discovered_routes.geojson --routes routed_paths.geojson --output route_waypoint_consistency.json
+          python - <<'PY'
+          import json
+          x=json.load(open('route_waypoint_consistency.json'))
+          assert x['routes_checked']>=19
+          assert x['bus_stop_accessibility_verified'] is False
+          print("Routes with candidate waypoint deviations:",x["routes_with_waypoint_deviation"])
+          PY
       - name: Save actual Valhalla operational evidence
         run: |
           python - <<'PY'
@@ -683,6 +695,7 @@ jobs:
           path: |
             projects/puerto-plata-gis/valhalla_local_audit.json
             projects/puerto-plata-gis/valhalla_turn_audit.csv
+            projects/puerto-plata-gis/route_waypoint_consistency.json
             projects/puerto-plata-gis/routed_geometry_qa.json
             projects/puerto-plata-gis/routed_paths.geojson
             projects/puerto-plata-gis/valhalla_execution_evidence.json
