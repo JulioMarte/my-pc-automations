@@ -326,3 +326,72 @@ jobs:
             projects/puerto-plata-gis/discover_transit_network.py
             projects/puerto-plata-gis/Competencia_Rutas_Puerto_Plata.html
           retention-days: 30
+
+  environment-factors:
+    runs-on: ubuntu-latest
+    needs: [package]
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-gis-completo
+          path: projects/puerto-plata-gis
+      - name: Install image sampling dependency
+        run: python -m pip install "Pillow>=10,<13"
+      - name: Sample terrain on proposed L1 stops
+        run: python projects/puerto-plata-gis/build_terrain.py
+      - name: Download NASA POWER climate reference
+        run: python projects/puerto-plata-gis/build_climate.py
+      - name: Check geographic and climatological provenance
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path("projects/puerto-plata-gis")
+          terrain=json.loads((p/"terrain_stops.json").read_text())
+          climate=json.loads((p/"climate_context.json").read_text())
+          assert len(terrain["stops"])>=20
+          assert len(climate["locations"])==3
+          assert all(-70.84 < s["lon"] < -70.55 and 19.68 < s["lat"] < 19.88 for s in terrain["stops"])
+          print("Climate and terrain downloaded and spatially verified")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: puerto-plata-ambiente-terreno
+          path: |
+            projects/puerto-plata-gis/terrain_stops.json
+            projects/puerto-plata-gis/climate_context.json
+          retention-days: 30
+  valhalla-bus-audit:
+    runs-on: ubuntu-latest
+    needs: [route-competition]
+    timeout-minutes: 12
+    env:
+      VALHALLA_URL: ${{ secrets.PUERTO_PLATA_VALHALLA_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-competencia-redes
+          path: projects/puerto-plata-gis
+      - name: Route candidate terminals with Valhalla bus costing (if configured)
+        run: python projects/puerto-plata-gis/valhalla_audit.py
+      - name: Verify unsupported claims stay unvalidated
+        run: |
+          python - <<'PY'
+          import json
+          d=json.load(open("projects/puerto-plata-gis/valhalla_audit.json"))
+          assert d["routes"] and all(not r["terminal_turn_validated"] for r in d["routes"])
+          if not d["backend_configured"]:assert d["status"]=="unconfigured_no_routing_claim"
+          print("Valhalla integration:",d["status"])
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: puerto-plata-valhalla-audit
+          path: projects/puerto-plata-gis/valhalla_audit.json
+          retention-days: 30
