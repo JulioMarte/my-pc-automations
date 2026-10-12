@@ -981,6 +981,8 @@ jobs:
           cd projects/puerto-plata-gis
           python -m unittest -v test_od_first_score.py
           python od_first_score.py --candidates od_first_candidates.json --od od_first_gravity.json --zones od_first_zones.json --walk walk.graphml --config od_first_config.json --output od_first_scored_routes.json
+          python -m unittest -v test_od_first_delivery_status.py
+          python od_first_delivery_status.py --zones od_first_zones.json --od od_first_gravity.json --candidates od_first_candidates.json --physical od_first_bus_physical_precheck.json --scored od_first_scored_routes.json --output od_first_eight_stage_status.json
           python - <<'PY'
           import json
           x=json.load(open('od_first_scored_routes.json'))
@@ -995,7 +997,9 @@ jobs:
         if: always()
         with:
           name: puerto-plata-od-first-route-scores
-          path: projects/puerto-plata-gis/od_first_scored_routes.json
+          path: |
+            projects/puerto-plata-gis/od_first_scored_routes.json
+            projects/puerto-plata-gis/od_first_eight_stage_status.json
           if-no-files-found: warn
           retention-days: 30
 
