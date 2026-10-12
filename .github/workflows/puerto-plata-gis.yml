@@ -519,7 +519,7 @@ jobs:
       - name: Unit-test local Valhalla actor adapter without network service
         run: |
           cd projects/puerto-plata-gis
-          python -m unittest -v test_valhalla_local.py test_operational_validation.py test_turn_risk_screen.py test_road_widths_pipeline.py test_road_width_transects.py test_imagery_eligibility.py test_road_width_priorities.py test_discover_open_aerial.py test_survey_priority_queue.py
+          python -m unittest -v test_valhalla_route_shape.py test_valhalla_local.py test_operational_validation.py test_turn_risk_screen.py test_road_widths_pipeline.py test_road_width_transects.py test_imagery_eligibility.py test_road_width_priorities.py test_discover_open_aerial.py test_survey_priority_queue.py
           python -m py_compile valhalla_local.py operational_validation.py
 
   local-r5py:
