@@ -135,11 +135,22 @@ jobs:
           assert x["status"] == "NO_MEASUREMENTS_LICENSED_OR_REVIEWED"
           print("Baseline inventory:",x["roads"])
           PY
+      - name: Generate provisional cross sections for inspection
+        run: |
+          python projects/puerto-plata-gis/road_width_transects.py --roads projects/puerto-plata-gis/drive_network.geojson --output projects/puerto-plata-gis/road_width_transects.geojson
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path("projects/puerto-plata-gis/road_width_transects.geojson").read_text())
+          assert len(x["features"])>100
+          assert all(f["properties"]["status"]=="INSPECTION_TRANSECT_NOT_MEASURED" for f in x["features"])
+          PY
       - uses: actions/upload-artifact@v4
         with:
           name: puerto-plata-road-width-baseline
           path: |
             projects/puerto-plata-gis/road_width_baseline.json
+            projects/puerto-plata-gis/road_width_transects.geojson
             projects/puerto-plata-gis/road_width_sources.json
           retention-days: 30
 
@@ -441,7 +452,7 @@ jobs:
       - name: Unit-test local Valhalla actor adapter without network service
         run: |
           cd projects/puerto-plata-gis
-          python -m unittest -v test_valhalla_local.py test_operational_validation.py test_turn_risk_screen.py test_road_widths_pipeline.py
+          python -m unittest -v test_valhalla_local.py test_operational_validation.py test_turn_risk_screen.py test_road_widths_pipeline.py test_road_width_transects.py
           python -m py_compile valhalla_local.py operational_validation.py
 
   local-r5py:
