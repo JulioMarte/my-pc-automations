@@ -8,8 +8,8 @@ from pathlib import Path
 VEHICLES = {
     "yutong_zk6126hg": {"label": "Yutong ZK6126HG", "length_m": 12.17,
                  "body_width_m": 2.55, "mirror_width_m": None,
-                 "turning_circle_m": None, "turning_source": "pendiente_de_fabricante",
-                 "capacity_passengers": 90, "capacity_variants": [90,95], "max_grade_percent": None},
+                 "turning_circle_m": 20.5, "turning_source": "yutong_kz_variant_reference_only",
+                 "capacity_passengers": 90, "capacity_variants": [90,95,100], "max_grade_percent": None},
     "midibus_8_9m": {"label": "Midibus urbano 8-9 m (clase, modelo pendiente)",
                      "length_m": None, "body_width_m": None, "mirror_width_m": None,
                      "turning_circle_m": None, "turning_source": "no_verificado",
