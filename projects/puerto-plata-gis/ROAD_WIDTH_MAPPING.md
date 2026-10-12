@@ -194,3 +194,41 @@ geotransformación, resolución, huella de píxeles válidos, fecha, precisión
 horizontal mediante puntos de control y contraste independiente. Mientras
 falte cualquiera de los controles decisivos, la salida es
 `COVERAGE_SCREENED_NO_VALID_ROAD_WIDTH_IMAGERY`, nunca aprobación de giro.
+
+## Reenfoque de ejecución sin presupuesto ni levantamiento (octubre 2026)
+
+**Restricciones actuales:** no se dispone de recursos para comprar ortofotos,
+contratar topografía, volar drones ni medir calles. Se evita planificar
+estas acciones como prerrequisitos de los próximos entregables de software.
+Se mantienen como bloqueos de validación física, documentados.
+
+Se incorpora `zero_budget_roadmap.py`, probado e integrado a CI mediante
+`zero-budget-evidence-roadmap`. Consume los artefactos reales
+`road_width_baseline.json`, `image_turn_suitability.json` y
+`yutong_field_survey_queue.json`; produce
+`zero_budget_readiness.json` con decisiones y sus evidencias.
+
+**Nuevo orden de trabajo ejecutable sin presupuesto:**
+
+1. Completar metadatos OSM: sentidos, clasificación vial, carriles,
+   `est_width`, `width`, superficie, estacionamiento y restricciones.
+   Producir cobertura y huecos, sin inventar dimensiones.
+2. **Reconstruir trazados reales de ida y vuelta por Valhalla**
+   (polilíneas y aristas cuando la API las entregue), almacenar geometría
+   con proveniencia. Los MultiPoint de paradas no constituyen calles recorridas.
+3. Auditar restricciones legales y topológicas sobre el trazado real:
+   sentidos prohibidos, retornos hipotéticos, carreteras estrechas sin
+   medición, accesos, desvíos, continuidad y correspondencia con paradas.
+4. Recalcular distancias, tiempos y sensibilidad 10/20/30 en el escenario
+   no calibrado; separar velocidades/tiempos simulados de reales.
+5. Examinar sensibilidad de demanda con WorldPop y escenarios OD sin
+   presentar población cercana como pasajeros reales.
+6. Mantener OpenAerialMap/IDERD como **catálogos de referencia**, buscar
+   metadatos abiertos periódicamente, sin compra ni extracción automática
+   de imágenes restringidas.
+7. Continuar aplazados y bloqueados: simulación final de barrido, anchuras
+   de bordillos, pasos críticos y homologación operativa.
+
+**Regla obligatoria:** un dato desconocido es `UNKNOWN`, nunca
+`PASS`; CI verde significa que el estudio se ejecutó correctamente,
+no que una ruta fue aprobada para un Yutong de 12.17 m.
