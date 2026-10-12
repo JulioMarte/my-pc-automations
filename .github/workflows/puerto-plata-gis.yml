@@ -988,6 +988,19 @@ jobs:
           if not r['target_met']:
               print('TARGET_NOT_MET: persist truthful candidate count, do not pad')
           PY
+      - name: Screen Yutong variants but never infer physical clearance from OSM
+        run: |
+          cd projects/puerto-plata-gis
+          python -m pip install "shapely>=2.0,<3"
+          python -m unittest -v test_yutong_physical_precheck.py
+          python yutong_physical_precheck.py --candidates od_first_candidates.json --config od_first_config.json --output od_first_bus_physical_precheck.json
+          python - <<'PY'
+          import json
+          x=json.load(open('od_first_bus_physical_precheck.json'))
+          assert x["VIABLE"]==0
+          assert x["audited"]==x["DUDOSO"]+x["INVIABLE"]
+          assert x["physical_approval"] is False
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -995,6 +1008,7 @@ jobs:
           path: |
             projects/puerto-plata-gis/od_first_candidates.json
             projects/puerto-plata-gis/od_first_candidate_lines.geojson
+            projects/puerto-plata-gis/od_first_bus_physical_precheck.json
           if-no-files-found: warn
           retention-days: 30
 
