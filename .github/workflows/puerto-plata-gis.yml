@@ -485,3 +485,54 @@ jobs:
             projects/puerto-plata-gis/spatial_validation.json
             projects/puerto-plata-gis/study_config.json
           retention-days: 30
+
+  valhalla-local-real-tiles:
+    runs-on: ubuntu-latest
+    needs: [route-competition]
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Install Valhalla in-process bindings and tile builder
+        run: python -m pip install "pyvalhalla"
+      - name: Download Dominican Republic OSM extract with provenance
+        run: |
+          mkdir -p projects/puerto-plata-gis/data/osm
+          curl -fL --retry 3 --connect-timeout 20 --max-time 360 \
+            https://download.openstreetmap.fr/extracts/central-america/dominican_republic-latest.osm.pbf \
+            -o projects/puerto-plata-gis/data/osm/dominican_republic.osm.pbf
+          test "$(stat -c%s projects/puerto-plata-gis/data/osm/dominican_republic.osm.pbf)" -gt 1000000
+          sha256sum projects/puerto-plata-gis/data/osm/dominican_republic.osm.pbf
+      - name: Build Valhalla tiles locally
+        run: |
+          python projects/puerto-plata-gis/build_valhalla_local_tiles.py \
+            --osm-pbf projects/puerto-plata-gis/data/osm/dominican_republic.osm.pbf \
+            --output-dir projects/puerto-plata-gis/data/valhalla
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-competencia-redes
+          path: projects/puerto-plata-gis
+      - name: Route proposed corridors in both directions using pyvalhalla Actor
+        run: |
+          python projects/puerto-plata-gis/valhalla_local.py \
+            --tiles projects/puerto-plata-gis/data/valhalla/valhalla_tiles.tar \
+            --limit 19
+          python - <<'PY'
+          import json
+          p="projects/puerto-plata-gis/valhalla_local_audit.json"
+          d=json.load(open(p))
+          assert d["routes"], "no routes evaluated"
+          assert all(not r["bus_geometry_validated"] for r in d["routes"])
+          print("Local Valhalla candidates:",len(d["routes"]))
+          print("Bidirectional route connectivity:",sum(r["routed_both_directions"] for r in d["routes"]))
+          print("Physical bus turn approvals: 0 (require swept-path audit)")
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: puerto-plata-valhalla-rutas-locales
+          path: |
+            projects/puerto-plata-gis/valhalla_local_audit.json
+            projects/puerto-plata-gis/data/valhalla/valhalla_build_manifest.json
+          retention-days: 30
