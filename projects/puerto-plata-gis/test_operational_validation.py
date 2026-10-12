@@ -32,9 +32,9 @@ class OperationalValidationTests(unittest.TestCase):
         self.assertEqual(report["routes"][0]["routing"], "APROBADO")
         self.assertEqual(report["routes"][0]["physical_turns"], "PENDIENTE_DE_VERIFICACION")
         self.assertEqual(report["routes"][0]["cycle_status"], "EXPLORATORIO")
-        self.assertEqual(report["vehicles"]["citaro_k"]["turns"][0]["status"],
+        self.assertEqual(report["vehicles"]["yutong_zk6126hg"]["turns"][0]["status"],
                          "PENDIENTE_DE_VERIFICACION")
-        self.assertIsNone(VEHICLES["midibus_8_9m"]["turning_circle_m"])
+        self.assertIsNone(VEHICLES["yutong_zk6126hg"]["turning_circle_m"])
 
     def test_missing_stop_count_does_not_invent_cycle(self):
         evidence = {"routing": {"routes": [{"id": "A", "outbound": {"status": "routed", "time_seconds": 200},
