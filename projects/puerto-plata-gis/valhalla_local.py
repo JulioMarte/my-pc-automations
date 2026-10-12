@@ -42,7 +42,7 @@ def main():
  if not tile_path.is_file():raise FileNotFoundError(f"Tiles do not exist: {tile_path}")
  try:from valhalla import Actor,get_config
  except ImportError as e:raise RuntimeError("Install pyvalhalla: pip install pyvalhalla") from e
- actor=Actor(get_config(tile_extract=str(tile_path)))
+ actor=Actor(get_config(tile_dir=str(tile_path.parent/"tiles"), tile_extract=str(tile_path)))
  features=json.loads(Path(args.input).read_text())["features"]
  report=audit(features,actor,args.limit)
  report["tile_extract"]=str(tile_path)
