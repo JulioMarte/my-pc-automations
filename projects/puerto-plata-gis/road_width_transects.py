@@ -8,7 +8,7 @@ import argparse, json, math
 from pathlib import Path
 M=111195.0
 
-def transects(features, spacing_m=10, half_span_m=15, limit=50000):
+def transects(features, spacing_m=10, half_span_m=15, limit=300000):
     if not (1<=spacing_m<=100 and 1<=half_span_m<=100 and 0<limit<=1000000):
         raise ValueError("invalid transect configuration")
     results=[]
