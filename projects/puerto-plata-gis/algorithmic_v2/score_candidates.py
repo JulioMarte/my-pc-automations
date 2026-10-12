@@ -3,14 +3,14 @@
 All OD flows are relative synthetic, not observed trips. Candidate service
 cycles assume a hypothetical return; no route is eligible for commissioning.
 """
-import argparse,json,math
+import argparse,json,math,bisect
 from pathlib import Path
 import networkx as nx
 import osmnx as ox
 from scipy.spatial import cKDTree
 from pyproj import Transformer
 
-def stop_points(coords,spacing_m=450):
+def stop_points(coords,spacing_m=450,hotspots=None,snap_search_m=25):
     if not 350<=spacing_m<=600:raise ValueError("Unreasonable stop spacing")
     project=Transformer.from_crs(4326,32619,always_xy=True)
     back=Transformer.from_crs(32619,4326,always_xy=True)
@@ -23,13 +23,22 @@ def stop_points(coords,spacing_m=450):
     while current<cum[-1]-spacing_m/2:
         targets.append(current);current+=spacing_m
     targets.append(cum[-1])
-    i=0
-    for distance in targets:
-        while i<len(cum)-2 and cum[i+1]<distance:i+=1
-        denom=cum[i+1]-cum[i]
-        t=min(1,max(0,(distance-cum[i])/denom)) if denom>0 else 0
-        p=(xyz[i][0]+t*(xyz[i+1][0]-xyz[i][0]),
-           xyz[i][1]+t*(xyz[i+1][1]-xyz[i][1]))
+    hotspots_xy=[(project.transform(lon,lat),strength) for lon,lat,strength in (hotspots or [])]
+    def interpolate(distance):
+        index=max(0,min(len(cum)-2,bisect.bisect_right(cum,distance)-1))
+        span=cum[index+1]-cum[index]
+        t=min(1,max(0,(distance-cum[index])/span)) if span>0 else 0
+        return (xyz[index][0]+t*(xyz[index+1][0]-xyz[index][0]),
+                xyz[index][1]+t*(xyz[index+1][1]-xyz[index][1]))
+    for idx,distance in enumerate(targets):
+        if 0<idx<len(targets)-1 and hotspots_xy:
+            choices=[distance-snap_search_m,distance,distance+snap_search_m]
+            choices=[d for d in choices if 0<d<cum[-1]]
+            def score_hotspot(d):
+                p=interpolate(d)
+                return sum(strength*math.exp(-math.dist(p,z)**2/(2*180**2)) for z,strength in hotspots_xy)
+            distance=max(choices,key=score_hotspot)
+        p=interpolate(distance)
         lon,lat=back.transform(*p)
         stops.append([round(lon,7),round(lat,7)])
     return stops
@@ -56,7 +65,7 @@ def scorer(graph,limit_snap_m=80):
         return nodes[int(index)],distance
     return snap
 
-def build(candidates,od,walk,config):
+def build(candidates,od,walk,config,zones=None):
     if not candidates.get("features"):raise ValueError("No candidates, fail closed")
     walk=walk_graph(walk)
     snap=scorer(walk)
@@ -72,10 +81,15 @@ def build(candidates,od,walk,config):
             points.setdefault(row["origin"],row["origin_lonlat"])
             points.setdefault(row["destination"],row["destination_lonlat"])
     endpoints={id:snap(p) for id,p in points.items()}
+    top20=next(x for x in scenarios if x["level"]=="medium" and x["exponent"]==1)["top20_zones"]
+    zone_index={z["id"]:z for z in (zones or {}).get("zones",[])}
+    hotspots=[(zone_index[z["id"]]["longitude"],zone_index[z["id"]]["latitude"],
+              z["endpoint_flow_proxy"]) for z in top20 if z["id"] in zone_index]
     results=[]
     for f in candidates["features"]:
         props=f["properties"];id=props["candidate_id"]
-        stops=stop_points(f["geometry"]["coordinates"],sum(config["service"]["stop_spacing_m"])/2)
+        stops=stop_points(f["geometry"]["coordinates"],sum(config["service"]["stop_spacing_m"])/2,
+                          hotspots,config["service"]["stop_demand_snap_search_m"])
         snapped=[snap(stop) for stop in stops]
         seeds=[node for node,gap in snapped if node is not None]
         if seeds:
@@ -127,9 +141,12 @@ def build(candidates,od,walk,config):
                 for reserve in config["service"]["reserve_ratio_scenarios"]:
                     active=math.ceil(cycle/headway)
                     buses=math.ceil(active*(1+reserve))
+                    wait_min=headway/2
+                    wait_factor=math.exp(-wait_min/config["service"]["wait_decay_min_assumed"])
                     cycles.append({"speed_kmh_assumed":speed,"headway_minutes":headway,
                         "reserve_ratio_assumed":reserve,"cycle_minutes_assumed":round(cycle,2),
-                        "fleet_buses_proxy":buses,"score_relative_od_per_bus":round(baseline["relative_od_units_accessible_proxy"]/buses,5),
+                        "fleet_buses_proxy":buses,"expected_random_wait_min_assumed":wait_min,
+                        "score_relative_od_per_bus":round(baseline["relative_od_units_accessible_proxy"]*wait_factor/buses,5),
                         "cycle_provenance":"2x OSM outbound distance, assumed dwell/signals/terminal; return unverified"})
         results.append({"candidate_id":id,"methods":props["methods"],"geometry":f["geometry"],
            "stops":{"type":"MultiPoint","coordinates":stops},
@@ -160,7 +177,8 @@ def main():
     for n in ("candidates","od","walk","config","output"):p.add_argument("--"+n,type=Path,required=True)
     a=p.parse_args()
     report=build(json.loads(a.candidates.read_text()),json.loads(a.od.read_text()),
-      ox.load_graphml(a.walk),json.loads(a.config.read_text()))
+      ox.load_graphml(a.walk),json.loads(a.config.read_text()),
+      json.loads(a.zones.read_text()) if a.zones else None)
     a.output.write_text(json.dumps(report,separators=(",",":")))
     print(json.dumps({"candidates":len(report["ranked_candidates"]),
                       "initial_top6":report["top6"],"operational_approval":0}))
