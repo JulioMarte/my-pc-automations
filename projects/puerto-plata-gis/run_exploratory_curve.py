@@ -58,6 +58,10 @@ def compute(root,speeds=(12,18,24),budgets=(10,20,30)):
   "provenance":{"population":"WorldPop estimated raster cells","routing":"OSMnx directed candidate stops",
    "cycles":"distance/speed+layover hypotheticals; L1 length doubled outbound, NOT observed bus cycle",
    "assumed_speeds_kmh":list(speeds),"reserve_ratio":cfg["transit"]["reserve_ratio"],
+   "vehicle":cfg["vehicle"]["name"],"vehicle_length_m":cfg["vehicle"]["length_m"],
+   "turn_circle_reference_m":cfg["vehicle"].get("turning_circle_diameter_m"),
+   "turn_circle_is_variant_reference_only":True,
+   "vehicle_specific_swept_path_evaluated":False,
    "included_vehicle_turn_validation":False,"counts_observed":False,
    "objective":"maximum distinct population near proposed stops; ignores destination trips, transfer cost"},
   "scenarios":scenarios}
