@@ -19,8 +19,11 @@ def compare(cycles, budgets=(10,20,30), headways=(10,15,20), reserve_ratio=0.15)
     template={(s["speed_kmh_assumed"],s["dwell_s_per_waypoint_assumed"],s["recovery_min_assumed"])
               for s in rows[0]["scenarios"]}
     if not template:raise ValueError("No scenario evidence")
-    if any({(s["speed_kmh_assumed"],s["dwell_s_per_waypoint_assumed"],s["recovery_min_assumed"]) for s in r["scenarios"]}!=template for r in rows):
-        raise ValueError("Incompatible scenario assumptions")
+    for route in rows:
+        assumptions={(case["speed_kmh_assumed"],case["dwell_s_per_waypoint_assumed"],
+                      case["recovery_min_assumed"]) for case in route["scenarios"]}
+        if assumptions!=template:
+            raise ValueError("Incompatible scenario assumptions for "+str(route["candidate"]))
     scenarios=[]
     for speed,dwell,recovery in sorted(template):
         cycles_for={}
