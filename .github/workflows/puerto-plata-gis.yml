@@ -901,6 +901,49 @@ jobs:
           path: projects/puerto-plata-gis/zero_budget_readiness.json
           retention-days: 30
 
+  network-proposal-audit:
+    runs-on: ubuntu-latest
+    needs: [exploratory-fleet-curve, destinations, route-competition]
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-curva-flota-exploratoria
+          path: projects/puerto-plata-gis
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-destinos-overture
+          path: projects/puerto-plata-gis
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-competencia-redes
+          path: projects/puerto-plata-gis
+      - name: Screen each proposed network for POIs, transfers and peak headway
+        run: |
+          cd projects/puerto-plata-gis
+          python -m unittest -v test_network_candidate_audit.py
+          python network_candidate_audit.py --fleet fleet_10_20_30_exploratory.json --routes discovered_routes.geojson --pois destinations.geojson --output network_proposals_multicriteria.json
+          python - <<'PY'
+          import json
+          x=json.load(open("network_proposals_multicriteria.json"))
+          assert x["options_evaluated"]>0
+          assert x["approved_operational_proposals"]==0
+          assert all(p["operational_gate"]=="REJECTED_PENDING_CRITICAL_EVIDENCE" for p in x["proposals"])
+          assert {p["budget"] for p in x["proposals"]}=={10,20,30}
+          assert {p["scenario"] for p in x["proposals"]}=={"with_l1","without_l1_constraint"}
+          print("Proposed networks evaluated:",x["options_evaluated"])
+          print("Sample:",[(p["budget"],p["scenario"],[x["route"] for x in p["selected_routes"]],len(p["transfer_links"]),p["destinations"]["pois_reached_proxy"]) for p in x["proposals"][:6]])
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: puerto-plata-network-proposals-multicriteria
+          path: projects/puerto-plata-gis/network_proposals_multicriteria.json
+          retention-days: 30
+
   exploratory-fleet-curve:
     runs-on: ubuntu-latest
     needs: [network, package, route-competition]
