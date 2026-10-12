@@ -766,6 +766,44 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+  zero-budget-evidence-roadmap:
+    runs-on: ubuntu-latest
+    needs: [road-width-baseline, imagery-nine-turns-audit, road-width-shortlist]
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-road-width-baseline
+          path: projects/puerto-plata-gis
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-road-width-shortlist
+          path: projects/puerto-plata-gis
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-image-nine-turn-suitability
+          path: projects/puerto-plata-gis
+      - name: Test and evaluate zero-budget evidence priorities
+        run: |
+          cd projects/puerto-plata-gis
+          python -m unittest -v test_zero_budget_roadmap.py
+          python zero_budget_roadmap.py --road road_width_baseline.json --image image_turn_suitability.json --turn yutong_field_survey_queue.json --output zero_budget_readiness.json
+          python - <<'PY'
+          import json
+          x=json.load(open("zero_budget_readiness.json"))
+          assert x["status"]=="ZERO_BUDGET_WORKPLAN_NOT_ENGINEERING_APPROVAL"
+          assert x["operationally_approved_routes"]==0
+          assert x["next_milestone"]=="REAL_ROUTED_PATH_GEOMETRY"
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: puerto-plata-zero-budget-readiness
+          path: projects/puerto-plata-gis/zero_budget_readiness.json
+          retention-days: 30
+
   exploratory-fleet-curve:
     runs-on: ubuntu-latest
     needs: [network, package, route-competition]
