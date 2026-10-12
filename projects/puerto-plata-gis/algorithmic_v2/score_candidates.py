@@ -79,20 +79,28 @@ def build(candidates,od,walk,config):
         snapped=[snap(stop) for stop in stops]
         seeds=[node for node,gap in snapped if node is not None]
         if seeds:
-            # shortest accessible walk-network distances to any provisional stop
-            reached=nx.multi_source_dijkstra_path_length(walk,seeds,cutoff=700,weight="length")
-        else:reached={}
-        endpoint_cost={}
+            # Store the originating stop index, not just proximity. A directed
+            # street corridor must not claim reverse-direction journeys.
+            reached,walk_paths=nx.multi_source_dijkstra(walk,seeds,cutoff=700,weight="length")
+        else:reached={};walk_paths={}
+        seed_index={}
+        for index,(node,gap) in enumerate(snapped):
+            if node is not None:seed_index.setdefault(node,index)
+        endpoint_cost={};endpoint_stop_index={}
         for z,(n,gap) in endpoints.items():
             endpoint_cost[z]=gap+reached[n] if n in reached else None
+            if n in walk_paths: endpoint_stop_index[z]=seed_index.get(walk_paths[n][0])
         route_distance=props["route_length_km_osm"]
-        scores=[]
+        scores=[];baseline_incidence={}
         for key,rows in od_rows.items():
             served=0.;unserved=0.
             for row in rows:
                 origin_dist=endpoint_cost.get(row["origin"])
                 dest_dist=endpoint_cost.get(row["destination"])
-                if origin_dist is None or dest_dist is None or origin_dist>700 or dest_dist>700:
+                i_origin=endpoint_stop_index.get(row["origin"])
+                i_dest=endpoint_stop_index.get(row["destination"])
+                if (origin_dist is None or dest_dist is None or origin_dist>700 or dest_dist>700
+                    or i_origin is None or i_dest is None or i_origin>=i_dest):
                     unserved+=row["relative_flow_units"];continue
                 walking_factor=math.exp(-(origin_dist+dest_dist)/700)
                 # Extra in-route distance cannot be known without a path assignment
@@ -100,7 +108,9 @@ def build(candidates,od,walk,config):
                 direct=max(row["straight_km"],.4)
                 detour=max(1,route_distance/direct)
                 penalty=math.exp(-max(0,detour-1)*.35)
-                served+=row["relative_flow_units"]*walking_factor*penalty
+                contribution=row["relative_flow_units"]*walking_factor*penalty
+                served+=contribution
+                if key=="medium_beta_1": baseline_incidence[row["origin"]+"|"+row["destination"]]=round(contribution,5)
             scores.append({"scenario":key,"relative_od_units_accessible_proxy":round(served,4),
                            "relative_od_units_inaccessible":round(unserved,4)})
         baseline=next(s for s in scores if s["scenario"]=="medium_beta_1")
@@ -123,7 +133,8 @@ def build(candidates,od,walk,config):
         results.append({"candidate_id":id,"methods":props["methods"],"geometry":f["geometry"],
            "stops":{"type":"MultiPoint","coordinates":stops},
            "stops_count":len(stops),"walk_access_method":"OSM walk graph Dijkstra; stops and H3 centroids nearest-node",
-           "od_scores":scores,"service_scenarios":cycles,
+           "od_scores":scores,"captured_od_contributions_baseline":baseline_incidence,
+           "service_scenarios":cycles,
            "baseline_relative_od_accessible_proxy":baseline["relative_od_units_accessible_proxy"],
            "bus_gate":"BLOQUEADO_NO_PHYSICAL_TURN_CERTIFICATION",
            "passenger_load_70_85_percent":"UNKNOWN_REQUIRES_OD_CALIBRATION",
@@ -140,6 +151,7 @@ def build(candidates,od,walk,config):
                        "Return length doubled without actual routing: capacity/fleet is hypothesis only",
                        "Stop count and placement are preliminary, lack curb and service access",
                        "Detour penalty is path length proxy, not OD-specific in-vehicle detour",
+                       "Directional eligibility assumes closest boarded stop precedes closest alighting stop",
                        "Pedestrian edges do not verify safe crossings or complete accessibility"]}
 
 def main():
