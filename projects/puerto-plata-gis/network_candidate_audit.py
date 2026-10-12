@@ -98,13 +98,22 @@ def assess(fleet,features,poi_features,peak_slowdown=1.4):
                 if isolated and len(selected)>1:reasons.append("ISOLATED_ROUTE_TRANSFER_GRAPH")
                 if not xfers and len(selected)>1:reasons.append("NO_PROVISIONAL_TRANSFER_POINTS")
                 if any(p["peak_headway_over_target"] for p in peak):reasons.append("PEAK_HEADWAY_NOT_SUSTAINED_WITH_FIXED_FLEET")
+                desktop_checks={
+                    "has_residential_coverage_proxy":(result.get("covered_residents_estimate") or 0)>0,
+                    "has_mapped_destination_access":ds["pois_reached_proxy"]>0,
+                    "provisional_network_interchanges":not isolated if len(selected)>1 else True,
+                    "peak_headways_hold_under_assumed_slowdown":not any(p["peak_headway_over_target"] for p in peak),
+                    "has_route_selection":bool(selected)
+                }
+                desktop_status="DESKTOP_SCREEN_PASS_UNVALIDATED" if all(desktop_checks.values()) else "DESKTOP_SCREEN_REVIEW_OR_REJECT"
                 reasons+=["PHYSICAL_ROUTE_CLEARANCE_UNVERIFIED","PASSENGER_OD_UNOBSERVED","STOP_SAFETY_UNVERIFIED"]
                 outputs.append({"budget":result["budget"],"assumed_speed_kmh":scenario["assumed_speed_kmh"],
                     "scenario":arm,"selected_routes":selected,
                     "resident_coverage_proxy":result.get("covered_residents_estimate"),
                     "destinations":{k:v for k,v in ds.items() if k!="poi_indices"},
                     "transfer_links":xfers,"isolated_routes":sorted(isolated),
-                    "peak_sensitivity":peak,
+                    "peak_sensitivity":peak,"desktop_checks":desktop_checks,
+                    "desktop_status":desktop_status,
                     "future_extension_candidates":[k for k in points if k not in active][:10],
                     "operational_gate":"REJECTED_PENDING_CRITICAL_EVIDENCE",
                     "gate_reasons":reasons})
