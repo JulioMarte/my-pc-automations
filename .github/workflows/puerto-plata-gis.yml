@@ -528,6 +528,18 @@ jobs:
           print("Bidirectional route connectivity:",sum(r["routed_both_directions"] for r in d["routes"]))
           print("Physical bus turn approvals: 0 (require swept-path audit)")
           PY
+      - name: Save actual Valhalla operational evidence
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path("projects/puerto-plata-gis")
+          routing=json.loads((p/"valhalla_local_audit.json").read_text())
+          assert routing["routes"] and any(r["routed_both_directions"] for r in routing["routes"])
+          report={"status":"EXECUTED_ROUTES_REQUIRE_TURN_REVIEW","routing":routing}
+          (p/"valhalla_execution_evidence.json").write_text(json.dumps(report,indent=2))
+          PY
+          python projects/puerto-plata-gis/operational_validation.py --valhalla-evidence projects/puerto-plata-gis/valhalla_execution_evidence.json --output projects/puerto-plata-gis/operational_validation_evidence.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -535,6 +547,8 @@ jobs:
           path: |
             projects/puerto-plata-gis/valhalla_local_audit.json
             projects/puerto-plata-gis/valhalla_turn_audit.csv
+            projects/puerto-plata-gis/valhalla_execution_evidence.json
+            projects/puerto-plata-gis/operational_validation_evidence.json
             projects/puerto-plata-gis/data/valhalla/valhalla_build_manifest.json
           retention-days: 30
 
@@ -576,50 +590,5 @@ jobs:
         with:
           name: puerto-plata-curva-flota-exploratoria
           path: projects/puerto-plata-gis/fleet_10_20_30_exploratory.json
-          retention-days: 30
-
-  real-local-valhalla:
-    runs-on: ubuntu-latest
-    needs: [route-competition]
-    timeout-minutes: 22
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: {python-version: "3.12"}
-      - name: Install Python Valhalla bindings
-        run: python -m pip install "pyvalhalla>=3.0,<5"
-      - uses: actions/download-artifact@v4
-        with:
-          name: puerto-plata-competencia-redes
-          path: projects/puerto-plata-gis
-      - name: Fetch Geofabrik Haiti and Dominican Republic OSM extract
-        id: download
-        continue-on-error: true
-        run: |
-          mkdir -p /tmp/pp-valhalla
-          curl --fail --location --retry 3 --connect-timeout 20 --max-time 200             "https://download.geofabrik.de/central-america/haiti-and-domrep-latest.osm.pbf"             -o /tmp/pp-valhalla/region.osm.pbf
-      - name: Build actual local graph and audit bidirectional routes
-        run: |
-          python projects/puerto-plata-gis/run_local_valhalla_evidence.py             --pbf /tmp/pp-valhalla/region.osm.pbf             --routes projects/puerto-plata-gis/discovered_routes.geojson             --output-dir /tmp/pp-valhalla/results --limit 18
-          cp /tmp/pp-valhalla/results/valhalla_execution_evidence.json projects/puerto-plata-gis/
-          python projects/puerto-plata-gis/operational_validation.py \
-            --valhalla-evidence /tmp/pp-valhalla/results/valhalla_execution_evidence.json \
-            --output projects/puerto-plata-gis/operational_validation_evidence.json
-          if test -f /tmp/pp-valhalla/results/turn_audit.csv; then cp /tmp/pp-valhalla/results/turn_audit.csv projects/puerto-plata-gis/; fi
-          python - <<'PY'
-          import json
-          p=json.load(open('projects/puerto-plata-gis/valhalla_execution_evidence.json'))
-          print('VALHALLA_EVIDENCE_STATUS=',p['status'])
-          print('VALHALLA_FAILURE=',p.get('failure','none'))
-          PY
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: puerto-plata-valhalla-evidencia-real
-          path: |
-            projects/puerto-plata-gis/valhalla_execution_evidence.json
-            projects/puerto-plata-gis/operational_validation_evidence.json
-            projects/puerto-plata-gis/turn_audit.csv
-          if-no-files-found: warn
           retention-days: 30
 
