@@ -407,3 +407,27 @@ jobs:
           cd projects/puerto-plata-gis
           python -m unittest -v test_valhalla_local.py
           python -m py_compile valhalla_local.py
+
+  local-r5py:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Unit-test travel time and reachability calculations
+        run: |
+          cd projects/puerto-plata-gis
+          python -m unittest -v test_r5_accessibility.py
+          python -m py_compile r5_accessibility.py
+      - name: Verify current r5py can be installed and imported
+        run: |
+          python -m pip install "r5py>=1.1.0,<2"
+          python - <<'PY'
+          import r5py
+          assert hasattr(r5py,'TransportNetwork')
+          assert hasattr(r5py,'TravelTimeMatrix')
+          assert hasattr(r5py.TransportMode,'WALK')
+          assert hasattr(r5py.TransportMode,'TRANSIT')
+          print('Local r5py API OK',getattr(r5py,'__version__','version unknown'))
+          PY
