@@ -415,3 +415,18 @@ cerca de un círculo alrededor de una parada.
 El reporte `network_expansion_phasing.json` lista rutas retenidas, agregadas y reemplazadas, más la fracción de conservación. Incluso cuando las rutas quedan anidadas, `NESTED_ROUTE_SET_UNVALIDATED` no equivale a una expansión físicamente aprobada. Falta hacer **optimización multiperíodo real** con costos de transbordo, límites de inversión y obligación explícita de retener estaciones y trayectos iniciales.
 
 **Estado tras primera ejecución del ranking:** 18 propuestas evaluadas; 6 comparativas presupuestarias con/sin L1; 0 pasan todos los filtros heurísticos estrictos de gabinete; 0 tienen aprobación operativa. La falta de sobrevivientes no prueba que Puerto Plata no admita buses: evidencia que la función objetivo y supuestos actuales no satisfacen todavía el conjunto de objetivos definido.
+
+### Centros de intercambio provisionales y espera
+
+`interchange_hub_candidates.py` agrupa pares de paradas próximas
+que interconectan rutas dentro de una misma solución; entrega coordenadas
+aproximadas, líneas conectadas, distancia máxima/mínima en línea recta
+y espera de llegada aleatoria como referencia. Ordena por variedad
+de rutas enlazadas y enlaces disponibles. Artefacto:
+`interchange_hub_candidates.json`.
+
+**No es ubicación final de parada**: la proximidad en línea recta puede
+ocultar autopistas, muros, falta de acera o cruces inseguros. La reducción
+real de esperas requiere simulación de horarios GTFS y tiempos de viaje
+por sentido, no mover matemáticamente el punto de parada. Ningún centro
+queda aprobado para construcción o operación sin comprobar esas condiciones.
