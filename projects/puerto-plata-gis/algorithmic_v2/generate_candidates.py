@@ -4,13 +4,20 @@ Candidate routes are algorithmic graph paths. OSM missing geometry means
 physical Yutong clearance DUBIOUS, never VIABLE or APPROVED.
 """
 from __future__ import annotations
-import argparse,json,math,heapq
+import argparse,json,math,heapq,re
 from pathlib import Path
 from collections import defaultdict
 import networkx as nx
 from scipy.spatial import cKDTree
 
-def road_graph(graph):
+def numeric_limit(value):
+    if value is None:return None
+    text=str(value).strip().lower()
+    if not text or text in {'none','nan','unknown'} or 'ft' in text or '\\u2032' in text:return None
+    match=re.fullmatch(r'([0-9]+(?:\\.[0-9]+)?)\\s*(?:m|metres?|meters?)?',text)
+    return float(match.group(1)) if match else None
+
+def road_graph(graph,vehicle=None):
     out=nx.DiGraph()
     for n,d in graph.nodes(data=True):
         out.add_node(n,lon=float(d["x"]),lat=float(d["y"]))
@@ -19,6 +26,13 @@ def road_graph(graph):
         if length<=0:continue
         blocked=str(data.get("bus","")).lower() in {"no","private"} or str(data.get("access","")).lower()=="no"
         blocked=blocked or str(data.get("highway","")).lower() in {"footway","path","steps","pedestrian","cycleway"}
+        if vehicle:
+            width=numeric_limit(data.get("maxwidth"))
+            height=numeric_limit(data.get("maxheight"))
+            # Conflicting OSM restrictions block this graph edge; tag presence
+            # does not validate street clearance where attributes are absent.
+            if width is not None and width<vehicle["width_m"]:blocked=True
+            if height is not None and height<min(vehicle["height_reference_range_m"]):blocked=True
         if blocked:continue
         existing=out.get_edge_data(u,v)
         if existing is None or length<existing["length"]:
@@ -45,7 +59,7 @@ def edge_signature(path):
     return tuple((str(u),str(v)) for u,v in zip(path,path[1:]))
 
 def generate(graph,od,config):
-    g=road_graph(graph)
+    g=road_graph(graph,config["vehicle"])
     if not g.number_of_edges():raise ValueError("No drivable OSM edges")
     base=next(s for s in od["scenarios"] if s["level"]=="medium" and s["exponent"]==config["gravity"]["distance_decay_exponents"][0])
     flows=base["od"][:config["generation"]["seed_top_od"]]
