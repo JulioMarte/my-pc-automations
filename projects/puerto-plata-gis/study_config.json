@@ -2,23 +2,44 @@
   "schema_version": 1,
   "study_crs": "EPSG:32619",
   "vehicle": {
-    "name": "Mercedes-Benz Citaro K",
-    "manufacturer": "Mercedes-Benz",
-    "model": "Citaro K",
-    "length_m": 10.633,
+    "name": "Yutong ZK6126HG",
+    "manufacturer": "Yutong",
+    "model": "ZK6126HG",
+    "length_m": 12.17,
     "width_m": 2.55,
-    "width_with_mirrors_m": 2.95,
-    "turning_circle_diameter_m": 17.284,
-    "minimum_turning_radius_m": 8.642,
+    "width_with_mirrors_m": null,
+    "turning_circle_diameter_m": 20.5,
+    "minimum_turning_radius_m": 10.25,
     "maximum_grade_percent": null,
     "seated_and_standing_capacity": null,
     "datasheet_verified": false,
     "geometry_source_verified": true,
     "grade_source_verified": false,
-    "capacity_source_verified": false,
-    "source_url": "https://www.mercedes-benz-bus.com/es/es/models/citaro/facts-citaro.html",
-    "turning_geometry_note": "8.642 m is half of published turning-circle diameter; not necessarily swept outer radius or wheel-track radius",
-    "status": "REFERENCE_VEHICLE_NOT_APPROVED_FOR_PURCHASE"
+    "capacity_source_verified": true,
+    "source_url": "https://en.yutong.com/products/ZK6126HG.shtml",
+    "turning_geometry_note": "<=20.5 m minimo circulo de giro documentado para variante de Kazajistan; NO equivale a espacio barrido, no homologado para version RD.",
+    "status": "REFERENCE_VEHICLE_NOT_APPROVED_FOR_PURCHASE",
+    "passenger_capacity_variants": [
+      90,
+      95,
+      100
+    ],
+    "height_m": 3.18,
+    "turning_circle_source": "https://www.yutong.com.kz/products/ZK6126HG-param.shtml",
+    "turning_circle_configuration": "Kazakhstan ZK6126HG, not certified to selected procurement variant",
+    "turning_circle_is_variant_reference_only": true,
+    "turning_circle_sensitivity_m": [
+      20.5,
+      21,
+      21.5
+    ],
+    "wheelbase_m": 6,
+    "front_overhang_m": 2.74,
+    "rear_overhang_m": 3.43,
+    "height_variant_kz_m": [
+      3.35,
+      3.39
+    ]
   },
   "transit": {
     "peak_headway_minutes": 10,

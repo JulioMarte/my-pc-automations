@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Puerto Plata | Revisión de anchos y giros</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>
+html,body{height:100%;margin:0;font:14px system-ui, sans-serif;background:#0e1728;color:#edf2f7}
+#layout{display:grid;grid-template-columns:320px 1fr;height:100%}aside{padding:16px;overflow:auto}
+#map{height:100%}h1{font-size:19px;margin:0 0 9px}h2{font-size:15px;margin-top:18px}
+label{display:block;margin:12px 0 4px;font-weight:600}input{width:100%;max-width:270px;font-size:12px}
+.note{line-height:1.5;border:1px solid #73570c;background:#392b13;border-radius:9px;padding:9px;margin:12px 0}
+.metric{background:#18263d;border-radius:9px;padding:10px;margin:6px 0}small{color:#bdcadd}
+.legend{line-height:2}.dot{width:11px;height:11px;border-radius:50%;display:inline-block;margin-right:9px}
+button{background:#1d4ed8;color:white;border:0;border-radius:8px;padding:10px;cursor:pointer}
+@media(max-width:760px){#layout{grid-template-columns:1fr;grid-template-rows:auto 65vh}aside{max-height:38vh}}
+</style></head>
+<body><div id="layout"><aside><h1>Puerto Plata · Auditoría GIS</h1>
+<small>Inventario de anchos y priorización de giros del Yutong ZK6126HG.</small>
+<div class="note"><b>Sin certificación:</b> los transectos son lugares donde buscar bordillos, no anchos medidos. El mapa satelital es únicamente visualización y no una fuente autorizada de mediciones.</div>
+<label>1. GeoJSON de rutas candidatas</label><input id="routes" type="file" accept=".geojson,.json">
+<label>2. GeoJSON de transectos priorizados</label><input id="transects" type="file" accept=".geojson,.json">
+<label>3. JSON de giros priorizados del Yutong</label><input id="surveyQueue" type="file" accept=".json"><div class="metric" id="surveyCount">Inspecciones: no cargadas</div>
+<div class="metric" id="routesCount">Rutas: no cargadas</div>
+<div class="metric" id="transectsCount">Transectos: no cargados</div>
+<h2>Leyenda</h2><div class="legend">
+<div><span class="dot" style="background:#dc2626"></span>C00-10</div>
+<div><span class="dot" style="background:#2563eb"></span>C00-09</div>
+<div><span class="dot" style="background:#16a34a"></span>C02-04</div>
+<div><span class="dot" style="background:#fde047"></span>Transectos a revisar</div>
+</div>
+<button id="fit">Ajustar vista</button>
+<h2>Limitaciones</h2>
+<small>GeoJSON de rutas contiene puntos y terminales, NO trayectorias de calzada verificadas. No se calculan giros físicamente viables a partir de esta visualización. El ancho libre y espacio barrido siguen pendientes hasta disponer de ortofotos autorizadas, geometría de bordillos y plano del vehículo.</small>
+</aside><div id="map"></div></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const map=L.map('map',{preferCanvas:true}).setView([19.791,-70.698],13);
+const imagery=L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{attribution:'&copy; Esri, solo visualización',maxZoom:18});
+const streets=L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'&copy; OpenStreetMap',maxZoom:19}).addTo(map);
+const routesLayer=L.layerGroup().addTo(map),transectLayer=L.layerGroup().addTo(map),surveyLayer=L.layerGroup().addTo(map);
+L.control.layers({'Calles OSM':streets,'Satélite (solo visual)':imagery},{'Rutas candidatas':routesLayer,'Transectos de inspección':transectLayer,'Giros candidatos Yutong':surveyLayer}).addTo(map);
+const colors={'C00-09':'#2563eb','C00-10':'#dc2626','C02-04':'#16a34a'};
+let allBounds=[];
+function drawRoute(f){
+ const id=f.properties?.id;
+ if(!colors[id] || f.geometry?.type!=='MultiPoint')return false;
+ const points=f.geometry.coordinates.map(c=>[c[1],c[0]]);
+ if(!points.length)return false;
+ const line=L.polyline(points,{color:colors[id],weight:4,opacity:.82,dashArray:'7 5'}).addTo(routesLayer);
+ line.bindPopup('<b>'+id+'</b><p>Conexión esquemática de puntos, NO recorrido real por calles.</p>');
+ allBounds.push(...points);
+ const start=f.properties.terminal_start, end=f.properties.terminal_end;
+ if(start?.length===2)L.circleMarker([start[1],start[0]],{radius:8,color:colors[id],fillColor:'white',fillOpacity:1}).bindPopup(id+' · Inicio (sin validar)').addTo(routesLayer);
+ if(end?.length===2)L.circleMarker([end[1],end[0]],{radius:8,color:colors[id],fillColor:'#f59e0b',fillOpacity:1}).bindPopup(id+' · Final / retorno (sin validar)').addTo(routesLayer);
+ return true;
+}
+document.getElementById('routes').addEventListener('change',async e=>{
+ const file=e.target.files[0];if(!file)return;try{
+ const data=JSON.parse(await file.text());routesLayer.clearLayers();allBounds=[];let count=0;
+ for(const f of data.features||[])if(drawRoute(f))count++;
+ document.getElementById('routesCount').textContent='Rutas elegidas cargadas: '+count;
+ if(allBounds.length)map.fitBounds(allBounds,{padding:[20,20]});
+ }catch(err){alert('Archivo de rutas inválido: '+err.message)}
+});
+document.getElementById('transects').addEventListener('change',async e=>{
+ const file=e.target.files[0];if(!file)return;try{
+ const data=JSON.parse(await file.text());transectLayer.clearLayers();let total=0,drawn=0;
+ for(const f of data.features||[]){
+ total++;if(drawn>=7000)continue; // limit for responsiveness
+ const c=f.geometry?.coordinates;
+ if(f.geometry?.type!=='LineString'||c?.length!==2)continue;
+ const ll=c.map(v=>[v[1],v[0]]);
+ L.polyline(ll,{color:'#fde047',weight:1.3,opacity:.55,interactive:false}).addTo(transectLayer);
+ drawn++;
+ }
+ document.getElementById('transectsCount').textContent='Transectos: '+total+' | visualizados: '+drawn+' (límite de rendimiento)';
+ }catch(err){alert('Archivo de transectos inválido: '+err.message)}
+});
+document.getElementById('surveyQueue').addEventListener('change',async e=>{
+ const file=e.target.files[0];if(!file)return;
+ try{
+ const data=JSON.parse(await file.text());surveyLayer.clearLayers();
+ if(data.status!=='UNVERIFIED_FIELD_SURVEY_QUEUE')throw new Error('No es una cola de inspección sin verificar');
+ let count=0;
+ for(const risk of data.risks||[]){
+   if(!Number.isFinite(risk.latitude)||!Number.isFinite(risk.longitude))continue;
+   const id=risk.candidate, point=[risk.latitude,risk.longitude];
+   const color=colors[id]||'#a855f7';
+   const m=L.circleMarker(point,{radius:8,color:'#ffffff',weight:2,fillColor:color,fillOpacity:1});
+   m.bindPopup('<strong>'+id+' · Giro candidato</strong><p>Cambio angular: '+risk.heading_change_deg+'°<br>Ancho de calzada: DESCONOCIDO<br>Giro físico: NO VALIDADO<br>Perfiles próximos: '+risk.nearby_unmeasured_profiles+'</p>');
+   m.addTo(surveyLayer);count++;allBounds.push(point);
+ }
+ document.getElementById('surveyCount').textContent='Giros candidatos cargados: '+count+' | Aprobados: 0';
+ if(allBounds.length)map.fitBounds(allBounds,{padding:[30,30]});
+ }catch(err){alert('Cola de inspección inválida: '+err.message)}
+});
+document.getElementById('fit').onclick=()=>{if(allBounds.length)map.fitBounds(allBounds,{padding:[30,30]})};
+</script></body></html>

@@ -107,6 +107,120 @@ jobs:
             projects/puerto-plata-gis/network_report.json
           retention-days: 30
 
+  road-width-ui-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Validate local interactive HTML JavaScript and required controls
+        run: |
+          python projects/puerto-plata-gis/check_review_html.py \
+            projects/puerto-plata-gis/Road_Width_Review_Puerto_Plata.html \
+            projects/puerto-plata-gis/Road_Width_Manual_Review.html
+          python - <<'PY'
+          from pathlib import Path
+          p=Path("projects/puerto-plata-gis")
+          review=(p/"Road_Width_Review_Puerto_Plata.html").read_text()
+          manual=(p/"Road_Width_Manual_Review.html").read_text()
+          assert 'id="surveyQueue"' in review
+          assert 'id="export"' in manual
+          assert "review_status:'unreviewed'" in manual
+          assert "csvCell(row[k],k)" in manual
+          print("Review UI controls present")
+          PY
+
+  road-width-raster-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Install geospatial raster test dependencies
+        run: python -m pip install "numpy>=1.26,<3" "rasterio>=1.4,<2" "shapely>=2,<3" "pyproj>=3.6,<4"
+      - name: Execute synthetic calibrated road-mask measurement tests
+        run: |
+          cd projects/puerto-plata-gis
+          python -m unittest -v test_road_mask_measure.py
+          python -m py_compile road_mask_measure.py
+
+  imagery-catalog-discovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Query current HOT OpenAerialMap STAC imagery
+        run: |
+          python projects/puerto-plata-gis/discover_open_aerial.py --output projects/puerto-plata-gis/open_aerial_metadata.json --strict
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: puerto-plata-imagery-search-evidence
+          path: projects/puerto-plata-gis/open_aerial_metadata.json
+          if-no-files-found: error
+          retention-days: 30
+
+  road-width-baseline:
+    runs-on: ubuntu-latest
+    needs: [network]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-red-vial-osmnx
+          path: projects/puerto-plata-gis
+      - name: Evaluate imagery eligibility without presuming access
+        run: |
+          python projects/puerto-plata-gis/imagery_eligibility.py --catalog projects/puerto-plata-gis/imagery_catalog.json --output projects/puerto-plata-gis/imagery_eligibility_report.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path("projects/puerto-plata-gis/imagery_eligibility_report.json").read_text())
+          assert x["status"] == "BLOCKED_NO_ELIGIBLE_IMAGERY"
+          PY
+      - name: Inventory measured or missing road widths without inventing data
+        run: |
+          python projects/puerto-plata-gis/road_widths_pipeline.py \
+            --roads projects/puerto-plata-gis/drive_network.geojson \
+            --sources projects/puerto-plata-gis/road_width_sources.json \
+            --output projects/puerto-plata-gis/road_width_baseline.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path("projects/puerto-plata-gis/road_width_baseline.json").read_text())
+          assert x["roads"]["road_features"] > 100
+          assert x["geometry_approved"] is False
+          assert x["measurements_count"] == 0
+          assert x["status"] == "NO_MEASUREMENTS_LICENSED_OR_REVIEWED"
+          print("Baseline inventory:",x["roads"])
+          PY
+      - name: Generate provisional cross sections for inspection
+        run: |
+          python projects/puerto-plata-gis/road_width_transects.py --roads projects/puerto-plata-gis/drive_network.geojson --output projects/puerto-plata-gis/road_width_transects.geojson
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path("projects/puerto-plata-gis/road_width_transects.geojson").read_text())
+          assert len(x["features"])>100
+          assert all(f["properties"]["status"]=="INSPECTION_TRANSECT_NOT_MEASURED" for f in x["features"])
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: puerto-plata-road-width-baseline
+          path: |
+            projects/puerto-plata-gis/road_width_baseline.json
+            projects/puerto-plata-gis/road_width_transects.geojson
+            projects/puerto-plata-gis/road_width_sources.json
+            projects/puerto-plata-gis/imagery_eligibility_report.json
+          retention-days: 30
+
   destinations:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -405,8 +519,8 @@ jobs:
       - name: Unit-test local Valhalla actor adapter without network service
         run: |
           cd projects/puerto-plata-gis
-          python -m unittest -v test_valhalla_local.py
-          python -m py_compile valhalla_local.py
+          python -m unittest -v test_service_cycle_scenarios.py test_valhalla_waypoint_route.py test_valhalla_route_shape.py test_valhalla_local.py test_operational_validation.py test_turn_risk_screen.py test_road_widths_pipeline.py test_road_width_transects.py test_imagery_eligibility.py test_road_width_priorities.py test_discover_open_aerial.py test_survey_priority_queue.py
+          python -m py_compile valhalla_local.py operational_validation.py
 
   local-r5py:
     runs-on: ubuntu-latest
@@ -528,19 +642,475 @@ jobs:
           print("Bidirectional route connectivity:",sum(r["routed_both_directions"] for r in d["routes"]))
           print("Physical bus turn approvals: 0 (require swept-path audit)")
           PY
+      - name: Screen Yutong waypoint bend candidates
+        run: |
+          python projects/puerto-plata-gis/turn_risk_screen.py --input projects/puerto-plata-gis/discovered_routes.geojson --output projects/puerto-plata-gis/yutong_turn_risk_screen.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          d=json.loads(Path("projects/puerto-plata-gis/yutong_turn_risk_screen.json").read_text())
+          assert d["status"]=="EXPLORATORIO_SIN_APROBACION_FISICA"
+          assert len(d["risks"])>0
+          PY
+      - name: Check whether three routes visit their ordered provisional waypoints
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path("projects/puerto-plata-gis/valhalla_waypoint_constrained.json").read_text())
+          assert len(r["routes"])==3
+          assert {r0["id"] for r0 in r["routes"]}=={"C00-09","C00-10","C02-04"}
+          assert r["physical_routes_approved"]==0
+          assert all(r0["segments"] for r0 in r["routes"])
+          print("Waypoint route evidence:",[(x["id"],x["complete_routable_sequence"],x["failed_segments"],x["sum_segment_distance_km"]) for x in r["routes"]])
+          PY
+      - name: Compare terminal shortcuts against waypoint-constrained routing
+        run: |
+          cd projects/puerto-plata-gis
+          python -m unittest -v test_route_length_comparison.py
+          python route_length_comparison.py --direct valhalla_local_audit.json --via valhalla_waypoint_constrained.json --output route_length_comparison.json
+          python - <<'PY'
+          import json
+          x=json.load(open('route_length_comparison.json'))
+          assert x["total_compared"]==3
+          assert x["maneuvers_approved"]==0
+          assert all(x0["constraint_sequence_complete"] for x0 in x["routes"])
+          PY
+      - name: Verify waypoint paths are not falsely labeled as bus service cycles
+        run: |
+          cd projects/puerto-plata-gis
+          python -m unittest -v test_cycle_readiness.py
+          python cycle_readiness.py --input valhalla_waypoint_constrained.json --output cycle_readiness.json
+          python - <<'PY'
+          import json
+          x=json.load(open("cycle_readiness.json"))
+          assert x["routes_examined"]==3
+          assert x["approved_as_measured_cycles"]==0
+          PY
+      - name: Validate hypothetical full bus graph loops with terminal connectors
+        run: |
+          cd projects/puerto-plata-gis
+          python -m unittest -v test_service_cycle_scenarios.py
+          python - <<'PY'
+          import json
+          d=json.load(open('service_cycle_scenarios.json'))
+          assert len(d['routes'])==3
+          assert d['approved_service_cycles']==0
+          assert all(x['connector']['status']!='NOT_EVALUATED' for x in d['routes'])
+          print('Graph loops:',d['routable_loops'])
+          print('Route scenarios:',[(x['candidate'],x['connector']['status'],len(x['scenarios'])) for x in d['routes']])
+          PY
+      - name: Evaluate 10/20/30 buses on fixed three-route sensitivity grid
+        run: |
+          cd projects/puerto-plata-gis
+          python -m unittest -v test_fixed_shortlist_fleet_sensitivity.py
+          python fixed_shortlist_fleet_sensitivity.py --input service_cycle_scenarios.json --output fixed_shortlist_fleet_sensitivity.json
+          python - <<'PY'
+          import json
+          x=json.load(open('fixed_shortlist_fleet_sensitivity.json'))
+          assert x["operational_approval"] is False
+          if x["fleet_calculated"]:
+              assert len(x["scenarios"])==36
+              assert all(not s["physically_approved"] for s in x["scenarios"])
+          else:
+              assert x["status"]=="BLOCKED_INCOMPLETE_GRAPH_LOOPS"
+          print("Fleet sensitivity:",x["status"])
+          PY
+      - name: Export directed real road geometry
+        run: |
+          cd projects/puerto-plata-gis
+          python -m unittest -v test_route_geometry_qa.py
+          python route_geometry_qa.py --routing valhalla_local_audit.json --report routed_geometry_qa.json --geojson routed_paths.geojson
+          python - <<'PY'
+          import json
+          x=json.load(open('routed_geometry_qa.json'))
+          assert x['routes_checked']>=19
+          assert x['routes_with_both_shapes']==x['routes_checked']
+          assert x['bus_turns_approved']==0
+          PY
+      - name: Audit whether routed paths reach candidate waypoints
+        run: |
+          cd projects/puerto-plata-gis
+          python -m unittest -v test_route_waypoint_consistency.py
+          python route_waypoint_consistency.py --candidates discovered_routes.geojson --routes routed_paths.geojson --output route_waypoint_consistency.json
+          python - <<'PY'
+          import json
+          x=json.load(open('route_waypoint_consistency.json'))
+          assert x['routes_checked']>=19
+          assert x['bus_stop_accessibility_verified'] is False
+          print("Routes with candidate waypoint deviations:",x["routes_with_waypoint_deviation"])
+          PY
+      - name: Save actual Valhalla operational evidence
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path("projects/puerto-plata-gis")
+          routing=json.loads((p/"valhalla_local_audit.json").read_text())
+          assert routing["routes"] and any(r["routed_both_directions"] for r in routing["routes"])
+          report={"status":"EXECUTED_ROUTES_REQUIRE_TURN_REVIEW","routing":routing}
+          (p/"valhalla_execution_evidence.json").write_text(json.dumps(report,indent=2))
+          PY
+          python projects/puerto-plata-gis/operational_validation.py --valhalla-evidence projects/puerto-plata-gis/valhalla_execution_evidence.json --output projects/puerto-plata-gis/operational_validation_evidence.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: puerto-plata-valhalla-rutas-locales
           path: |
+            projects/puerto-plata-gis/valhalla_waypoint_constrained.json
+            projects/puerto-plata-gis/valhalla_waypoint_constrained.geojson
             projects/puerto-plata-gis/valhalla_local_audit.json
             projects/puerto-plata-gis/valhalla_turn_audit.csv
+            projects/puerto-plata-gis/route_waypoint_consistency.json
+            projects/puerto-plata-gis/route_length_comparison.json
+            projects/puerto-plata-gis/fixed_shortlist_fleet_sensitivity.json
+            projects/puerto-plata-gis/service_cycle_scenarios.json
+            projects/puerto-plata-gis/cycle_readiness.json
+            projects/puerto-plata-gis/routed_geometry_qa.json
+            projects/puerto-plata-gis/routed_paths.geojson
+            projects/puerto-plata-gis/valhalla_execution_evidence.json
+            projects/puerto-plata-gis/operational_validation_evidence.json
+            projects/puerto-plata-gis/yutong_turn_risk_screen.json
             projects/puerto-plata-gis/data/valhalla/valhalla_build_manifest.json
+          retention-days: 30
+
+  road-width-shortlist:
+    runs-on: ubuntu-latest
+    needs: [road-width-baseline, route-competition, valhalla-local-real-tiles]
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-road-width-baseline
+          path: projects/puerto-plata-gis
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-competencia-redes
+          path: projects/puerto-plata-gis
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-valhalla-rutas-locales
+          path: projects/puerto-plata-gis
+      - name: Prioritize surveys by three ten-bus candidates
+        run: |
+          python projects/puerto-plata-gis/road_width_priorities.py --transects projects/puerto-plata-gis/road_width_transects.geojson --routes projects/puerto-plata-gis/discovered_routes.geojson --output projects/puerto-plata-gis/priority_road_width_transects.geojson
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path("projects/puerto-plata-gis/priority_road_width_transects.geojson").read_text())
+          assert x["metadata"]["status"]=="PRIORITIZED_TRANSECTS_NOT_ROAD_WIDTHS"
+          assert x["features"]
+          assert all(f["properties"]["bus_approved"] is False for f in x["features"])
+          print(x["metadata"])
+          PY
+      - name: Rank unknown physical turns and nearby inspection profiles
+        run: |
+          python projects/puerto-plata-gis/survey_priority_queue.py --turns projects/puerto-plata-gis/yutong_turn_risk_screen.json --transects projects/puerto-plata-gis/priority_road_width_transects.geojson --output projects/puerto-plata-gis/yutong_field_survey_queue.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path("projects/puerto-plata-gis/yutong_field_survey_queue.json").read_text())
+          assert x["status"]=="UNVERIFIED_FIELD_SURVEY_QUEUE"
+          assert x["total_tasks"]>0
+          assert x["maneuvers_approved"]==0
+          assert x["street_widths_measured"]==0
+          print("Yutong inspection priority:",x["tasks_by_route"])
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: puerto-plata-road-width-shortlist
+          path: |
+            projects/puerto-plata-gis/priority_road_width_transects.geojson
+            projects/puerto-plata-gis/yutong_field_survey_queue.json
+          retention-days: 30
+
+  imagery-nine-turns-audit:
+    runs-on: ubuntu-latest
+    needs: [imagery-catalog-discovery, road-width-shortlist]
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-imagery-search-evidence
+          path: projects/puerto-plata-gis
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-road-width-shortlist
+          path: projects/puerto-plata-gis
+      - name: Evaluate actual STAC image metadata at nine priority locations
+        run: |
+          cd projects/puerto-plata-gis
+          python -m unittest -v test_audit_aerial_for_turns.py
+          python audit_aerial_for_turns.py --catalog open_aerial_metadata.json --turns yutong_field_survey_queue.json --output image_turn_suitability.json
+          python - <<'PY'
+          import json
+          x=json.load(open("image_turn_suitability.json"))
+          assert x["assessed_turns"]==9
+          assert x["fit_for_precision_measurements"]==0
+          assert all(t["width_measurement_status"]=="BLOCKED" for t in x["turns"])
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: puerto-plata-image-nine-turn-suitability
+          path: projects/puerto-plata-gis/image_turn_suitability.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  zero-budget-evidence-roadmap:
+    runs-on: ubuntu-latest
+    needs: [road-width-baseline, imagery-nine-turns-audit, road-width-shortlist]
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-road-width-baseline
+          path: projects/puerto-plata-gis
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-road-width-shortlist
+          path: projects/puerto-plata-gis
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-image-nine-turn-suitability
+          path: projects/puerto-plata-gis
+      - name: Test and evaluate zero-budget evidence priorities
+        run: |
+          cd projects/puerto-plata-gis
+          python -m unittest -v test_zero_budget_roadmap.py
+          python zero_budget_roadmap.py --road road_width_baseline.json --image image_turn_suitability.json --turn yutong_field_survey_queue.json --output zero_budget_readiness.json
+          python - <<'PY'
+          import json
+          x=json.load(open("zero_budget_readiness.json"))
+          assert x["status"]=="ZERO_BUDGET_WORKPLAN_NOT_ENGINEERING_APPROVAL"
+          assert x["operationally_approved_routes"]==0
+          assert x["next_milestone"]=="REAL_ROUTED_PATH_GEOMETRY"
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: puerto-plata-zero-budget-readiness
+          path: projects/puerto-plata-gis/zero_budget_readiness.json
+          retention-days: 30
+
+  algorithmic-v2-fast-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Install isolated computational dependencies
+        run: python -m pip install "h3>=4.1,<5" "osmnx==2.0.6" "scipy>=1.11,<2" "shapely>=2,<3" "ortools>=9.10,<10"
+      - name: Validate CLI contracts and synthetic fixture regressions before costly data jobs
+        run: |
+          cd projects/puerto-plata-gis/algorithmic_v2
+          python -m unittest -v test_algorithmic_baseline.py test_score_candidates.py test_select_network.py
+          python -m py_compile zones_od.py generate_candidates.py vehicle_screen.py score_candidates.py robustness.py select_network.py map_desires.py phase_gates.py l1_control.py
+          python score_candidates.py --help | grep -- '--zones'
+          python l1_control.py --help | grep -- '--zones'
+
+  algorithmic-v2-baseline:
+    runs-on: ubuntu-latest
+    needs: [network, destinations]
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Install open geospatial and H3 dependencies
+        run: python -m pip install "h3>=4.1,<5" "osmnx==2.0.6" "scipy>=1.11,<2" "shapely>=2,<3" "ortools>=9.10,<10" "rasterio>=1.3,<2"
+      - name: Generate WorldPop layer without legacy L1 dependency
+        run: python projects/puerto-plata-gis/build_population.py
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-red-vial-osmnx
+          path: projects/puerto-plata-gis
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-destinos-overture
+          path: projects/puerto-plata-gis
+      - name: Test H3, gravity OD, graph candidates and conservative vehicle screen
+        run: |
+          cd projects/puerto-plata-gis/algorithmic_v2
+          python -m unittest -v test_algorithmic_baseline.py
+      - name: Build H3 zones and nine synthetic gravity-demand scenarios
+        run: |
+          cd projects/puerto-plata-gis/algorithmic_v2
+          python zones_od.py --population ../population.json --pois ../destinations.geojson --config config.json --zones zones_h3_res8.json --output synthetic_gravity_od.json --desires desire_lines.geojson
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from zones_od import build
+          config=json.loads(Path("config.json").read_text())
+          pop=json.loads(Path("../population.json").read_text())
+          pois=json.loads(Path("../destinations.geojson").read_text())
+          zones=build(pop,pois,config,9)
+          Path("zones_h3_res9.json").write_text(json.dumps(zones))
+          assert zones["resolution"]==9 and len(zones["zones"])>0
+          PY
+      - name: Generate independent OD-derived candidate corridors on OSM graph
+        run: |
+          cd projects/puerto-plata-gis/algorithmic_v2
+          python generate_candidates.py --graph ../drive.graphml --od synthetic_gravity_od.json --config config.json --output generated_routes.geojson
+          python vehicle_screen.py --candidates generated_routes.geojson --config config.json --output yutong_turn_screen.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          routes=json.loads(Path("generated_routes.geojson").read_text())
+          turns=json.loads(Path("yutong_turn_screen.json").read_text())
+          od=json.loads(Path("synthetic_gravity_od.json").read_text())
+          assert len(od["scenarios"])==9
+          assert routes["generated_unique"]>0
+          assert routes["generated_unique"]==len(turns["results"])
+          assert not any(f["properties"]["physical_approval"] for f in routes["features"])
+          assert turns["viable_confirmed"]==0
+          print("Independent new candidates:",routes["generated_unique"],"target 100-300")
+          print("Status:",routes["status"],"; turn certification blocked:",turns["doubtful"])
+          PY
+      - name: Score new candidates with walking-network stop access
+        run: |
+          cd projects/puerto-plata-gis/algorithmic_v2
+          python -m unittest -v test_score_candidates.py
+          python score_candidates.py --candidates generated_routes.geojson --od synthetic_gravity_od.json --walk ../walk.graphml --zones zones_h3_res8.json --config config.json --output scored_candidates.json
+          python robustness.py --scored scored_candidates.json --config config.json --output route_robustness.json
+          python -m unittest -v test_select_network.py
+          python select_network.py --scored scored_candidates.json --od synthetic_gravity_od.json --output networks_10_20_30.json
+          python map_desires.py --desires desire_lines.geojson --keyzones top20_key_zones.geojson --output map_desire_lines.html
+          python phase_gates.py --zones zones_h3_res8.json --od synthetic_gravity_od.json --candidates generated_routes.geojson --turns yutong_turn_screen.json --scored scored_candidates.json --robust route_robustness.json --networks networks_10_20_30.json --config config.json --output evidence_gates.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path("scored_candidates.json").read_text())
+          assert len(x["ranked_candidates"])>=100
+          assert len(x["top6"])==6
+          assert x["physical_routes_approved"]==0
+          assert all(r["candidate_id"].startswith("AUTO-") for r in x["ranked_candidates"])
+          print("Top six exploratory candidates:",x["top6"])
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: puerto-plata-brt-v2-algorithmic-baseline
+          path: |
+            projects/puerto-plata-gis/algorithmic_v2/config.json
+            projects/puerto-plata-gis/algorithmic_v2/zones_h3_res8.json
+            projects/puerto-plata-gis/algorithmic_v2/zones_h3_res9.json
+            projects/puerto-plata-gis/algorithmic_v2/synthetic_gravity_od.json
+            projects/puerto-plata-gis/algorithmic_v2/desire_lines.geojson
+            projects/puerto-plata-gis/algorithmic_v2/generated_routes.geojson
+            projects/puerto-plata-gis/algorithmic_v2/yutong_turn_screen.json
+            projects/puerto-plata-gis/algorithmic_v2/scored_candidates.json
+            projects/puerto-plata-gis/algorithmic_v2/route_robustness.json
+            projects/puerto-plata-gis/algorithmic_v2/networks_10_20_30.json
+            projects/puerto-plata-gis/algorithmic_v2/top20_key_zones.geojson
+            projects/puerto-plata-gis/algorithmic_v2/map_desire_lines.html
+            projects/puerto-plata-gis/algorithmic_v2/evidence_gates.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  algorithmic-v2-l1-posthoc-control:
+    runs-on: ubuntu-latest
+    needs: [algorithmic-v2-baseline, package, network]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install "osmnx==2.0.6" "scipy>=1.11,<2" "pyproj>=3.6,<4"
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-brt-v2-algorithmic-baseline
+          path: projects/puerto-plata-gis/algorithmic_v2
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-gis-completo
+          path: projects/puerto-plata-gis
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-red-vial-osmnx
+          path: projects/puerto-plata-gis
+      - name: Rank historical L1 only after automatic discovery is finished
+        run: |
+          cd projects/puerto-plata-gis/algorithmic_v2
+          python l1_control.py --legacy ../initial_route.geojson --scored scored_candidates.json --od synthetic_gravity_od.json --walk ../walk.graphml --zones zones_h3_res8.json --config config.json --output historical_L1_control.json
+          python - <<'PY'
+          import json
+          x=json.load(open("historical_L1_control.json"))
+          assert x["l1_was_seeded_or_required"] is False
+          assert x["operationally_approved"] is False
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: puerto-plata-brt-v2-historical-control
+          path: projects/puerto-plata-gis/algorithmic_v2/historical_L1_control.json
+          retention-days: 30
+
+  network-proposal-audit:
+    runs-on: ubuntu-latest
+    needs: [exploratory-fleet-curve, destinations, route-competition]
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-curva-flota-exploratoria
+          path: projects/puerto-plata-gis
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-destinos-overture
+          path: projects/puerto-plata-gis
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-competencia-redes
+          path: projects/puerto-plata-gis
+      - name: Screen each proposed network for POIs, transfers and peak headway
+        run: |
+          cd projects/puerto-plata-gis
+          python -m unittest -v test_network_candidate_audit.py
+          python network_candidate_audit.py --fleet fleet_10_20_30_exploratory.json --routes discovered_routes.geojson --pois destinations.geojson --output network_proposals_multicriteria.json
+          python -m unittest -v test_rank_network_proposals.py
+          python rank_network_proposals.py --input network_proposals_multicriteria.json --output ranked_network_proposals.json
+          python -m unittest -v test_network_phasing_audit.py
+          python network_phasing_audit.py --input network_proposals_multicriteria.json --output network_expansion_phasing.json
+          python -m unittest -v test_interchange_hub_candidates.py
+          python interchange_hub_candidates.py --input network_proposals_multicriteria.json --output interchange_hub_candidates.json
+          python - <<'PY'
+          import json
+          x=json.load(open("network_proposals_multicriteria.json"))
+          assert x["options_evaluated"]>0
+          assert x["approved_operational_proposals"]==0
+          assert all(p["operational_gate"]=="REJECTED_PENDING_CRITICAL_EVIDENCE" for p in x["proposals"])
+          assert {p["budget"] for p in x["proposals"]}=={10,20,30}
+          assert {p["scenario"] for p in x["proposals"]}=={"with_l1","without_l1_constraint"}
+          print("Proposed networks evaluated:",x["options_evaluated"])
+          print("Sample:",[(p["budget"],p["scenario"],[x["route"] for x in p["selected_routes"]],len(p["transfer_links"]),p["destinations"]["pois_reached_proxy"]) for p in x["proposals"][:6]])
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: puerto-plata-network-proposals-multicriteria
+          path: |
+            projects/puerto-plata-gis/network_proposals_multicriteria.json
+            projects/puerto-plata-gis/ranked_network_proposals.json
+            projects/puerto-plata-gis/network_expansion_phasing.json
+            projects/puerto-plata-gis/interchange_hub_candidates.json
           retention-days: 30
 
   exploratory-fleet-curve:
     runs-on: ubuntu-latest
-    needs: [network, package, route-competition]
+    needs: [network, package, route-competition, destinations]
     timeout-minutes: 18
     steps:
       - uses: actions/checkout@v4
@@ -560,6 +1130,10 @@ jobs:
         with:
           name: puerto-plata-competencia-redes
           path: projects/puerto-plata-gis
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-destinos-overture
+          path: projects/puerto-plata-gis
       - name: Solve three sensitivity scenarios, budgets 10/20/30, with and without L1
         run: |
           python projects/puerto-plata-gis/run_exploratory_curve.py
@@ -571,51 +1145,28 @@ jobs:
           assert all(len(s["with_l1"])==3 and len(s["without_l1_constraint"])==3 for s in d["scenarios"])
           assert all(x["validation_level"]=="EXPLORATORY_ONLY" for s in d["scenarios"] for arm in ("with_l1","without_l1_constraint") for x in s[arm] if x["status"] in ("OPTIMAL","FEASIBLE_NOT_PROVEN_OPTIMAL"))
           PY
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: puerto-plata-curva-flota-exploratoria
-          path: projects/puerto-plata-gis/fleet_10_20_30_exploratory.json
-          retention-days: 30
-
-  real-local-valhalla:
-    runs-on: ubuntu-latest
-    needs: [route-competition]
-    timeout-minutes: 22
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: {python-version: "3.12"}
-      - name: Install Python Valhalla bindings
-        run: python -m pip install "pyvalhalla>=3.0,<5"
-      - uses: actions/download-artifact@v4
-        with:
-          name: puerto-plata-competencia-redes
-          path: projects/puerto-plata-gis
-      - name: Fetch Geofabrik Haiti and Dominican Republic OSM extract
-        id: download
-        continue-on-error: true
+      - name: Solve phased multicriteria network with POIs, transfers and hypothetical peak
         run: |
-          mkdir -p /tmp/pp-valhalla
-          curl --fail --location --retry 3 --connect-timeout 20 --max-time 200             "https://download.geofabrik.de/central-america/haiti-and-domrep-latest.osm.pbf"             -o /tmp/pp-valhalla/region.osm.pbf
-      - name: Build actual local graph and audit bidirectional routes
-        run: |
-          python projects/puerto-plata-gis/run_local_valhalla_evidence.py             --pbf /tmp/pp-valhalla/region.osm.pbf             --routes projects/puerto-plata-gis/discovered_routes.geojson             --output-dir /tmp/pp-valhalla/results --limit 18
-          cp /tmp/pp-valhalla/results/valhalla_execution_evidence.json projects/puerto-plata-gis/
-          if test -f /tmp/pp-valhalla/results/turn_audit.csv; then cp /tmp/pp-valhalla/results/turn_audit.csv projects/puerto-plata-gis/; fi
+          cd projects/puerto-plata-gis
+          python -m unittest -v test_mobility_multicriteria_cp_sat.py
+          python run_mobility_multicriteria.py
           python - <<'PY'
           import json
-          p=json.load(open('projects/puerto-plata-gis/valhalla_execution_evidence.json'))
-          print('VALHALLA_EVIDENCE_STATUS=',p['status'])
-          print('VALHALLA_FAILURE=',p.get('failure','none'))
+          x=json.load(open('multicriteria_nested_fleet.json'))
+          assert x["status"]=="MULTIOBJECTIVE_PHASED_HYPOTHESIS_NOT_OPERATIONALLY_APPROVED"
+          assert len(x["results"])==3
+          assert x["physical_routes_approved"]==0
+          for s in x["results"]:
+            for arm in ("with_l1","without_l1_constraint"):
+              assert len(s[arm]["budgets"])==3
+              assert s[arm]["route_retention_required_between_budgets"]
           PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: puerto-plata-valhalla-evidencia-real
+          name: puerto-plata-curva-flota-exploratoria
           path: |
-            projects/puerto-plata-gis/valhalla_execution_evidence.json
-            projects/puerto-plata-gis/turn_audit.csv
-          if-no-files-found: warn
+            projects/puerto-plata-gis/fleet_10_20_30_exploratory.json
+            projects/puerto-plata-gis/multicriteria_nested_fleet.json
           retention-days: 30
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse,json,csv
 from pathlib import Path
 from valhalla_audit import pairs
+from valhalla_route_shape import extract_shape
 
 ROOT=Path(__file__).resolve().parent
 def audit(features, actor, limit=6):
@@ -27,11 +28,11 @@ def audit(features, actor, limit=6):
     summary=result["trip"]["summary"]
     if not isinstance(summary.get("length"),(int,float)) or summary["length"]<=0.1 or not isinstance(summary.get("time"),(int,float)) or summary["time"]<=0:
      raise ValueError("Degenerate zero/short route; terminal data or network snapping invalid")
-    row[direction]={"status":"routed","distance_km":summary.get("length"),"time_seconds":summary.get("time")}
+    row[direction]={"status":"routed","distance_km":summary.get("length"),"time_seconds":summary.get("time"),"road_shape":extract_shape(result)}
    except Exception as exc:
     row[direction]={"status":"error","message":str(exc)[:250]}
   row["routed_both_directions"]=all(row[d]["status"]=="routed" for d in ("outbound","inbound"))
-  row["turn_audit"]=[{"candidate":item["id"],"point":{"lon":pt[0],"lat":pt[1]},"vehicle":"Mercedes-Benz Citaro K (reference)","reason":("Both directional routes found, but terminal swept-path and median crossings unverified" if row["routed_both_directions"] else "At least one direction cannot be routed by Valhalla on current OSM tiles"),"status":"REVIEW_REQUIRED" if row["routed_both_directions"] else "BLOCKED"} for pt in (item["a"],item["b"])]
+  row["turn_audit"]=[{"candidate":item["id"],"point":{"lon":pt[0],"lat":pt[1]},"vehicle":"Yutong ZK6126HG (reference; no swept path approval)","reason":("Both directional routes found, but terminal swept-path and median crossings unverified" if row["routed_both_directions"] else "At least one direction cannot be routed by Valhalla on current OSM tiles"),"status":"REVIEW_REQUIRED" if row["routed_both_directions"] else "BLOCKED"} for pt in (item["a"],item["b"])]
   output["routes"].append(row)
  return output
 def main():
@@ -48,6 +49,17 @@ def main():
  actor=Actor(get_config(tile_dir=str(tile_path.parent/"tiles"), tile_extract=str(tile_path)))
  features=json.loads(Path(args.input).read_text())["features"]
  report=audit(features,actor,args.limit)
+ from valhalla_waypoint_route import route_waypoints,to_geojson
+ waypoint_report=route_waypoints(features,actor)
+ (ROOT/"valhalla_waypoint_constrained.json").write_text(json.dumps(waypoint_report,indent=2,ensure_ascii=False))
+ (ROOT/"valhalla_waypoint_constrained.geojson").write_text(json.dumps(to_geojson(waypoint_report),ensure_ascii=False,separators=(",",":")))
+ print("Waypoint-constrained routes:",waypoint_report["complete_routes"],"/",len(waypoint_report["routes"]))
+ from service_cycle_scenarios import compute
+ service_cycles=compute(waypoint_report,actor)
+ (ROOT/"service_cycle_scenarios.json").write_text(json.dumps(service_cycles,indent=2,ensure_ascii=False))
+ print("Graph loops:",service_cycles["routable_loops"],"of",len(service_cycles["routes"]),
+       "approved operational cycles:",service_cycles["approved_service_cycles"])
+
  report["tile_extract"]=str(tile_path)
  Path(args.output).write_text(json.dumps(report,indent=2,ensure_ascii=False))
  csv_path=Path(args.output).with_name("valhalla_turn_audit.csv")

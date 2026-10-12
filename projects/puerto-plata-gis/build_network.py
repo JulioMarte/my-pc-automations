@@ -15,8 +15,10 @@ ROOT=Path(__file__).resolve().parent
 # Coordenadas WGS84: oeste, sur, este, norte; perímetro de estudio urbano,
 # NO límite administrativo.
 BBOX=(-70.752,19.740,-70.620,19.836)
-TAGS=["name","highway","oneway","lanes","width","maxwidth","maxheight","maxweight",
-      "access","bus","psv","surface","sidewalk","maxspeed","bridge","tunnel"]
+TAGS=["name","highway","oneway","lanes","width","est_width","maxwidth","maxheight","maxweight",
+      "access","bus","psv","surface","sidewalk","maxspeed","bridge","tunnel",
+      "parking:lane:both","parking:lane:left","parking:lane:right",
+      "parking:left","parking:right","shoulder","narrow"]
 ox.settings.useful_tags_way=list(dict.fromkeys([*ox.settings.useful_tags_way,*TAGS]))
 ox.settings.timeout=180
 ox.settings.log_console=True

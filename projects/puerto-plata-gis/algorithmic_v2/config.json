@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "scope": {
+    "bbox_wsen": [
+      -70.752,
+      19.74,
+      -70.62,
+      19.836
+    ],
+    "urban_boundary_status": "STUDY_BBOX_NOT_VERIFIED_FULL_URBAN_AREA",
+    "h3_resolutions": [
+      8,
+      9
+    ]
+  },
+  "sources": {
+    "population": "WorldPop 2025 R2025A constrained from population.json",
+    "attractions": "Overture Maps places from destinations.geojson",
+    "roads": "OpenStreetMap directed drive.graphml",
+    "walk": "OpenStreetMap walk.graphml"
+  },
+  "attraction_weights": {
+    "retail": 4,
+    "jobs": 5,
+    "health": 5,
+    "education": 4,
+    "lodging": 3,
+    "recreation": 2,
+    "transport": 3,
+    "other": 1
+  },
+  "gravity": {
+    "distance_decay_exponents": [
+      1,
+      1.5,
+      2
+    ],
+    "scenarios": {
+      "low": 0.5,
+      "medium": 1,
+      "high": 1.5
+    },
+    "distance_floor_km": 0.4,
+    "external_gateways": [
+      {
+        "id": "GATE_SOSUA",
+        "label": "Sosúa",
+        "lon": -70.615,
+        "lat": 19.763,
+        "production_assumption": 100,
+        "calibrated": false
+      },
+      {
+        "id": "GATE_IMBERT",
+        "label": "Imbert",
+        "lon": -70.795,
+        "lat": 19.756,
+        "production_assumption": 100,
+        "calibrated": false
+      },
+      {
+        "id": "GATE_SANTIAGO",
+        "label": "Santiago",
+        "lon": -70.7,
+        "lat": 19.727,
+        "production_assumption": 100,
+        "calibrated": false
+      }
+    ],
+    "synthetic_flow_units": "RELATIVE_NOT_PASSENGER_COUNTS"
+  },
+  "generation": {
+    "target_min": 100,
+    "target_max": 300,
+    "seed_top_od": 90,
+    "k_paths_per_od": 3,
+    "chain_starts": 15,
+    "chain_max_waypoints": 7,
+    "min_route_km": 1,
+    "max_route_km": 24,
+    "unique_edge_overlap_threshold": 0.92
+  },
+  "vehicle": {
+    "model": "Yutong ZK6126HG",
+    "length_m": 12.17,
+    "width_m": 2.55,
+    "axle_spacing_m": 6,
+    "front_overhang_m": 2.74,
+    "rear_overhang_m": 3.43,
+    "turning_diameter_scenarios_m": [
+      20.5,
+      21.5
+    ],
+    "clearance_policy": "UNKNOWN_IS_DUBIOUS_NEVER_VIABLE",
+    "slope_percent_range_assumed": [
+      4,
+      9
+    ],
+    "height_reference_range_m": [
+      3.18,
+      3.39
+    ],
+    "height_source_status": "UNVERIFIED_VARIANTS_DO_NOT_CERTIFY_CHOSEN_CONFIGURATION"
+  },
+  "service": {
+    "speed_kmh_scenarios": [
+      12,
+      15,
+      18
+    ],
+    "headways_min": [
+      10,
+      15,
+      20
+    ],
+    "reserve_ratio_scenarios": [
+      0.1,
+      0.15
+    ],
+    "nominal_capacity_variants": [
+      90,
+      95,
+      100
+    ],
+    "load_factor_bounds": [
+      0.7,
+      0.85
+    ],
+    "stop_spacing_m": [
+      400,
+      500
+    ],
+    "signal_delay_seconds_assumed": [
+      10,
+      30
+    ],
+    "dwell_seconds_assumed": [
+      15,
+      30
+    ],
+    "terminal_recovery_minutes_assumed": [
+      8,
+      12
+    ],
+    "wait_decay_min_assumed": 20,
+    "stop_demand_snap_search_m": 25
+  },
+  "approval": {
+    "require_observed_turns": true,
+    "require_observed_traffic": true,
+    "require_calibrated_OD": true,
+    "never_auto_approve": true
+  }
+}
