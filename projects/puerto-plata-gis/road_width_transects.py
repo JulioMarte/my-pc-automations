@@ -8,6 +8,14 @@ import argparse, json, math
 from pathlib import Path
 M=111195.0
 
+def edge_identifier(properties, fallback):
+    if properties.get("osmid") is not None:
+        return str(properties["osmid"])
+    keys=("from_node","to_node","edge_key")
+    if all(properties.get(k) is not None for k in keys):
+        return "osm-edge:" + ":".join(str(properties[k]) for k in keys)
+    return "unlinked-feature:" + str(fallback)
+
 def transects(features, spacing_m=10, half_span_m=15, limit=300000):
     if not (1<=spacing_m<=100 and 1<=half_span_m<=100 and 0<limit<=1000000):
         raise ValueError("invalid transect configuration")
@@ -34,7 +42,7 @@ def transects(features, spacing_m=10, half_span_m=15, limit=300000):
                     lonoff=norm[0]*half_span_m/(M*scale)
                     latoff=norm[1]*half_span_m/M
                     results.append({"type":"Feature",
-                        "properties":{"segment_id":str(feature.get("properties",{}).get("osmid") or ":".join(str(feature.get("properties",{}).get(k)) for k in ("from_node","to_node","edge_key")) if all(feature.get("properties",{}).get(k) is not None for k in ("from_node","to_node","edge_key")) else feat_idx),
+                        "properties":{"segment_id":edge_identifier(feature.get("properties",{}),feat_idx),
                             "status":"INSPECTION_TRANSECT_NOT_MEASURED",
                             "sample_spacing_m":spacing_m,
                             "search_half_span_m":half_span_m},
