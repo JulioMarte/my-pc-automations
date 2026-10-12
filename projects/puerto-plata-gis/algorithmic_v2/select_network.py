@@ -9,7 +9,7 @@ from pathlib import Path
 from ortools.sat.python import cp_model
 
 def optimize(rows,flows,budgets=(10,20,30),headways=(10,15,20),reserve=.15,
-             progressive=False,seconds=10,maximum_routes=65,maximum_od=150):
+             progressive=False,seconds=10,maximum_routes=65,maximum_od=150,od_scenario_key="medium_beta_1"):
     routes=sorted(rows,key=lambda x:-x["baseline_relative_od_accessible_proxy"])[:maximum_routes]
     flow_rows=sorted(flows,key=lambda x:-x["relative_flow_units"])[:maximum_od]
     ids=[r["candidate_id"] for r in routes]
@@ -17,7 +17,7 @@ def optimize(rows,flows,budgets=(10,20,30),headways=(10,15,20),reserve=.15,
     # Only relative model units; multiplier 1000 retains small OD contributions.
     weights={}
     for r in routes:
-        weights[r["candidate_id"]]={k:max(0,round(v*1000)) for k,v in r["captured_od_contributions_baseline"].items()}
+        weights[r["candidate_id"]]={k:max(0,round(v*1000)) for k,v in r["captured_od_contributions_by_scenario"].get(od_scenario_key,{}).items()}
     prior=set();reports=[]
     for budget in budgets:
         model=cp_model.CpModel()
@@ -82,12 +82,12 @@ def build(scored,od):
     outputs=[]
     for name in ("low","medium","high"):
         scenario=next(s for s in od["scenarios"] if s["level"]==name and s["exponent"]==1)
-        a=optimize(scored["ranked_candidates"],scenario["od"],progressive=False)
-        b=optimize(scored["ranked_candidates"],scenario["od"],progressive=True)
+        a=optimize(scored["ranked_candidates"],scenario["od"],progressive=False,od_scenario_key=f"{name}_beta_1")
+        b=optimize(scored["ranked_candidates"],scenario["od"],progressive=True,od_scenario_key=f"{name}_beta_1")
         outputs.append({"demand_scenario":name,"independent":a,"progressive":b})
     return {"status":"ALGORITHMIC_NETWORKS_EXPLORATORY",
         "scenarios":outputs,"physical_bus_routes_approved":0,
-        "limitation":"Demand changes total model flow, while selection uses baseline route OD contributions; ranking uncertainty requires recomputing per-OD weights for each scenario."}
+        "limitation":"Per-scenario OD incidence recalculated from walking-access model; beta sensitivity and calibrated transfer OD remain outside this selection."}
 
 def main():
     p=argparse.ArgumentParser()
