@@ -49,6 +49,12 @@ def main():
  actor=Actor(get_config(tile_dir=str(tile_path.parent/"tiles"), tile_extract=str(tile_path)))
  features=json.loads(Path(args.input).read_text())["features"]
  report=audit(features,actor,args.limit)
+ from valhalla_waypoint_route import route_waypoints,to_geojson
+ waypoint_report=route_waypoints(features,actor)
+ (ROOT/"valhalla_waypoint_constrained.json").write_text(json.dumps(waypoint_report,indent=2,ensure_ascii=False))
+ (ROOT/"valhalla_waypoint_constrained.geojson").write_text(json.dumps(to_geojson(waypoint_report),ensure_ascii=False,separators=(",",":")))
+ print("Waypoint-constrained routes:",waypoint_report["complete_routes"],"/",len(waypoint_report["routes"]))
+
  report["tile_extract"]=str(tile_path)
  Path(args.output).write_text(json.dumps(report,indent=2,ensure_ascii=False))
  csv_path=Path(args.output).with_name("valhalla_turn_audit.csv")
