@@ -122,6 +122,24 @@ jobs:
           python -m unittest -v test_road_mask_measure.py
           python -m py_compile road_mask_measure.py
 
+  imagery-catalog-discovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Query current HOT OpenAerialMap STAC imagery
+        run: |
+          python projects/puerto-plata-gis/discover_open_aerial.py --output projects/puerto-plata-gis/open_aerial_metadata.json --strict
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: puerto-plata-imagery-search-evidence
+          path: projects/puerto-plata-gis/open_aerial_metadata.json
+          if-no-files-found: error
+          retention-days: 30
+
   road-width-baseline:
     runs-on: ubuntu-latest
     needs: [network]
@@ -477,7 +495,7 @@ jobs:
       - name: Unit-test local Valhalla actor adapter without network service
         run: |
           cd projects/puerto-plata-gis
-          python -m unittest -v test_valhalla_local.py test_operational_validation.py test_turn_risk_screen.py test_road_widths_pipeline.py test_road_width_transects.py test_imagery_eligibility.py test_road_width_priorities.py
+          python -m unittest -v test_valhalla_local.py test_operational_validation.py test_turn_risk_screen.py test_road_widths_pipeline.py test_road_width_transects.py test_imagery_eligibility.py test_road_width_priorities.py test_discover_open_aerial.py
           python -m py_compile valhalla_local.py operational_validation.py
 
   local-r5py:
