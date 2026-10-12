@@ -30,6 +30,23 @@ def parse_stac(payload):
         })
     return items
 
+def summarize(items):
+    from collections import Counter,defaultdict
+    footprints=defaultdict(set)
+    for item in items:
+        bbox=item.get("bbox")
+        if isinstance(bbox,list) and len(bbox)==4:
+            footprints[tuple(bbox)].add(item.get("license_reported"))
+    return {
+      "metadata_records":len(items),
+      "distinct_reported_bbox_footprints":len(footprints),
+      "footprints_with_conflicting_licenses":sum(len(licenses)>1 for licenses in footprints.values()),
+      "license_counts":dict(Counter(str(x.get("license_reported")) for x in items)),
+      "gsd_above_30cm_count":sum(isinstance(x.get("gsd_m_reported"),(int,float)) and x["gsd_m_reported"]>0.30 for x in items),
+      "measurement_approved_images":0,
+      "warning":"Historical metadata and conflicting licenses require per-image source verification"
+    }
+
 def retrieve(timeout=45):
     query={"bbox":PUERTO_PLATA_BBOX,"collections":["openaerialmap"],"limit":100}
     request=urllib.request.Request(
@@ -48,6 +65,7 @@ def retrieve(timeout=45):
         payload=json.loads(body)
         record["images"]=parse_stac(payload)
         record["found_on_page"]=len(record["images"])
+        record["quality_audit"]=summarize(record["images"])
         record["status"]="DISCOVERED_UNVERIFIED_IMAGES" if record["images"] else "NO_IMAGERY_IN_CATALOG_FOR_BBOX"
     except (OSError,TimeoutError,ValueError,json.JSONDecodeError) as exc:
         record["failure"]=str(exc)[:500]
