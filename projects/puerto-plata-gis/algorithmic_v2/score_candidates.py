@@ -91,9 +91,9 @@ def build(candidates,od,walk,config):
             endpoint_cost[z]=gap+reached[n] if n in reached else None
             if n in walk_paths: endpoint_stop_index[z]=seed_index.get(walk_paths[n][0])
         route_distance=props["route_length_km_osm"]
-        scores=[];baseline_incidence={}
+        scores=[];incidence_by_scenario={}
         for key,rows in od_rows.items():
-            served=0.;unserved=0.
+            served=0.;unserved=0.;current_incidence={}
             for row in rows:
                 origin_dist=endpoint_cost.get(row["origin"])
                 dest_dist=endpoint_cost.get(row["destination"])
@@ -110,7 +110,8 @@ def build(candidates,od,walk,config):
                 penalty=math.exp(-max(0,detour-1)*.35)
                 contribution=row["relative_flow_units"]*walking_factor*penalty
                 served+=contribution
-                if key=="medium_beta_1": baseline_incidence[row["origin"]+"|"+row["destination"]]=round(contribution,5)
+                current_incidence[row["origin"]+"|"+row["destination"]]=round(contribution,5)
+            incidence_by_scenario[key]=current_incidence
             scores.append({"scenario":key,"relative_od_units_accessible_proxy":round(served,4),
                            "relative_od_units_inaccessible":round(unserved,4)})
         baseline=next(s for s in scores if s["scenario"]=="medium_beta_1")
@@ -133,7 +134,7 @@ def build(candidates,od,walk,config):
         results.append({"candidate_id":id,"methods":props["methods"],"geometry":f["geometry"],
            "stops":{"type":"MultiPoint","coordinates":stops},
            "stops_count":len(stops),"walk_access_method":"OSM walk graph Dijkstra; stops and H3 centroids nearest-node",
-           "od_scores":scores,"captured_od_contributions_baseline":baseline_incidence,
+           "od_scores":scores,"captured_od_contributions_by_scenario":incidence_by_scenario,
            "service_scenarios":cycles,
            "baseline_relative_od_accessible_proxy":baseline["relative_od_units_accessible_proxy"],
            "bus_gate":"BLOQUEADO_NO_PHYSICAL_TURN_CERTIFICATION",
