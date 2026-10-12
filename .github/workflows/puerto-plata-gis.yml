@@ -405,8 +405,8 @@ jobs:
       - name: Unit-test local Valhalla actor adapter without network service
         run: |
           cd projects/puerto-plata-gis
-          python -m unittest -v test_valhalla_local.py
-          python -m py_compile valhalla_local.py
+          python -m unittest -v test_valhalla_local.py test_operational_validation.py
+          python -m py_compile valhalla_local.py operational_validation.py
 
   local-r5py:
     runs-on: ubuntu-latest
@@ -602,6 +602,9 @@ jobs:
         run: |
           python projects/puerto-plata-gis/run_local_valhalla_evidence.py             --pbf /tmp/pp-valhalla/region.osm.pbf             --routes projects/puerto-plata-gis/discovered_routes.geojson             --output-dir /tmp/pp-valhalla/results --limit 18
           cp /tmp/pp-valhalla/results/valhalla_execution_evidence.json projects/puerto-plata-gis/
+          python projects/puerto-plata-gis/operational_validation.py \
+            --valhalla-evidence /tmp/pp-valhalla/results/valhalla_execution_evidence.json \
+            --output projects/puerto-plata-gis/operational_validation_evidence.json
           if test -f /tmp/pp-valhalla/results/turn_audit.csv; then cp /tmp/pp-valhalla/results/turn_audit.csv projects/puerto-plata-gis/; fi
           python - <<'PY'
           import json
@@ -615,6 +618,7 @@ jobs:
           name: puerto-plata-valhalla-evidencia-real
           path: |
             projects/puerto-plata-gis/valhalla_execution_evidence.json
+            projects/puerto-plata-gis/operational_validation_evidence.json
             projects/puerto-plata-gis/turn_audit.csv
           if-no-files-found: warn
           retention-days: 30
