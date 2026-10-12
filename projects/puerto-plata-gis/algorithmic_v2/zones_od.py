@@ -118,6 +118,23 @@ def main():
     od,lines=demand(zone_data,cfg)
     a.output.write_text(json.dumps(od))
     a.desires.write_text(json.dumps(lines))
+    base=next(x for x in od["scenarios"] if x["level"]=="medium" and x["exponent"]==1)
+    by_id={z["id"]:z for z in zone_data["zones"]}
+    key_features=[]
+    for rank,item in enumerate(base["top20_zones"],1):
+        id=item["id"];zone=by_id.get(id)
+        if not zone:continue
+        boundary=h3.cell_to_boundary(id)
+        polygon=[[lon,lat] for lat,lon in boundary]
+        polygon.append(polygon[0])
+        key_features.append({"type":"Feature","geometry":{"type":"Polygon","coordinates":[polygon]},
+            "properties":{"rank":rank,"h3_id":id,"endpoint_flow_proxy":item["endpoint_flow_proxy"],
+                          "residents_estimate":zone["residents_estimate"],
+                          "attraction_weight_proxy":zone["attraction_weight_proxy"],
+                          "provenance":"Synthetic gravity OD; WorldPop + Overture weights","observed":False}})
+    a.zones.with_name("top20_key_zones.geojson").write_text(json.dumps(
+       {"type":"FeatureCollection","metadata":{"observed":False,"source":"Gravity OD H3 res8"},
+        "features":key_features}))
     print(json.dumps({"zones":len(zone_data["zones"]),"scenarios":len(od["scenarios"]),
                       "baseline_pairs":len(lines["features"])}))
 if __name__=="__main__":main()
