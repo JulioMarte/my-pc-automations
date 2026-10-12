@@ -34,6 +34,11 @@ def generate(graph,od,min_candidates=100,max_candidates=300,flow_limit=240):
     mid=next((t for t in trials if t["demand_scenario"]=="medium" and t["gravity_exponent"]==1.5),trials[0])
     # Never import predetermined corridor files.
     flows=mid["all_od_flows"][:flow_limit]
+    if not flows:
+        return {"status":"BLOCKED_NO_SYNTHETIC_OD","source_od_scenario":{"demand":mid["demand_scenario"],"exponent":mid["gravity_exponent"]},
+                "candidate_count":0,"target_range":[min_candidates,max_candidates],"target_met":False,
+                "candidates":[],"no_manual_routes_used":True,"physical_routes_approved":0,
+                "limitations":["No origin-destination flow evidence, no corridors generated"]}
     coords=[f["origin_center_lonlat"] for f in flows]+[f["destination_center_lonlat"] for f in flows]
     snapped=node_ids(graph,coords)
     simple=simplest(graph)
