@@ -40,11 +40,23 @@ def inspect(feature,config):
             a=math.atan2(p[1]-before[1],p[0]-before[0])
             b=math.atan2(after[1]-p[1],after[0]-p[0])
             angles.append(abs(math.degrees(math.atan2(math.sin(b-a),math.cos(b-a)))))
+    radii=[]
+    for a,b,c in zip(xy,xy[1:],xy[2:]):
+        la=math.dist(a,b);lb=math.dist(b,c);lc=math.dist(a,c)
+        twice_area=abs((b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0]))
+        if twice_area>1e-5 and min(la,lb,lc)>1:
+            radii.append((la*lb*lc)/(2*twice_area))
+    min_radius=min(radii) if radii else None
+    turning_sensitivity=[{"reference_diameter_m":d,
+       "minimum_centerline_radius_proxy_m":round(min_radius,2) if min_radius is not None else None,
+       "tight_curve_warning_only":min_radius is not None and min_radius<d/2,
+       "approval":"DUDOSO_NO_CURB_OBSTACLE_GEOMETRY"} for d in vehicle["turning_diameter_scenarios_m"]]
     geom=unary_union(polygons)
     # Local polygon snapshots, not continuous kinematic trajectory.
     return {"status":"DUDOSO","max_centerline_deflection_deg":round(max(angles or [0]),2),
         "pose_footprint_union_area_m2":round(geom.area,2),
         "turning_diameter_reference_m":vehicle["turning_diameter_scenarios_m"],
+        "turning_sensitivity":turning_sensitivity,
         "blockers":["NO_CURB_POLYGONS","NO_OBSTACLE_GEOMETRY","STEERING_PATH_NOT_VALIDATED",
                     "NO_VERIFIED_TERMINAL_TURN","GRADE_AND_OVERHEAD_CLEARANCE_NOT_VERIFIED"],
         "provenance":{"vehicle":"Yutong ZK6126HG config geometry",
