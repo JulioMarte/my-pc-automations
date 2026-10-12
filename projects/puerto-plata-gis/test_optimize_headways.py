@@ -13,8 +13,8 @@ class HeadwayTests(unittest.TestCase):
   routes=[{"id":"L1","covered_cells":["a"],"cycle_minutes":100,"cycle_source":"calibrated_simulation","operational_geometry_approved":True},
     {"id":"B","covered_cells":["b"],"cycle_minutes":60,"cycle_source":"measured","operational_geometry_approved":True}]
   cells={"a":20,"b":200}
-  a=optimize(routes,cells,[10],[10,15,20],l1_required=True)[0]
-  b=optimize(routes,cells,[10],[10,15,20],l1_required=False)[0]
+  a=optimize(routes,cells,[6],[10,15,20],l1_required=True)[0]
+  b=optimize(routes,cells,[6],[10,15,20],l1_required=False)[0]
   self.assertIn("L1",[x["route"] for x in a["selected"]])
   self.assertEqual([x["route"] for x in b["selected"]],["B"])
   self.assertLessEqual(b["buses"],10)
