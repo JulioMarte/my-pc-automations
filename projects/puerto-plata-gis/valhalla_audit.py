@@ -11,10 +11,13 @@ ROOT=Path(__file__).resolve().parent
 def pairs(features):
  out=[]
  for f in features:
-  pts=f.get("geometry",{}).get("coordinates",[])
-  if len(pts)<2:continue
-  out.append({"id":f.get("properties",{}).get("id"),"a":pts[0],"b":pts[-1],
-   "source":"OSMnx graph-generated proposed stops; endpoints unverified"})
+  props=f.get("properties",{})
+  a,b=props.get("terminal_start"),props.get("terminal_end")
+  if a is None or b is None:raise ValueError(f"Terminals not recorded for {props.get('id')}; cannot infer from round-trip MultiPoint")
+  if len(a)!=2 or len(b)!=2 or abs(a[0]-b[0])+abs(a[1]-b[1])<0.0001:
+   raise ValueError(f"Coincident or invalid terminals for {props.get('id')}")
+  out.append({"id":props.get("id"),"a":a,"b":b,
+   "source":"OSMnx route terminal anchors explicitly saved; physical turnaround not verified"})
  return out
 def query(base,start,end):
  url=base.rstrip("/")+"/route"
