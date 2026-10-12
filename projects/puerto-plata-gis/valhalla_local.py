@@ -54,6 +54,11 @@ def main():
  (ROOT/"valhalla_waypoint_constrained.json").write_text(json.dumps(waypoint_report,indent=2,ensure_ascii=False))
  (ROOT/"valhalla_waypoint_constrained.geojson").write_text(json.dumps(to_geojson(waypoint_report),ensure_ascii=False,separators=(",",":")))
  print("Waypoint-constrained routes:",waypoint_report["complete_routes"],"/",len(waypoint_report["routes"]))
+ from service_cycle_scenarios import compute
+ service_cycles=compute(waypoint_report,actor)
+ (ROOT/"service_cycle_scenarios.json").write_text(json.dumps(service_cycles,indent=2,ensure_ascii=False))
+ print("Graph loops:",service_cycles["routable_loops"],"of",len(service_cycles["routes"]),
+       "approved operational cycles:",service_cycles["approved_service_cycles"])
 
  report["tile_extract"]=str(tile_path)
  Path(args.output).write_text(json.dumps(report,indent=2,ensure_ascii=False))
