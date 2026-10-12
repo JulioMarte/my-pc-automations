@@ -301,3 +301,9 @@ Se añadió `route_length_comparison.py`, con prueba de regresión y
 artefacto CI `route_length_comparison.json`. La comparación siempre
 conserva `operational_approval=false` y distingue datos de red de
 aprobación de giro.
+
+## CI de enrutamiento por todos los waypoints
+
+En el commit `189922269` el CI concluyó **21/21 jobs exitosos**, con `valhalla-local-real-tiles` mostrando secuencias completas 3/3: C00-09 7.505 km, C00-10 9.904 km, C02-04 4.376 km y cero segmentos fallidos. Estas distancias se calcularon enlazando puntos sucesivos de cada candidato, **no como ciclos comerciales verificados de ida/vuelta**. El enrutamiento terminal anterior corresponde a recorridos diferentes; no compararlos como si fueran el mismo ciclo.
+
+Se añadió a `valhalla_waypoint_route.py` `endpoints.distance_between_ends_m`, `closed_within_30m`, `route_distance_is_round_trip:false` y `validated_service_cycle:false`. Un bucle topológicamente cerrado tampoco demuestra retorno físicamente viable para el Yutong. No modificar aún frecuencias 10/20/30 con estas distancias salvo que se defina/valide qué representa un ciclo, terminales, tiempos de espera y red de servicio.
