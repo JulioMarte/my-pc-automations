@@ -39,6 +39,8 @@ def route(g,a,b):
  return {"stops":sample_path(g,forward)+sample_path(g,reverse),
   "forward_km":round(metres(forward)/1000,2),"reverse_km":round(metres(reverse)/1000,2),
   "round_trip_km":round(km,2),"forward_nodes":forward,"reverse_nodes":reverse,
+  "terminal_start":[g.nodes[a]["x"],g.nodes[a]["y"]],
+  "terminal_end":[g.nodes[b]["x"],g.nodes[b]["y"]],
   "turns_verified":False}
 def anchor_points(g,pop,poi):
  # Weighted high-population 0.012-degree grid, not assumed place-name coordinates.
@@ -119,7 +121,7 @@ def evaluate(drive,walk,pop,pois,l1,max_candidates=24,max_snap=60):
   selected[f"C{i:02d}-{j:02d}"]=r
   if len(selected)>=max_candidates:break
  w=Network(walk);pop_cells,poi_cells=preproject(w,pop,pois,max_snap)
- routes={"L1":{"stops":l1,"round_trip_km":None,"forward_km":None,"reverse_km":None,"turns_verified":False}}
+ routes={"L1":{"stops":l1,"round_trip_km":None,"forward_km":None,"reverse_km":None,"turns_verified":False,"terminal_start":[l1[0][1],l1[0][0]],"terminal_end":[l1[-1][1],l1[-1][0]]}}
  routes.update(selected)
  for r in routes.values():
   r["pop_set"]=reached(w,r["stops"],pop_cells,max_snap=max_snap)
@@ -158,7 +160,7 @@ def evaluate(drive,walk,pop,pois,l1,max_candidates=24,max_snap=60):
    "candidates":len(selected),"base_residents":totals(basep,pop_cells),"base_poi":len(baseq)},
    "competitors":trials,"network_combinations":combinations[:30],
    "routes_geojson":{"type":"FeatureCollection","features":[{
-    "type":"Feature","properties":{"id":key,"turns_verified":False,"round_trip_km":r["round_trip_km"]},
+    "type":"Feature","properties":{"id":key,"turns_verified":False,"round_trip_km":r["round_trip_km"],"terminal_start":r["terminal_start"],"terminal_end":r["terminal_end"]},
     "geometry":{"type":"MultiPoint","coordinates":[[p[1],p[0]] for p in r["stops"]]}}
     for key,r in routes.items()]}}
 def main():
