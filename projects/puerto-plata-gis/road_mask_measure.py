@@ -67,10 +67,20 @@ def measure_mask(mask_path, transects_path, *, max_samples=1000, pixel_step=0.5)
 def main():
     p=argparse.ArgumentParser()
     p.add_argument("--mask",type=Path,required=True)
+    p.add_argument("--catalog",type=Path,required=True,help="Reviewed imagery license/accuracy metadata")
     p.add_argument("--transects",type=Path,required=True)
     p.add_argument("--output",type=Path,required=True)
     p.add_argument("--max-samples",type=int,default=1000)
     a=p.parse_args()
     if a.max_samples<1:raise ValueError("invalid maximum")
-    a.output.write_text(json.dumps(measure_mask(a.mask,a.transects,max_samples=a.max_samples),indent=2))
+    from imagery_eligibility import evaluate
+    import hashlib
+    catalog=json.loads(a.catalog.read_text())
+    match=[x for x in catalog if x.get("local_path")==str(a.mask)]
+    if len(match)!=1 or not evaluate(match[0])["eligible_for_pilot"]:
+        raise RuntimeError("BLOCKED_NO_ELIGIBLE_IMAGERY: source rights, spatial accuracy or coverage missing")
+    result=measure_mask(a.mask,a.transects,max_samples=a.max_samples)
+    result["image_metadata"]=match[0]
+    result["mask_sha256"]=hashlib.sha256(a.mask.read_bytes()).hexdigest()
+    a.output.write_text(json.dumps(result,indent=2))
 if __name__=="__main__":main()
