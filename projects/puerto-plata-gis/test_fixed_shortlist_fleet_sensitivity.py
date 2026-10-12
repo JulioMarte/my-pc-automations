@@ -21,6 +21,6 @@ class FleetTests(unittest.TestCase):
   self.assertEqual(x["status"],"BLOCKED_INCOMPLETE_GRAPH_LOOPS")
   self.assertFalse(x["scenarios"])
  def test_incompatible_scenarios_error(self):
-  i=input_cycles();i["routes"][0]["scenarios"][0]["assumed_speed_kmh"]=12
+  i=input_cycles();i["routes"][1]["scenarios"][0]["assumed_speed_kmh"]=12
   with self.assertRaises(ValueError):compare(i)
 if __name__=="__main__":unittest.main()
