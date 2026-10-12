@@ -954,6 +954,58 @@ jobs:
             projects/puerto-plata-gis/interchange_hub_candidates.json
           retention-days: 30
 
+  od-first-h3-demand:
+    runs-on: ubuntu-latest
+    needs: [package, destinations]
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Install H3 geospatial index
+        run: python -m pip install "h3>=4.1,<5"
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-gis-completo
+          path: projects/puerto-plata-gis
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-destinos-overture
+          path: projects/puerto-plata-gis
+      - name: Test H3 population and gravity model; forbid prior hand-picked routes
+        run: |
+          cd projects/puerto-plata-gis
+          python -m unittest -v test_od_first_h3.py
+          python h3_od_zones.py --population population.json --destinations destinations.geojson --config od_first_config.json --output od_first_zones.json --geojson od_first_zones.geojson
+          python h3_gravity_od.py --zones od_first_zones.json --config od_first_config.json --output od_first_gravity.json --geojson od_first_desire_lines.geojson
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('.')
+          zones=json.loads((p/'od_first_zones.json').read_text())
+          od=json.loads((p/'od_first_gravity.json').read_text())
+          assert zones["no_prior_corridors_used"] is True
+          assert set(zones["h3_cells"])=={"8","9"}
+          assert len(od["experiments"])==9
+          assert od["observed_trips"] is False
+          assert all(0<len(v["top_20_cells_by_through_flow"])<=20 for v in od["experiments"])
+          assert all(v["total_hypothetical_od_trips"]>0 for v in od["experiments"])
+          print("OD-first independent model: nine synthetic hypotheses, zero observed trips")
+          PY
+      - name: Publish desire lines and H3 zones even for exploratory data
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: puerto-plata-od-first-h3-gravity
+          path: |
+            projects/puerto-plata-gis/od_first_zones.json
+            projects/puerto-plata-gis/od_first_zones.geojson
+            projects/puerto-plata-gis/od_first_gravity.json
+            projects/puerto-plata-gis/od_first_desire_lines.geojson
+            projects/puerto-plata-gis/od_first_config.json
+          if-no-files-found: warn
+          retention-days: 30
+
   exploratory-fleet-curve:
     runs-on: ubuntu-latest
     needs: [network, package, route-competition, destinations]
