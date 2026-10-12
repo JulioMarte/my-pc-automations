@@ -94,5 +94,39 @@
     "attraction": "Overture mapped POIs, not jobs/footfall",
     "distance": "haversine centroid-to-centroid, not travel times",
     "external_gateways": "assumptions only"
+  },
+  "service_assumptions": {
+    "stop_spacing_target_m": 450,
+    "stop_spacing_range_m": [
+      400,
+      500
+    ],
+    "max_walk_m": 500,
+    "walk_decay_m": 350,
+    "speeds_kmh": [
+      12,
+      15,
+      18
+    ],
+    "headways_min": [
+      10,
+      15,
+      20
+    ],
+    "fleet_reserve_ratio": 0.15,
+    "signals_minutes_per_loop_assumed": 5,
+    "terminal_recovery_min_assumed": 12,
+    "service_hours_per_day_assumed": 14,
+    "reference_capacity_assumed": 95,
+    "load_factor_bounds": [
+      0.7,
+      0.85
+    ],
+    "traffic_peak_multipliers_assumed": [
+      1,
+      1.3,
+      1.6
+    ],
+    "passenger_capacity_is_variant_assumption": true
   }
 }
