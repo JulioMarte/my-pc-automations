@@ -82,3 +82,32 @@ No obtener permisos municipales es compatible con G0-G3; G4 requiere
 comprobación geométrica y campo, no necesariamente datos del Ayuntamiento.
 Sin bordillos medidos, el resultado debe seguir siendo UNKNOWN. Ningún
 CI verde debe confundirse con aprobación de rutas.
+
+## Interfaz de revisión
+
+Abrir `Road_Width_Review_Puerto_Plata.html` en un navegador con acceso a las bibliotecas públicas Leaflet.
+Importar desde los artefactos CI `discovered_routes.geojson` y `priority_road_width_transects.geojson`.
+La interfaz dibuja rutas en tres colores y líneas amarillas de inspección, con un límite visual de 7,000 para rendimiento.
+**No digitalizar bordillos derivados de la capa satélite de referencia** sin permiso de extracción.
+
+## Medición desde una máscara raster autorizada
+
+Cuando exista una ortofoto georreferenciada con licencia que permita extracción de datos, es necesario generar/revisar una máscara binaria: **1=calzada, 0=fuera de calzada**. La herramienta NO segmenta automáticamente imágenes RGB ni identifica carriles, bordillos o medianas. Para medir ese límite de máscara:
+
+```bash
+python road_mask_measure.py --mask ./licensed_road_mask.tif \
+  --transects road_width_transects.geojson \
+  --catalog imagery_catalog.json --output measured_mask_widths.json
+```
+
+`imagery_catalog.json` deberá incluir exactamente un registro con `local_path` correspondiente a la máscara, `measurement_rights_confirmed:true`, `coverage_intersects_puerto_plata:true`, `georeferenced:true`, `crs`, `acquired_at`, `gsd_m <= 0.30` y `horizontal_accuracy_m <= 0.50`. La herramienta exige estos metadatos, verifica un CRS proyectado y genera SHA256 del raster. No sustituye una auditoría legal ni certificación independiente de exactitud. El resultado queda explícitamente marcado como estimación no verificada en campo.
+
+## Primer resultado observado en CI
+
+En la primera corrida válida del 12 de octubre de 2026 se inventariaron **8,096 aristas viales dirigidas** exportadas por OSMnx, incluyendo 430 registros con etiqueta `lanes`, **cero etiquetas `width`** en esa extracción, y **69,492 transectos de inspección**. Los 8,096 no representan necesariamente 8,096 calles distintas porque la red incorpora sentidos de circulación.
+
+Ninguno de los transectos equivale a una medida; no existen aún imágenes registradas con licencia y precisión elegibles para el piloto, de modo que `imagery_eligibility_report.json` debe indicar bloqueo y `road_width_baseline.json` reportar cero observaciones.
+
+## Cómo interpretar la nueva priorización
+
+El trabajo `road-width-shortlist` filtra perfiles próximos a los **puntos provisionales** de C00-09, C00-10 y C02-04. No deduce el recorrido sobre cada calle entre paradas; esas geometrías son MultiPoint. Un perfil cercano a una parada es una prioridad de inspección, no un tramo de ruta confirmado.
