@@ -21,6 +21,9 @@ class Tests(unittest.TestCase):
   self.assertEqual(report["complete_routes"],3)
   self.assertEqual(len(to_geojson(report)["features"]),3)
   self.assertFalse(report["routes"][0]["physical_bus_geometry_approved"])
+  self.assertFalse(report["routes"][0]["route_distance_is_round_trip"])
+  self.assertFalse(report["routes"][0]["validated_service_cycle"])
+  self.assertGreater(report["routes"][0]["endpoints"]["distance_between_ends_m"],100)
  def test_missing_segments_block(self):
   report=route_waypoints(data(),Failure())
   self.assertEqual(report["complete_routes"],0)
