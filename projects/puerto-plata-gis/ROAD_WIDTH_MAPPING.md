@@ -336,3 +336,24 @@ En octubre de 2026, una ejecución encontró un fallo transitorio
 `RemoteDisconnected` descargando WorldPop; `build_population.py`
 se modificó para reintentar con fichero temporal y renombrado atómico.
 No se sustituye el raster real por datos simulados cuando falla la descarga.
+
+## Sensibilidad de flota fija 10/20/30 con el nuevo ciclo de red
+
+Se incorpora `fixed_shortlist_fleet_sensitivity.py` con pruebas que
+comparan los presupuestos 10/20/30 autobuses para exactamente las tres
+candidatas `C00-09`, `C00-10`, `C02-04`, siempre usando el mismo
+conjunto de supuestos entre líneas. Evalúa tres headways (10/15/20 min),
+tres velocidades hipotéticas (12/18/24 km/h), dos dwell times
+(15/30 s por transición waypoint) y dos recuperaciones (8/12 min):
+36 escenarios si las tres secuencias y sus conectores resultan enrutables.
+
+El número de autobuses activos por línea se calcula como
+`ceil(cycle_minutes / headway_minutes)`. Los autobuses de reserva
+se agregan sobre la flota activa total con
+`ceil(active_total * 1.15)`. Sin conector de alguna línea, se bloquea
+todo el cálculo de la combinación, en lugar de asignar una longitud 0.
+Las tablas son únicamente comparaciones **hipotéticas de servicio y
+presupuesto**, no resultados certificados ni selección CP-SAT definitiva.
+
+Artefactos esperados: `service_cycle_scenarios.json` y
+`fixed_shortlist_fleet_sensitivity.json`, bajo el trabajo local de Valhalla.
