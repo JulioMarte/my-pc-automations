@@ -357,3 +357,53 @@ presupuesto**, no resultados certificados ni selección CP-SAT definitiva.
 
 Artefactos esperados: `service_cycle_scenarios.json` y
 `fixed_shortlist_fleet_sensitivity.json`, bajo el trabajo local de Valhalla.
+
+## Nuevo hito: propuestas de red y depuración multicriterio (sin gasto)
+
+El job `network-proposal-audit` depende de datos publicados por
+`exploratory-fleet-curve`, `destinations` (Overture) y
+`route-competition`. **Publica todas las alternativas que realmente
+seleccionó CP-SAT** para 10/20/30 autobuses, con/sin obligatoriedad de L1
+y velocidades exploratorias. Ninguna solución se omite por no ser
+físicamente certificable: se registra el motivo del bloqueo.
+
+`network_candidate_audit.py` aporta, por alternativa: rutas y
+headways seleccionados, población de WorldPop a la que se accede
+según el cálculo existente, categorías de puntos de interés dentro
+de **450 m en línea recta**, nodos candidatos de transbordo entre
+paradas a **250 m en línea recta**, espera aleatoria heurística
+`headway/2` (no coordinación horaria), y un stress test de tráfico
+pico que aumenta hipotéticamente el ciclo un 40 % sin reasignar flota.
+Los parámetros son **supuestos**, no normas urbanas ni velocidades
+medidas. El transbordo real necesita distancias a pie y seguridad de
+cruce, no solo cercanía geométrica; los POIs tampoco equivalen a
+pasajeros reales. Las paradas siguen siendo provisionales.
+
+`rank_network_proposals.py` produce `ranked_network_proposals.json`
+con pesos heurísticos explícitos: proximidad residencial, cantidad
+de POIs, cantidad de conexiones, penalización por rutas aisladas y
+por headways que no se sostienen en el escenario pico. Expone los
+fallos por alternativa. Separar `DESKTOP_SCREEN_PASS_UNVALIDATED`
+de `REJECTED_PENDING_CRITICAL_EVIDENCE` es esencial: una red puede
+sobrevivir a los filtros de gabinete sin estar aprobada para buses.
+
+**Limitaciones críticas y siguiente evolución:**
+1. CP-SAT **todavía maximiza principalmente población cubierta**.
+   El ranking multicriterio es posterior, NO una optimización real
+   de pasajeros, destinos ni tiempos puerta a puerta.
+2. Crear OD estimada por residencias→hospitales/centros educativos/
+   empleo/mercados; derivar indicadores accesibles con rutas de red,
+   no multiplicar conteos de POIs por demanda imaginaria.
+3. Reemplazar transbordos en línea recta por tiempos a pie sobre
+   el grafo peatonal y clasificar peligrosidad/incertidumbre de cruces.
+4. Diseñar estaciones de intercambio con candidatos coincidentes
+   próximos a rutas de alta demanda y destinos relevantes, con
+   restricciones físicas por verificar.
+5. Construir escenarios pico diferenciados por sentido, hora del día,
+   frecuencia, tasa de abordajes, cola y confiabilidad.
+6. Optimizar fases de expansión preservando infraestructura y
+   conectividad, no solo ofrecer IDs no seleccionados como ampliación.
+
+El objetivo final es cobertura de **viajes y oportunidades** con
+frecuencias y transbordos útiles, no solo cantidad de residentes
+cerca de un círculo alrededor de una parada.
