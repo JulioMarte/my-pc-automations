@@ -95,7 +95,12 @@
     "slope_percent_range_assumed": [
       4,
       9
-    ]
+    ],
+    "height_reference_range_m": [
+      3.18,
+      3.39
+    ],
+    "height_source_status": "UNVERIFIED_VARIANTS_DO_NOT_CERTIFY_CHOSEN_CONFIGURATION"
   },
   "service": {
     "speed_kmh_scenarios": [
