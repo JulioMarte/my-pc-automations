@@ -405,7 +405,7 @@ jobs:
       - name: Unit-test local Valhalla actor adapter without network service
         run: |
           cd projects/puerto-plata-gis
-          python -m unittest -v test_valhalla_local.py test_operational_validation.py
+          python -m unittest -v test_valhalla_local.py test_operational_validation.py test_turn_risk_screen.py
           python -m py_compile valhalla_local.py operational_validation.py
 
   local-r5py:
