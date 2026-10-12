@@ -430,3 +430,36 @@ ocultar autopistas, muros, falta de acera o cruces inseguros. La reducción
 real de esperas requiere simulación de horarios GTFS y tiempos de viaje
 por sentido, no mover matemáticamente el punto de parada. Ningún centro
 queda aprobado para construcción o operación sin comprobar esas condiciones.
+
+### Modalidad CP-SAT multicriterio real, separada del baseline
+
+`mobility_multicriteria_cp_sat.py` y `run_mobility_multicriteria.py`
+añaden una modalidad exploratoria que optimiza conjuntamente:
+
+- Población WorldPop aproximada próxima a paradas.
+- POIs de Overture próximos a paradas (radio euclidiano 450 m).
+- Pares de rutas con paradas a menos de 250 m en línea recta.
+- Penalización de headways más largos.
+- Costeo de autobuses dimensionado con un escenario de tráfico pico
+  hipotético `(cycle - 12min) × 1.4 + 12min`, con reserva del 15 %.
+- Restricción de preservación de IDs de rutas entre presupuestos
+  `10 → 20 → 30`. La fase posterior no puede eliminar una ruta
+  seleccionada previamente.
+- Restricción local de transferencia para evitar rutas aisladas cuando
+  hay más de una línea seleccionada. La conectividad global se informa
+  como filtro posterior; no se confunde grado > 0 con red conexa.
+
+Función objetivo declarada: un punto por residente estimado, 25 por
+POI, 100 por enlace de transbordo y penalización de 2 por minuto
+de intervalo en cada línea elegida. Son pesos heurísticos
+ajustables que **no reflejan pasajeros reales, empleos verificados
+ni valores económicos de viajes**. Todos los supuestos y los resultados
+con y sin L1, tres velocidades y tres presupuestos se conservan
+en `multicriteria_nested_fleet.json`.
+
+Este segundo modelo permite **reoptimizar rutas** bajo criterios de
+red en vez de puntuar únicamente el óptimo previo. Aún no implementa
+asignación real de OD, accesibilidad puerta-a-puerta, frecuencias por
+hora y sentido, conexión segura de peatones, sincronización GTFS o
+simulación física de giros. Ningún resultado puede considerarse
+servicio autorizado sin esas evidencias.
