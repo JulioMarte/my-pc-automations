@@ -247,3 +247,13 @@ errores por geometría truncada.
 
 La obtención de trazados de red **no valida** giros físicos ni
 la altura, radio de giro o holgura lateral del Yutong.
+
+## Geometría real y consistencia de paradas — siguiente fase sin presupuesto
+
+La corrida de CI `38199157055` confirmó que Valhalla generó **19 recorridos candidatos (L1 + 18), todos con geometrías reales para ida y vuelta (38 polilíneas)**. El nuevo módulo `route_geometry_qa.py` exporta `routed_paths.geojson` y `routed_geometry_qa.json` con verificación por dirección; no aprueba espacio barrido ni retornos.
+
+Se añade `route_waypoint_consistency.py` para comprobar proximidad entre los puntos MultiPoint candidatos y las líneas reales de Valhalla. La prueba es necesaria porque hasta aquí Valhalla une **terminales**, no obliga a pasar por cada parada. Las desviaciones >80 m se reportan en `route_waypoint_consistency.json` para revisión, no para afirmar imposibilidad operativa. Se debe recalcular la selección de rutas antes de convertir cobertura de paradas en recomendación.
+
+Distancias observadas en la corrida CI: C00-09 (3.734 + 3.775 = 7.509 km), C00-10 (5.190 + 5.212 = 10.402 km), C02-04 (2.566 + 2.566 = 5.132 km). Son longitudes del camino elegido entre terminales, NO trayectos obligatoriamente visitando las paradas. Las distancias anteriores del optimizador permanecen exploratorias y no deben sustituirse sin consistencia de waypoints.
+
+La nueva CI valida código, cobertura de geometrías y denuncia paradas desviadas; no tiene aforos reales ni validación geométrica del Yutong.
