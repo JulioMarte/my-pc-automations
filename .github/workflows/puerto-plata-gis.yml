@@ -961,6 +961,21 @@ jobs:
           print("Independent new candidates:",routes["generated_unique"],"target 100-300")
           print("Status:",routes["status"],"; turn certification blocked:",turns["doubtful"])
           PY
+      - name: Score new candidates with walking-network stop access
+        run: |
+          cd projects/puerto-plata-gis/algorithmic_v2
+          python -m unittest -v test_score_candidates.py
+          python score_candidates.py --candidates generated_routes.geojson --od synthetic_gravity_od.json --walk ../walk.graphml --config config.json --output scored_candidates.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path("scored_candidates.json").read_text())
+          assert len(x["ranked_candidates"])>=100
+          assert len(x["top6"])==6
+          assert x["physical_routes_approved"]==0
+          assert all(r["candidate_id"].startswith("AUTO-") for r in x["ranked_candidates"])
+          print("Top six exploratory candidates:",x["top6"])
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -973,6 +988,7 @@ jobs:
             projects/puerto-plata-gis/algorithmic_v2/desire_lines.geojson
             projects/puerto-plata-gis/algorithmic_v2/generated_routes.geojson
             projects/puerto-plata-gis/algorithmic_v2/yutong_turn_screen.json
+            projects/puerto-plata-gis/algorithmic_v2/scored_candidates.json
           if-no-files-found: warn
           retention-days: 30
 
