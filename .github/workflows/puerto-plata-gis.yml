@@ -926,6 +926,8 @@ jobs:
           cd projects/puerto-plata-gis
           python -m unittest -v test_network_candidate_audit.py
           python network_candidate_audit.py --fleet fleet_10_20_30_exploratory.json --routes discovered_routes.geojson --pois destinations.geojson --output network_proposals_multicriteria.json
+          python -m unittest -v test_rank_network_proposals.py
+          python rank_network_proposals.py --input network_proposals_multicriteria.json --output ranked_network_proposals.json
           python - <<'PY'
           import json
           x=json.load(open("network_proposals_multicriteria.json"))
@@ -941,7 +943,9 @@ jobs:
         if: always()
         with:
           name: puerto-plata-network-proposals-multicriteria
-          path: projects/puerto-plata-gis/network_proposals_multicriteria.json
+          path: |
+            projects/puerto-plata-gis/network_proposals_multicriteria.json
+            projects/puerto-plata-gis/ranked_network_proposals.json
           retention-days: 30
 
   exploratory-fleet-curve:
