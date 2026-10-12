@@ -3,7 +3,7 @@ import json,unittest
 from pathlib import Path
 import networkx as nx
 from zones_od import build,demand
-from generate_candidates import generate
+from generate_candidates import generate,road_graph,numeric_limit
 from vehicle_screen import inspect
 
 CFG=json.loads((Path(__file__).resolve().parent/"config.json").read_text())
@@ -38,10 +38,17 @@ class BaselineTests(unittest.TestCase):
   self.assertGreater(result["generated_unique"],0)
   self.assertTrue(all(not f["properties"]["physical_approval"] for f in result["features"]))
   self.assertTrue(all(f["properties"]["candidate_id"].startswith("AUTO-") for f in result["features"]))
+ def test_explicit_osm_bus_clearance_blocks_graph_edge(self):
+  g=nx.MultiDiGraph()
+  g.add_node(1,x=-70.7,y=19.8);g.add_node(2,x=-70.699,y=19.8)
+  g.add_edge(1,2,length=110,maxwidth="2.4",highway="residential")
+  self.assertEqual(numeric_limit("2.4 m"),2.4)
+  self.assertEqual(road_graph(g,CFG["vehicle"]).number_of_edges(),0)
  def test_vehicle_envelope_fails_closed(self):
   shape={"geometry":{"coordinates":[[-70.7,19.8],[-70.699,19.8],[-70.699,19.801]]}}
   out=inspect(shape,CFG)
   self.assertEqual(out["status"],"DUDOSO")
   self.assertFalse(out["physically_approved"])
   self.assertEqual(out["turning_diameter_reference_m"],[20.5,21.5])
+  self.assertEqual(len(out["turning_sensitivity"]),2)
 if __name__=="__main__":unittest.main()
