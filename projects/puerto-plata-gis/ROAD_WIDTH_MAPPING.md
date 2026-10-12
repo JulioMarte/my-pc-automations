@@ -232,3 +232,18 @@ Se incorpora `zero_budget_roadmap.py`, probado e integrado a CI mediante
 **Regla obligatoria:** un dato desconocido es `UNKNOWN`, nunca
 `PASS`; CI verde significa que el estudio se ejecutó correctamente,
 no que una ruta fue aprobada para un Yutong de 12.17 m.
+
+### Avance real de geometría por red abierta
+
+Se añadió `valhalla_route_shape.py` al pipeline de Valhalla.
+Decodifica las formas `trip.legs[].shape` que el motor entregue en
+formato polyline6, y anota la salida `ROAD_GRAPH_SHAPE_NOT_SWEPT_PATH`.
+En ausencia de un `shape` se escribe
+`NO_SHAPE_IN_BACKEND_RESPONSE`, sin inventar trayectorias.
+La geometría se incorpora en las evidencias de ida y vuelta en
+`valhalla_local_audit.json`, junto con distancia y tiempo de red.
+Pruebas unitarias sintéticas comprueban recuperación de coordenadas y
+errores por geometría truncada.
+
+La obtención de trazados de red **no valida** giros físicos ni
+la altura, radio de giro o holgura lateral del Yutong.
