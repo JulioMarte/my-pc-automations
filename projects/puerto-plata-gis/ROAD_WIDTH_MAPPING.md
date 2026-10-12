@@ -138,3 +138,7 @@ crear una base de datos derivada ni con imágenes actualizadas.
 Salida `yutong_field_survey_queue.json`: tareas priorizadas por cambio angular, coordenadas del waypoint, perfiles vecinos a 90 m, referencia de vehículo y evidencia necesaria. No supone que una arista próxima sea parte efectiva de la ruta; los anchos y giros siguen `UNKNOWN`/`NOT_ASSESSED`.
 
 La compilación del inventario OSM también retiene `est_width` y etiquetas de estacionamiento, antes descartadas. `width` (ancho anotado), `est_width` (estimación) y `maxwidth` (límite de paso de vehículo) nunca se intercambian; cuando falta la fuente primaria, el inventario informa la ausencia.
+
+## Visor de las nueve inspecciones del Yutong
+
+El visor `Road_Width_Review_Puerto_Plata.html` acepta ahora tres entradas opcionales: `discovered_routes.geojson`, `priority_road_width_transects.geojson` y `yutong_field_survey_queue.json`. Los puntos marcados se presentan como **giros candidatos pendientes**, sin afirmar que sus coordenadas coinciden con giros reales de calles. La capa Esri es solo para orientación visual, no una fuente autorizada de bordillos digitalizados.
