@@ -4,7 +4,7 @@ class FleetTests(unittest.TestCase):
  def test_reserves(self):self.assertEqual(fleet(110,10,0.15),13)
  def test_penalty_is_soft(self):
   c={"penalties":{"max_desirable_sinuosity":1.4,"sinuosity_excess_weight":2,"reference_grade_percent":10,"grade_excess_weight":3}}
-  self.assertEqual(soft_penalty(1.8,12,c),6.8)
+  self.assertAlmostEqual(soft_penalty(1.8,12,c),6.8)
  def test_control_without_l1_can_win(self):
   routes=[{"id":"L1","buses":10,"covered_cells":["a"]},
    {"id":"B","buses":5,"covered_cells":["b","c"]}]
