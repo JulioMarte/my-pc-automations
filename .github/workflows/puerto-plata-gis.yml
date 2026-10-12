@@ -119,6 +119,15 @@ jobs:
         with:
           name: puerto-plata-red-vial-osmnx
           path: projects/puerto-plata-gis
+      - name: Evaluate imagery eligibility without presuming access
+        run: |
+          python projects/puerto-plata-gis/imagery_eligibility.py --catalog projects/puerto-plata-gis/imagery_catalog.json --output projects/puerto-plata-gis/imagery_eligibility_report.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path("projects/puerto-plata-gis/imagery_eligibility_report.json").read_text())
+          assert x["status"] == "BLOCKED_NO_ELIGIBLE_IMAGERY"
+          PY
       - name: Inventory measured or missing road widths without inventing data
         run: |
           python projects/puerto-plata-gis/road_widths_pipeline.py \
@@ -152,6 +161,7 @@ jobs:
             projects/puerto-plata-gis/road_width_baseline.json
             projects/puerto-plata-gis/road_width_transects.geojson
             projects/puerto-plata-gis/road_width_sources.json
+            projects/puerto-plata-gis/imagery_eligibility_report.json
           retention-days: 30
 
   destinations:
@@ -452,7 +462,7 @@ jobs:
       - name: Unit-test local Valhalla actor adapter without network service
         run: |
           cd projects/puerto-plata-gis
-          python -m unittest -v test_valhalla_local.py test_operational_validation.py test_turn_risk_screen.py test_road_widths_pipeline.py test_road_width_transects.py
+          python -m unittest -v test_valhalla_local.py test_operational_validation.py test_turn_risk_screen.py test_road_widths_pipeline.py test_road_width_transects.py test_imagery_eligibility.py
           python -m py_compile valhalla_local.py operational_validation.py
 
   local-r5py:
