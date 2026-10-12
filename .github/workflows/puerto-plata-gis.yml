@@ -1,0 +1,621 @@
+name: Puerto Plata GIS - build and verify
+on:
+  push:
+    branches: ["feat/puerto-plata-transit-gis", dev]
+    paths: ["projects/puerto-plata-gis/**", ".github/workflows/puerto-plata-gis.yml"]
+  pull_request:
+    paths: ["projects/puerto-plata-gis/**", ".github/workflows/puerto-plata-gis.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install rasterio
+      - name: Generate geospatial population layer from WorldPop 2025
+        run: python projects/puerto-plata-gis/build_population.py
+      - name: Build provisional OSM/OSRM route
+        run: python projects/puerto-plata-gis/build_route.py
+      - name: Retrieve OSM road metadata (graceful fallback)
+        run: python projects/puerto-plata-gis/build_roads.py
+      - name: Build standalone interactive HTML
+        run: python projects/puerto-plata-gis/make_standalone.py
+      - name: Verify files and provenance
+        run: python projects/puerto-plata-gis/verify.py
+      - name: Check browser inline JavaScript syntax
+        run: |
+          python - <<'PY'
+          from html.parser import HTMLParser
+          from pathlib import Path
+          class X(HTMLParser):
+              def __init__(self): super().__init__(); self.inside=False; self.parts=[]
+              def handle_starttag(self,t,a):
+                  if t=="script" and "src" not in dict(a): self.inside=True
+              def handle_endtag(self,t):
+                  if t=="script": self.inside=False
+              def handle_data(self,d):
+                  if self.inside: self.parts.append(d)
+          x=X();x.feed(Path("projects/puerto-plata-gis/index.html").read_text());Path("/tmp/puerto-plata.js").write_text("\n".join(x.parts))
+          PY
+          node --check /tmp/puerto-plata.js
+      - uses: actions/upload-artifact@v4
+        with:
+          name: puerto-plata-gis-completo
+          path: |
+            projects/puerto-plata-gis/index.html
+            projects/puerto-plata-gis/population.json
+            projects/puerto-plata-gis/initial_route.geojson
+            projects/puerto-plata-gis/roads.geojson
+            projects/puerto-plata-gis/Puerto_Plata_Linea_1_Mapa_Interactivo.html
+            projects/puerto-plata-gis/README.md
+          retention-days: 30
+
+  network:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Install graph dependencies
+        run: python -m pip install "osmnx==2.0.6" "networkx>=3.4,<4"
+      - name: Set weekly OSM snapshot key
+        id: snapshot
+        run: echo "week=$(date -u +%Y-%W)" >> "$GITHUB_OUTPUT"
+      - name: Restore weekly OSM street graph snapshot
+        id: osm-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            projects/puerto-plata-gis/drive.graphml
+            projects/puerto-plata-gis/walk.graphml
+            projects/puerto-plata-gis/drive_network.geojson
+            projects/puerto-plata-gis/walk_network.geojson
+            projects/puerto-plata-gis/network_report.json
+          key: osm-puerto-plata-2026-v1-${{ hashFiles('projects/puerto-plata-gis/build_network.py') }}-${{ steps.snapshot.outputs.week }}
+      - name: Download directed road and pedestrian networks (cache miss)
+        if: steps.osm-cache.outputs.cache-hit != 'true'
+        run: python projects/puerto-plata-gis/build_network.py
+      - name: Verify network export
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('projects/puerto-plata-gis')
+          r=json.loads((p/'network_report.json').read_text())
+          for kind in ('drive','walk'):
+              assert r['networks'][kind]['nodes']>100
+              assert r['networks'][kind]['directed_edges']>100
+              g=json.loads((p/f'{kind}_network.geojson').read_text())
+              assert len(g['features'])==r['networks'][kind]['directed_edges']
+              assert (p/f'{kind}.graphml').stat().st_size>1000
+          print('Verified directed networks',r['networks'])
+          PY
+      - name: Publish network graphs
+        uses: actions/upload-artifact@v4
+        with:
+          name: puerto-plata-red-vial-osmnx
+          path: |
+            projects/puerto-plata-gis/drive.graphml
+            projects/puerto-plata-gis/walk.graphml
+            projects/puerto-plata-gis/drive_network.geojson
+            projects/puerto-plata-gis/walk_network.geojson
+            projects/puerto-plata-gis/network_report.json
+          retention-days: 30
+
+  destinations:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Install Overture Maps downloader
+        run: python -m pip install "overturemaps>=0.16,<1"
+      - name: Retrieve and classify POIs
+        run: python projects/puerto-plata-gis/build_destinations.py
+      - name: Verify nonempty georeferenced POIs
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          base=Path('projects/puerto-plata-gis')
+          d=json.loads((base/'destinations.geojson').read_text())
+          s=json.loads((base/'destinations_report.json').read_text())
+          assert d['type']=='FeatureCollection'
+          assert len(d['features'])==s['classified'] and len(d['features'])>0
+          for p in d['features']:
+              x,y=p['geometry']['coordinates'][:2]
+              assert -70.752<=x<=-70.620 and 19.740<=y<=19.836
+              assert p['properties']['name'] and p['properties']['type']!='other'
+          print('Verified Overture POIs:',s)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: puerto-plata-destinos-overture
+          path: |
+            projects/puerto-plata-gis/destinations.geojson
+            projects/puerto-plata-gis/destinations_report.json
+          retention-days: 30
+
+  service-plan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Test schedule, frequency, fleet and transfer assumptions
+        run: |
+          cd projects/puerto-plata-gis
+          python -m unittest -v test_transit_planner.py
+          python transit_planner.py --output network_scenarios.json
+          python - <<'PY'
+          import json
+          p=json.load(open('network_scenarios.json'))
+          assert p['results']['fleet']['fleet_total']==21
+          assert len(p['results']['periods'])==6
+          print('Plan validated:',p['results']['fleet'])
+          PY
+      - name: Validate offline planner JavaScript
+        run: |
+          python - <<'PY'
+          from html.parser import HTMLParser
+          from pathlib import Path
+          class Parser(HTMLParser):
+              def __init__(self):super().__init__();self.active=False;self.text=[]
+              def handle_starttag(self,tag,attrs):
+                  if tag=="script" and not any(k=="src" for k,_ in attrs):self.active=True
+              def handle_endtag(self,tag):
+                  if tag=="script":self.active=False
+              def handle_data(self,d):
+                  if self.active:self.text.append(d)
+          p=Parser();p.feed(Path('projects/puerto-plata-gis/frequency_planner.html').read_text())
+          Path('/tmp/puerto-plata-frequency.js').write_text('\n'.join(p.text))
+          PY
+          node --check /tmp/puerto-plata-frequency.js
+      - uses: actions/upload-artifact@v4
+        with:
+          name: puerto-plata-frecuencias-transbordos
+          path: |
+            projects/puerto-plata-gis/frequency_planner.html
+            projects/puerto-plata-gis/network_scenarios.json
+            projects/puerto-plata-gis/transit_planner.py
+            projects/puerto-plata-gis/test_transit_planner.py
+          retention-days: 30
+
+  synthetic-od:
+    runs-on: ubuntu-latest
+    needs: [package, destinations]
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Verify synthetic origin-destination model
+        run: |
+          cd projects/puerto-plata-gis
+          python -m unittest -v test_od_synthetic.py
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-gis-completo
+          path: projects/puerto-plata-gis
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-destinos-overture
+          path: projects/puerto-plata-gis
+      - name: Generate time-of-day OD opportunity matrix
+        run: |
+          python projects/puerto-plata-gis/build_od_synthetic.py
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=json.loads(Path('projects/puerto-plata-gis/od_synthetic.json').read_text())
+          assert len(p['periods'])==6
+          assert p['resident_coverage_estimate']>0
+          assert p['metadata']['method'].startswith('synthetic')
+          print('Synthetic, non-observed OD report validated')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: puerto-plata-od-sintetica
+          path: projects/puerto-plata-gis/od_synthetic.json
+          retention-days: 30
+
+  street-access:
+    runs-on: ubuntu-latest
+    needs: [network, package, destinations]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Install geographic graph analysis
+        run: python -m pip install "osmnx==2.0.6" "networkx>=3.4,<4" scipy
+      - name: Regression tests for street access
+        run: |
+          cd projects/puerto-plata-gis
+          python -m unittest -v test_network_access.py test_network_scenarios.py
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-red-vial-osmnx
+          path: projects/puerto-plata-gis
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-gis-completo
+          path: projects/puerto-plata-gis
+      - name: Estimate 500m directed street access
+        run: |
+          python projects/puerto-plata-gis/network_access.py --sensitivity
+          python - <<'PY'
+          import json
+          p=json.load(open("projects/puerto-plata-gis/network_access_report.json"))
+          assert p["total_stops"]>=20 and p["snapped_stops"]>=15
+          assert p["residents"]>0 and p["residents"]<=45000
+          assert p["accounting_difference"]==0
+          assert len(p["sensitivity"])==3
+          assert p["population_outside_study_bbox"]>0
+          print("Street network access:",p)
+          PY
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-destinos-overture
+          path: projects/puerto-plata-gis
+      - name: Compare network-wide walking access
+        run: |
+          python projects/puerto-plata-gis/compare_network_scenarios.py
+          python -c "import json; d=json.load(open('projects/puerto-plata-gis/network_scenario_comparison.json')); assert len(d['scenarios']) == 1; assert not d['scenarios'][0]['bus_geometry_validated']"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: puerto-plata-acceso-peatonal-red
+          path: |
+            projects/puerto-plata-gis/network_access_report.json
+            projects/puerto-plata-gis/network_scenario_comparison.json
+          retention-days: 30
+
+  route-competition:
+    runs-on: ubuntu-latest
+    needs: [network, package, destinations]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Install graph search dependencies
+        run: python -m pip install "osmnx==2.0.6" scipy
+      - name: Test candidate ranking invariants
+        run: |
+          cd projects/puerto-plata-gis
+          python -m unittest -v test_discover_transit_network.py
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-red-vial-osmnx
+          path: projects/puerto-plata-gis
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-gis-completo
+          path: projects/puerto-plata-gis
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-destinos-overture
+          path: projects/puerto-plata-gis
+      - name: Discover competitor corridors and complementary networks
+        run: |
+          python projects/puerto-plata-gis/discover_transit_network.py --max-candidates 18
+          python projects/puerto-plata-gis/render_route_competition.py
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path("projects/puerto-plata-gis")
+          r=json.loads((p/"route_competition.json").read_text())
+          assert r["metadata"]["candidates"] >= 3
+          assert len(r["network_combinations"]) >= 3
+          assert all(not c["operationally_validated"] for c in r["network_combinations"])
+          assert all(c["incremental_residents"] >= 0 for c in r["network_combinations"])
+          print("Competition verified; unvalidated corridors:",r["metadata"]["candidates"])
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: puerto-plata-competencia-redes
+          path: |
+            projects/puerto-plata-gis/route_competition.json
+            projects/puerto-plata-gis/discovered_routes.geojson
+            projects/puerto-plata-gis/discover_transit_network.py
+            projects/puerto-plata-gis/Competencia_Rutas_Puerto_Plata.html
+          retention-days: 30
+
+  environment-factors:
+    runs-on: ubuntu-latest
+    needs: [package]
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-gis-completo
+          path: projects/puerto-plata-gis
+      - name: Install image sampling dependency
+        run: python -m pip install "Pillow>=10,<13"
+      - name: Sample terrain on proposed L1 stops
+        run: python projects/puerto-plata-gis/build_terrain.py
+      - name: Download NASA POWER climate reference
+        run: python projects/puerto-plata-gis/build_climate.py
+      - name: Check geographic and climatological provenance
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path("projects/puerto-plata-gis")
+          terrain=json.loads((p/"terrain_stops.json").read_text())
+          climate=json.loads((p/"climate_context.json").read_text())
+          assert len(terrain["stops"])>=20
+          assert len(climate["locations"])==3
+          assert all(-70.84 < s["lon"] < -70.55 and 19.68 < s["lat"] < 19.88 for s in terrain["stops"])
+          print("Climate and terrain downloaded and spatially verified")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: puerto-plata-ambiente-terreno
+          path: |
+            projects/puerto-plata-gis/terrain_stops.json
+            projects/puerto-plata-gis/climate_context.json
+          retention-days: 30
+  valhalla-bus-audit:
+    runs-on: ubuntu-latest
+    needs: [route-competition]
+    timeout-minutes: 12
+    env:
+      VALHALLA_URL: ${{ secrets.PUERTO_PLATA_VALHALLA_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-competencia-redes
+          path: projects/puerto-plata-gis
+      - name: Route candidate terminals with Valhalla bus costing (if configured)
+        run: python projects/puerto-plata-gis/valhalla_audit.py
+      - name: Verify unsupported claims stay unvalidated
+        run: |
+          python - <<'PY'
+          import json
+          d=json.load(open("projects/puerto-plata-gis/valhalla_audit.json"))
+          assert d["routes"] and all(not r["terminal_turn_validated"] for r in d["routes"])
+          if not d["backend_configured"]:assert d["status"]=="unconfigured_no_routing_claim"
+          print("Valhalla integration:",d["status"])
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: puerto-plata-valhalla-audit
+          path: projects/puerto-plata-gis/valhalla_audit.json
+          retention-days: 30
+
+  local-valhalla-adapter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Unit-test local Valhalla actor adapter without network service
+        run: |
+          cd projects/puerto-plata-gis
+          python -m unittest -v test_valhalla_local.py
+          python -m py_compile valhalla_local.py
+
+  local-r5py:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Unit-test travel time and reachability calculations
+        run: |
+          cd projects/puerto-plata-gis
+          python -m unittest -v test_r5_accessibility.py
+          python -m py_compile r5_accessibility.py
+      - name: Verify current r5py can be installed and imported
+        run: |
+          python -m pip install "r5py>=1.1.0,<2"
+          python - <<'PY'
+          import r5py
+          assert hasattr(r5py,'TransportNetwork')
+          assert hasattr(r5py,'TravelTimeMatrix')
+          assert hasattr(r5py.TransportMode,'WALK')
+          assert hasattr(r5py.TransportMode,'TRANSIT')
+          print('Local r5py API OK',getattr(r5py,'__version__','version unknown'))
+          PY
+
+  policy-and-optimization:
+    runs-on: ubuntu-latest
+    needs: [package, destinations]
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Install local computational libraries
+        run: python -m pip install "ortools>=9.10,<10" "pyproj>=3.6,<4" "shapely>=2,<3"
+      - name: Test fleet control and fail-closed gates
+        run: |
+          cd projects/puerto-plata-gis
+          python -m unittest -v test_fleet_optimization.py test_optimize_headways.py test_audit_counts.py test_prepare_optimization_input.py
+          python -m py_compile phase_gates.py optimize_headways.py audit_counts.py
+          python phase_gates.py --output phase_gates.json
+          python - <<'PY'
+          import json
+          r=json.load(open('phase_gates.json'))
+          assert len(r['phase_gates'])==10
+          assert all(x['status']=='BLOQUEADO' for x in r['phase_gates'])
+          print('Phase gates blocked pending objective evidence')
+          PY
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-gis-completo
+          path: projects/puerto-plata-gis
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-destinos-overture
+          path: projects/puerto-plata-gis
+      - name: Validate actual GIS geometries and CRS conversion
+        run: |
+          python projects/puerto-plata-gis/validate_spatial.py
+          python - <<'PY'
+          import json
+          p=json.load(open('projects/puerto-plata-gis/spatial_validation.json'))
+          assert p['target_crs']=='EPSG:32619'
+          assert p['status']=='VALIDADO_GEOMETRICAMENTE'
+          print('GIS geometry and CRS validated; engineering phases remain BLOCKED')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: puerto-plata-aceptacion-y-configuracion
+          path: |
+            projects/puerto-plata-gis/phase_gates.json
+            projects/puerto-plata-gis/spatial_validation.json
+            projects/puerto-plata-gis/study_config.json
+          retention-days: 30
+
+  valhalla-local-real-tiles:
+    runs-on: ubuntu-latest
+    needs: [route-competition]
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Install Valhalla in-process bindings and tile builder
+        run: python -m pip install "pyvalhalla"
+      - name: Download Dominican Republic OSM extract with provenance
+        run: |
+          mkdir -p projects/puerto-plata-gis/data/osm
+          curl -fL --retry 3 --connect-timeout 20 --max-time 360 \
+            https://download.openstreetmap.fr/extracts/central-america/dominican_republic-latest.osm.pbf \
+            -o projects/puerto-plata-gis/data/osm/dominican_republic.osm.pbf
+          test "$(stat -c%s projects/puerto-plata-gis/data/osm/dominican_republic.osm.pbf)" -gt 1000000
+          sha256sum projects/puerto-plata-gis/data/osm/dominican_republic.osm.pbf
+      - name: Build Valhalla tiles locally
+        run: |
+          python projects/puerto-plata-gis/build_valhalla_local_tiles.py \
+            --osm-pbf projects/puerto-plata-gis/data/osm/dominican_republic.osm.pbf \
+            --output-dir projects/puerto-plata-gis/data/valhalla
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-competencia-redes
+          path: projects/puerto-plata-gis
+      - name: Route proposed corridors in both directions using pyvalhalla Actor
+        run: |
+          python projects/puerto-plata-gis/valhalla_local.py \
+            --tiles projects/puerto-plata-gis/data/valhalla/valhalla_tiles.tar \
+            --limit 19
+          python - <<'PY'
+          import json
+          p="projects/puerto-plata-gis/valhalla_local_audit.json"
+          d=json.load(open(p))
+          assert d["routes"], "no routes evaluated"
+          assert all(not r["bus_geometry_validated"] for r in d["routes"])
+          print("Local Valhalla candidates:",len(d["routes"]))
+          print("Bidirectional route connectivity:",sum(r["routed_both_directions"] for r in d["routes"]))
+          print("Physical bus turn approvals: 0 (require swept-path audit)")
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: puerto-plata-valhalla-rutas-locales
+          path: |
+            projects/puerto-plata-gis/valhalla_local_audit.json
+            projects/puerto-plata-gis/valhalla_turn_audit.csv
+            projects/puerto-plata-gis/data/valhalla/valhalla_build_manifest.json
+          retention-days: 30
+
+  exploratory-fleet-curve:
+    runs-on: ubuntu-latest
+    needs: [network, package, route-competition]
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Install graph projection and optimization libraries
+        run: python -m pip install "osmnx==2.0.6" "ortools>=9.10,<10" "scipy>=1.11,<2"
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-red-vial-osmnx
+          path: projects/puerto-plata-gis
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-gis-completo
+          path: projects/puerto-plata-gis
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-competencia-redes
+          path: projects/puerto-plata-gis
+      - name: Solve three sensitivity scenarios, budgets 10/20/30, with and without L1
+        run: |
+          python projects/puerto-plata-gis/run_exploratory_curve.py
+          python - <<'PY'
+          import json
+          d=json.load(open("projects/puerto-plata-gis/fleet_10_20_30_exploratory.json"))
+          assert d["status"]=="EXPLORATORY_NOT_OPERATIONALLY_VALIDATED"
+          assert len(d["scenarios"])==3
+          assert all(len(s["with_l1"])==3 and len(s["without_l1_constraint"])==3 for s in d["scenarios"])
+          assert all(x["validation_level"]=="EXPLORATORY_ONLY" for s in d["scenarios"] for arm in ("with_l1","without_l1_constraint") for x in s[arm] if x["status"] in ("OPTIMAL","FEASIBLE_NOT_PROVEN_OPTIMAL"))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: puerto-plata-curva-flota-exploratoria
+          path: projects/puerto-plata-gis/fleet_10_20_30_exploratory.json
+          retention-days: 30
+
+  real-local-valhalla:
+    runs-on: ubuntu-latest
+    needs: [route-competition]
+    timeout-minutes: 22
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Install Python Valhalla bindings
+        run: python -m pip install "pyvalhalla>=3.0,<5"
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-competencia-redes
+          path: projects/puerto-plata-gis
+      - name: Fetch Geofabrik Haiti and Dominican Republic OSM extract
+        id: download
+        continue-on-error: true
+        run: |
+          mkdir -p /tmp/pp-valhalla
+          curl --fail --location --retry 3 --connect-timeout 20 --max-time 200             "https://download.geofabrik.de/central-america/haiti-and-domrep-latest.osm.pbf"             -o /tmp/pp-valhalla/region.osm.pbf
+      - name: Build actual local graph and audit bidirectional routes
+        run: |
+          python projects/puerto-plata-gis/run_local_valhalla_evidence.py             --pbf /tmp/pp-valhalla/region.osm.pbf             --routes projects/puerto-plata-gis/discovered_routes.geojson             --output-dir /tmp/pp-valhalla/results --limit 18
+          cp /tmp/pp-valhalla/results/valhalla_execution_evidence.json projects/puerto-plata-gis/
+          if test -f /tmp/pp-valhalla/results/turn_audit.csv; then cp /tmp/pp-valhalla/results/turn_audit.csv projects/puerto-plata-gis/; fi
+          python - <<'PY'
+          import json
+          p=json.load(open('projects/puerto-plata-gis/valhalla_execution_evidence.json'))
+          print('VALHALLA_EVIDENCE_STATUS=',p['status'])
+          print('VALHALLA_FAILURE=',p.get('failure','none'))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: puerto-plata-valhalla-evidencia-real
+          path: |
+            projects/puerto-plata-gis/valhalla_execution_evidence.json
+            projects/puerto-plata-gis/turn_audit.csv
+          if-no-files-found: warn
+          retention-days: 30
+

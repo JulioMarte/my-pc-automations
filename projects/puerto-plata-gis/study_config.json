@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "study_crs": "EPSG:32619",
+  "vehicle": {
+    "name": "Mercedes-Benz Citaro K",
+    "manufacturer": "Mercedes-Benz",
+    "model": "Citaro K",
+    "length_m": 10.633,
+    "width_m": 2.55,
+    "width_with_mirrors_m": 2.95,
+    "turning_circle_diameter_m": 17.284,
+    "minimum_turning_radius_m": 8.642,
+    "maximum_grade_percent": null,
+    "seated_and_standing_capacity": null,
+    "datasheet_verified": false,
+    "geometry_source_verified": true,
+    "grade_source_verified": false,
+    "capacity_source_verified": false,
+    "source_url": "https://www.mercedes-benz-bus.com/es/es/models/citaro/facts-citaro.html",
+    "turning_geometry_note": "8.642 m is half of published turning-circle diameter; not necessarily swept outer radius or wheel-track radius",
+    "status": "REFERENCE_VEHICLE_NOT_APPROVED_FOR_PURCHASE"
+  },
+  "transit": {
+    "peak_headway_minutes": 10,
+    "stop_spacing_m": [
+      400,
+      500
+    ],
+    "reserve_ratio": 0.15,
+    "daily_boardings_observed": false,
+    "allowed_headways_minutes": [
+      10,
+      15,
+      20
+    ],
+    "cycle_source_required": [
+      "measured",
+      "calibrated_simulation"
+    ]
+  },
+  "penalties": {
+    "max_desirable_sinuosity": 1.4,
+    "sinuosity_excess_weight": 1,
+    "reference_grade_percent": 10,
+    "grade_excess_weight": 1,
+    "hard_reject_sinuosity": false,
+    "hard_reject_grade": false
+  },
+  "capture_scenarios": {
+    "low": 0.02,
+    "medium": 0.05,
+    "high": 0.1
+  },
+  "fleet_budgets": [
+    10,
+    20,
+    30
+  ],
+  "optimization": {
+    "marginal_poi_equivalent_residents": 20,
+    "candidate_pool_size": 18,
+    "l1_required_in_one_arm": true
+  },
+  "data": {
+    "population": "population.json",
+    "destinations": "destinations.geojson",
+    "drive_graph": "drive.graphml",
+    "walk_graph": "walk.graphml",
+    "dem": null,
+    "valhalla_tile_extract": null,
+    "osm_pbf": null,
+    "observed_counts_csv": null,
+    "gtfs": null
+  },
+  "phase_acceptance": {
+    "requires_local_valhalla_routes": true,
+    "requires_bus_turn_validation": true,
+    "requires_observed_demand_for_fleet_recommendation": true
+  }
+}
