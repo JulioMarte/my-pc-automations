@@ -528,6 +528,16 @@ jobs:
           print("Bidirectional route connectivity:",sum(r["routed_both_directions"] for r in d["routes"]))
           print("Physical bus turn approvals: 0 (require swept-path audit)")
           PY
+      - name: Screen Yutong waypoint bend candidates
+        run: |
+          python projects/puerto-plata-gis/turn_risk_screen.py --input projects/puerto-plata-gis/discovered_routes.geojson --output projects/puerto-plata-gis/yutong_turn_risk_screen.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          d=json.loads(Path("projects/puerto-plata-gis/yutong_turn_risk_screen.json").read_text())
+          assert d["status"]=="EXPLORATORIO_SIN_APROBACION_FISICA"
+          assert len(d["risks"])>0
+          PY
       - name: Save actual Valhalla operational evidence
         run: |
           python - <<'PY'
@@ -549,6 +559,7 @@ jobs:
             projects/puerto-plata-gis/valhalla_turn_audit.csv
             projects/puerto-plata-gis/valhalla_execution_evidence.json
             projects/puerto-plata-gis/operational_validation_evidence.json
+            projects/puerto-plata-gis/yutong_turn_risk_screen.json
             projects/puerto-plata-gis/data/valhalla/valhalla_build_manifest.json
           retention-days: 30
 
