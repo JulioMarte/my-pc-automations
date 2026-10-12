@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "status": "HYPOTHESIS_CONFIG_NOT_CALIBRATED",
+  "urban_extent_bbox_lonlat": [
+    -70.752,
+    19.74,
+    -70.62,
+    19.836
+  ],
+  "urban_boundary": "BBOX_PROXY_NOT_OFFICIAL_BUILT_UP_AREA",
+  "h3_resolutions": [
+    8,
+    9
+  ],
+  "primary_resolution": 8,
+  "poi_category_weights": {
+    "commercial": 3,
+    "retail": 3,
+    "market": 4,
+    "health": 4,
+    "hospital": 5,
+    "education": 3,
+    "school": 3,
+    "tourism": 3,
+    "hotel": 2,
+    "employment": 4,
+    "government": 2,
+    "other": 1
+  },
+  "source_categories_are_provisional": true,
+  "gravity": {
+    "exponents": [
+      1,
+      1.5,
+      2
+    ],
+    "distance_offset_km": 0.7,
+    "demand_scenarios": {
+      "low": {
+        "trips_per_resident_day_assumed": 0.25
+      },
+      "medium": {
+        "trips_per_resident_day_assumed": 0.55
+      },
+      "high": {
+        "trips_per_resident_day_assumed": 0.85
+      }
+    },
+    "max_destination_cells_per_origin": 35,
+    "top_desire_lines": 100
+  },
+  "gateway_zones": [
+    {
+      "name": "Sosúa",
+      "lat": 19.755,
+      "lon": -70.517,
+      "external_trip_weight_assumed": 300
+    },
+    {
+      "name": "Imbert",
+      "lat": 19.753,
+      "lon": -70.83,
+      "external_trip_weight_assumed": 150
+    },
+    {
+      "name": "Santiago",
+      "lat": 19.45,
+      "lon": -70.698,
+      "external_trip_weight_assumed": 500
+    }
+  ],
+  "vehicle": {
+    "model": "Yutong ZK6126HG",
+    "length_m": 12.17,
+    "width_m": 2.55,
+    "wheelbase_m": 6,
+    "front_overhang_m": 2.74,
+    "rear_overhang_m": 3.43,
+    "turning_circle_diameters_sensitivity_m": [
+      20.5,
+      21.5
+    ],
+    "physical_swept_path_approval": false
+  },
+  "candidate_policy": {
+    "target_min": 100,
+    "target_max": 300,
+    "terminal_turn_unverified": "BLOCKED",
+    "unknown_road_width": "DUDOSO",
+    "physical_approval_requires_field_evidence": true
+  },
+  "sources": {
+    "production": "WorldPop 2025 constrained raster, resident estimate not commuters",
+    "attraction": "Overture mapped POIs, not jobs/footfall",
+    "distance": "haversine centroid-to-centroid, not travel times",
+    "external_gateways": "assumptions only"
+  }
+}
