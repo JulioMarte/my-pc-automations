@@ -519,7 +519,7 @@ jobs:
       - name: Unit-test local Valhalla actor adapter without network service
         run: |
           cd projects/puerto-plata-gis
-          python -m unittest -v test_valhalla_waypoint_route.py test_valhalla_route_shape.py test_valhalla_local.py test_operational_validation.py test_turn_risk_screen.py test_road_widths_pipeline.py test_road_width_transects.py test_imagery_eligibility.py test_road_width_priorities.py test_discover_open_aerial.py test_survey_priority_queue.py
+          python -m unittest -v test_service_cycle_scenarios.py test_valhalla_waypoint_route.py test_valhalla_route_shape.py test_valhalla_local.py test_operational_validation.py test_turn_risk_screen.py test_road_widths_pipeline.py test_road_width_transects.py test_imagery_eligibility.py test_road_width_priorities.py test_discover_open_aerial.py test_survey_priority_queue.py
           python -m py_compile valhalla_local.py operational_validation.py
 
   local-r5py:
@@ -687,6 +687,19 @@ jobs:
           assert x["routes_examined"]==3
           assert x["approved_as_measured_cycles"]==0
           PY
+      - name: Validate hypothetical full bus graph loops with terminal connectors
+        run: |
+          cd projects/puerto-plata-gis
+          python -m unittest -v test_service_cycle_scenarios.py
+          python - <<'PY'
+          import json
+          d=json.load(open('service_cycle_scenarios.json'))
+          assert len(d['routes'])==3
+          assert d['approved_service_cycles']==0
+          assert all(x['connector']['status']!='NOT_EVALUATED' for x in d['routes'])
+          print('Graph loops:',d['routable_loops'])
+          print('Route scenarios:',[(x['candidate'],x['connector']['status'],len(x['scenarios'])) for x in d['routes']])
+          PY
       - name: Export directed real road geometry
         run: |
           cd projects/puerto-plata-gis
@@ -734,6 +747,7 @@ jobs:
             projects/puerto-plata-gis/valhalla_turn_audit.csv
             projects/puerto-plata-gis/route_waypoint_consistency.json
             projects/puerto-plata-gis/route_length_comparison.json
+            projects/puerto-plata-gis/service_cycle_scenarios.json
             projects/puerto-plata-gis/cycle_readiness.json
             projects/puerto-plata-gis/routed_geometry_qa.json
             projects/puerto-plata-gis/routed_paths.geojson
