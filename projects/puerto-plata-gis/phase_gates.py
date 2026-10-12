@@ -9,7 +9,8 @@ from pathlib import Path
 
 ROOT=Path(__file__).resolve().parent
 def present(p):return p is not None and Path(p).is_file() and Path(p).stat().st_size>0
-def check(config,root=ROOT,evidence=None):\n evidence=evidence or {}
+def check(config,root=ROOT,evidence=None):
+ evidence=evidence or {}
  vehicle=config["vehicle"];data=config["data"]
  resolve=lambda k:root/data[k] if data.get(k) else None
  physical=all(isinstance(vehicle.get(k),(float,int)) and vehicle[k]>0 for k in
@@ -48,7 +49,8 @@ def check(config,root=ROOT,evidence=None):\n evidence=evidence or {}
 def main():
  p=argparse.ArgumentParser();p.add_argument("--root",type=Path,default=ROOT)
  p.add_argument("--config",type=Path,default=ROOT/"study_config.json")
- p.add_argument("--output",type=Path,default=ROOT/"phase_gates.json")\n p.add_argument("--evidence",type=Path,help="Manual signoff JSON per phase with reviewed, reviewer, artifact_sha256 and acceptance_tests_passed")
+ p.add_argument("--output",type=Path,default=ROOT/"phase_gates.json")
+ p.add_argument("--evidence",type=Path,help="Manual signoff JSON per phase with reviewed, reviewer, artifact_sha256 and acceptance_tests_passed")
  a=p.parse_args();d=json.loads(a.config.read_text());r=check(d,a.root,json.loads(a.evidence.read_text()) if a.evidence else None)
  a.output.write_text(json.dumps(r,ensure_ascii=False,indent=2))
  print("Phase gates",[(x["phase"],x["status"]) for x in r["phase_gates"]])
