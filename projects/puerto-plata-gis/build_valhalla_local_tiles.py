@@ -19,7 +19,7 @@ def execute(pbf,output):
  config=output/"valhalla.json"
  tiles=output/"valhalla_tiles.tar"
  with config.open("w",encoding="utf-8") as stream:
-  subprocess.run([sys.executable,"-m","valhalla","valhalla_build_config",
+  subprocess.run(["valhalla_build_config",
       "--mjolnir-tile-dir",str(output/"tiles"),
       "--mjolnir-tile-extract",str(tiles)],stdout=stream,check=True)
  subprocess.run([sys.executable,"-m","valhalla","valhalla_build_tiles",
