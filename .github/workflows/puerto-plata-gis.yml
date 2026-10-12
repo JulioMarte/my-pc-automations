@@ -676,6 +676,17 @@ jobs:
           assert x["maneuvers_approved"]==0
           assert all(x0["constraint_sequence_complete"] for x0 in x["routes"])
           PY
+      - name: Verify waypoint paths are not falsely labeled as bus service cycles
+        run: |
+          cd projects/puerto-plata-gis
+          python -m unittest -v test_cycle_readiness.py
+          python cycle_readiness.py --input valhalla_waypoint_constrained.json --output cycle_readiness.json
+          python - <<'PY'
+          import json
+          x=json.load(open("cycle_readiness.json"))
+          assert x["routes_examined"]==3
+          assert x["approved_as_measured_cycles"]==0
+          PY
       - name: Export directed real road geometry
         run: |
           cd projects/puerto-plata-gis
@@ -723,6 +734,7 @@ jobs:
             projects/puerto-plata-gis/valhalla_turn_audit.csv
             projects/puerto-plata-gis/route_waypoint_consistency.json
             projects/puerto-plata-gis/route_length_comparison.json
+            projects/puerto-plata-gis/cycle_readiness.json
             projects/puerto-plata-gis/routed_geometry_qa.json
             projects/puerto-plata-gis/routed_paths.geojson
             projects/puerto-plata-gis/valhalla_execution_evidence.json
