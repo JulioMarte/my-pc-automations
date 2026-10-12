@@ -307,3 +307,11 @@ aprobación de giro.
 En el commit `189922269` el CI concluyó **21/21 jobs exitosos**, con `valhalla-local-real-tiles` mostrando secuencias completas 3/3: C00-09 7.505 km, C00-10 9.904 km, C02-04 4.376 km y cero segmentos fallidos. Estas distancias se calcularon enlazando puntos sucesivos de cada candidato, **no como ciclos comerciales verificados de ida/vuelta**. El enrutamiento terminal anterior corresponde a recorridos diferentes; no compararlos como si fueran el mismo ciclo.
 
 Se añadió a `valhalla_waypoint_route.py` `endpoints.distance_between_ends_m`, `closed_within_30m`, `route_distance_is_round_trip:false` y `validated_service_cycle:false`. Un bucle topológicamente cerrado tampoco demuestra retorno físicamente viable para el Yutong. No modificar aún frecuencias 10/20/30 con estas distancias salvo que se defina/valide qué representa un ciclo, terminales, tiempos de espera y red de servicio.
+
+## Resultado contrastado del enrutamiento por waypoints
+
+CI `38201739711` (21/21 jobs exitosos): las tres rutas C00-09, C00-10 y C02-04 se pudieron enrutar por todos sus waypoints consecutivos, con cero tramos fallidos y distancias respectivas 7.505, 9.904 y 4.376 km.
+
+**Advertencia:** es incorrecto equiparar estas cifras automáticamente a un ciclo completo de ida y vuelta. Los recorridos entre terminales (7.509, 10.402, 5.132 km respectivamente) responden a otra consulta. Una diferencia negativa no implica reducción de tiempo, y la sucesión de puntos no acredita retorno terminal ni acceso a bordillos.
+
+Se integra `cycle_readiness.py` y su job CI para que cada candidata declare la separación de extremos, si la secuencia se enruta por completo y qué bloquea tratarla como ciclo medido. La optimización 10/20/30 mantiene velocidades y layovers hipotéticos en tanto no haya ciclo operacional válido, evitando introducir falsa exactitud en CP-SAT.
