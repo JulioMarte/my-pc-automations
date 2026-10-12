@@ -1,0 +1,30 @@
+[
+  {
+    "id": "openstreetmap",
+    "url": "https://download.geofabrik.de/central-america/haiti-and-domrep.html",
+    "license": "ODbL 1.0",
+    "role": "road centerlines and tagged attributes, not measured curb widths",
+    "access": "available"
+  },
+  {
+    "id": "iderd",
+    "url": "https://iderd.gob.do/recursos/directorio-de-geoservicios/",
+    "license": "VERIFY_LAYER_SPECIFIC",
+    "role": "candidate imagery and geospatial services",
+    "access": "NOT_VALIDATED_FOR_CROSS_SECTION_MEASUREMENT"
+  },
+  {
+    "id": "openaerialmap",
+    "url": "https://openaerialmap.org/",
+    "license": "VERIFY_PER_IMAGE",
+    "role": "candidate orthophotos",
+    "access": "NOT_VALIDATED_FOR_PUERTO_PLATA"
+  },
+  {
+    "id": "mapillary",
+    "url": "https://www.mapillary.com/",
+    "license": "CHECK_TERMS_AND_IMAGE_RIGHTS",
+    "role": "visual review of curbs and obstructions; not metric imagery",
+    "access": "COVERAGE_NOT_VERIFIED"
+  }
+]
