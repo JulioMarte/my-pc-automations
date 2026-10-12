@@ -969,6 +969,9 @@ jobs:
           python robustness.py --scored scored_candidates.json --config config.json --output route_robustness.json
           python -m unittest -v test_select_network.py
           python select_network.py --scored scored_candidates.json --od synthetic_gravity_od.json --output networks_10_20_30.json
+          python map_desires.py --desires desire_lines.geojson --keyzones top20_key_zones.geojson --output map_desire_lines.html
+          python l1_control.py --legacy ../initial_route.geojson --scored scored_candidates.json --od synthetic_gravity_od.json --walk ../walk.graphml --config config.json --output historical_L1_control.json
+          python phase_gates.py --zones zones_h3_res8.json --od synthetic_gravity_od.json --candidates generated_routes.geojson --turns yutong_turn_screen.json --scored scored_candidates.json --robust route_robustness.json --networks networks_10_20_30.json --config config.json --output evidence_gates.json
           python - <<'PY'
           import json
           from pathlib import Path
@@ -994,6 +997,10 @@ jobs:
             projects/puerto-plata-gis/algorithmic_v2/scored_candidates.json
             projects/puerto-plata-gis/algorithmic_v2/route_robustness.json
             projects/puerto-plata-gis/algorithmic_v2/networks_10_20_30.json
+            projects/puerto-plata-gis/algorithmic_v2/top20_key_zones.geojson
+            projects/puerto-plata-gis/algorithmic_v2/map_desire_lines.html
+            projects/puerto-plata-gis/algorithmic_v2/historical_L1_control.json
+            projects/puerto-plata-gis/algorithmic_v2/evidence_gates.json
           if-no-files-found: warn
           retention-days: 30
 
