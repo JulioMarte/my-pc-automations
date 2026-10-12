@@ -60,8 +60,13 @@ def route_waypoints(features,actor,targets=TARGET):
                 segments.append({"from_index":i,"to_index":i+1,"status":"BLOCKED",
                                  "reason":str(e)[:230]})
         success=failures==0 and len(joined)>=2
+        closure_m=round(distance_m(coords[0],coords[-1]),1)
+        closed_sequence=closure_m<=30
+        endpoints={"start":coords[0],"end":coords[-1],"distance_between_ends_m":closure_m,"closed_within_30m":closed_sequence}
         routes.append({"id":rid,"waypoints":len(coords),"segments":segments,
                        "failed_segments":failures,"complete_routable_sequence":success,
+                       "endpoints":endpoints,"validated_service_cycle":False,
+                       "route_distance_is_round_trip":False,
                        "sum_segment_distance_km":round(total_km,3) if success else None,
                        "sum_segment_time_s":round(total_seconds,1) if success else None,
                        "physical_bus_geometry_approved":False,
@@ -72,7 +77,8 @@ def route_waypoints(features,actor,targets=TARGET):
             "physical_routes_approved":0,
             "limitations":["Stops are point samples, not surveyed curb-safe stop positions",
                 "All legs are Valhalla bus graph paths, not one continuous approved bus operation",
-                "Terminal turnaround and legal stop access remain unverified"]}
+                "Terminal turnaround and legal stop access remain unverified",
+                "Ordered waypoint distance is NOT a validated round-trip cycle even when endpoints coincide"]}
 
 def to_geojson(report):
     return {"type":"FeatureCollection","features":[
