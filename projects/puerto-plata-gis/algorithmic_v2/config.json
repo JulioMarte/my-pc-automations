@@ -141,7 +141,9 @@
     "terminal_recovery_minutes_assumed": [
       8,
       12
-    ]
+    ],
+    "wait_decay_min_assumed": 20,
+    "stop_demand_snap_search_m": 25
   },
   "approval": {
     "require_observed_turns": true,
