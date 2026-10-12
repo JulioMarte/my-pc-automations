@@ -31,7 +31,7 @@ def audit(features, actor, limit=6):
    except Exception as exc:
     row[direction]={"status":"error","message":str(exc)[:250]}
   row["routed_both_directions"]=all(row[d]["status"]=="routed" for d in ("outbound","inbound"))
-  row["turn_audit"]=[{"candidate":item["id"],"point":{"lon":pt[0],"lat":pt[1]},"vehicle":"Mercedes-Benz Citaro K (reference)","reason":("Both directional routes found, but terminal swept-path and median crossings unverified" if row["routed_both_directions"] else "At least one direction cannot be routed by Valhalla on current OSM tiles"),"status":"REVIEW_REQUIRED" if row["routed_both_directions"] else "BLOCKED"} for pt in (item["a"],item["b"])]
+  row["turn_audit"]=[{"candidate":item["id"],"point":{"lon":pt[0],"lat":pt[1]},"vehicle":"Yutong ZK6126HG (reference; no swept path approval)","reason":("Both directional routes found, but terminal swept-path and median crossings unverified" if row["routed_both_directions"] else "At least one direction cannot be routed by Valhalla on current OSM tiles"),"status":"REVIEW_REQUIRED" if row["routed_both_directions"] else "BLOCKED"} for pt in (item["a"],item["b"])]
   output["routes"].append(row)
  return output
 def main():
