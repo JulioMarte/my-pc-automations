@@ -534,6 +534,7 @@ jobs:
           name: puerto-plata-valhalla-rutas-locales
           path: |
             projects/puerto-plata-gis/valhalla_local_audit.json
+            projects/puerto-plata-gis/valhalla_turn_audit.csv
             projects/puerto-plata-gis/data/valhalla/valhalla_build_manifest.json
           retention-days: 30
 
