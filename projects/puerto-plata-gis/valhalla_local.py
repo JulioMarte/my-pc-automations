@@ -5,7 +5,7 @@ Requires pre-built local Valhalla tiles (graph produced from OSM PBF).
 This is a routing-engine check, NOT bus swept-path or field validation.
 """
 from __future__ import annotations
-import argparse,json
+import argparse,json,csv
 from pathlib import Path
 from valhalla_audit import pairs
 
@@ -50,5 +50,12 @@ def main():
  report=audit(features,actor,args.limit)
  report["tile_extract"]=str(tile_path)
  Path(args.output).write_text(json.dumps(report,indent=2,ensure_ascii=False))
+ csv_path=Path(args.output).with_name("valhalla_turn_audit.csv")
+ with csv_path.open("w",newline="",encoding="utf-8") as f:
+  writer=csv.DictWriter(f,fieldnames=["candidate","latitude","longitude","vehicle","status","reason"])
+  writer.writeheader()
+  for route in report["routes"]:
+   for item in route["turn_audit"]:
+    writer.writerow({"candidate":item["candidate"],"latitude":item["point"]["lat"],"longitude":item["point"]["lon"],"vehicle":item["vehicle"],"status":item["status"],"reason":item["reason"]})
  print(f"Audited {len(report['routes'])} routes using local Valhalla Python bindings")
 if __name__=="__main__":main()
