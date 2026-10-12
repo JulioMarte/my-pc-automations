@@ -956,7 +956,7 @@ jobs:
 
   exploratory-fleet-curve:
     runs-on: ubuntu-latest
-    needs: [network, package, route-competition]
+    needs: [network, package, route-competition, destinations]
     timeout-minutes: 18
     steps:
       - uses: actions/checkout@v4
@@ -976,6 +976,10 @@ jobs:
         with:
           name: puerto-plata-competencia-redes
           path: projects/puerto-plata-gis
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-destinos-overture
+          path: projects/puerto-plata-gis
       - name: Solve three sensitivity scenarios, budgets 10/20/30, with and without L1
         run: |
           python projects/puerto-plata-gis/run_exploratory_curve.py
@@ -987,10 +991,28 @@ jobs:
           assert all(len(s["with_l1"])==3 and len(s["without_l1_constraint"])==3 for s in d["scenarios"])
           assert all(x["validation_level"]=="EXPLORATORY_ONLY" for s in d["scenarios"] for arm in ("with_l1","without_l1_constraint") for x in s[arm] if x["status"] in ("OPTIMAL","FEASIBLE_NOT_PROVEN_OPTIMAL"))
           PY
+      - name: Solve phased multicriteria network with POIs, transfers and hypothetical peak
+        run: |
+          cd projects/puerto-plata-gis
+          python -m unittest -v test_mobility_multicriteria_cp_sat.py
+          python run_mobility_multicriteria.py
+          python - <<'PY'
+          import json
+          x=json.load(open('multicriteria_nested_fleet.json'))
+          assert x["status"]=="MULTIOBJECTIVE_PHASED_HYPOTHESIS_NOT_OPERATIONALLY_APPROVED"
+          assert len(x["results"])==3
+          assert x["physical_routes_approved"]==0
+          for s in x["results"]:
+            for arm in ("with_l1","without_l1_constraint"):
+              assert len(s[arm]["budgets"])==3
+              assert s[arm]["route_retention_required_between_budgets"]
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: puerto-plata-curva-flota-exploratoria
-          path: projects/puerto-plata-gis/fleet_10_20_30_exploratory.json
+          path: |
+            projects/puerto-plata-gis/fleet_10_20_30_exploratory.json
+            projects/puerto-plata-gis/multicriteria_nested_fleet.json
           retention-days: 30
 
