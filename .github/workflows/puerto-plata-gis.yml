@@ -700,6 +700,22 @@ jobs:
           print('Graph loops:',d['routable_loops'])
           print('Route scenarios:',[(x['candidate'],x['connector']['status'],len(x['scenarios'])) for x in d['routes']])
           PY
+      - name: Evaluate 10/20/30 buses on fixed three-route sensitivity grid
+        run: |
+          cd projects/puerto-plata-gis
+          python -m unittest -v test_fixed_shortlist_fleet_sensitivity.py
+          python fixed_shortlist_fleet_sensitivity.py --input service_cycle_scenarios.json --output fixed_shortlist_fleet_sensitivity.json
+          python - <<'PY'
+          import json
+          x=json.load(open('fixed_shortlist_fleet_sensitivity.json'))
+          assert x["operational_approval"] is False
+          if x["fleet_calculated"]:
+              assert len(x["scenarios"])==36
+              assert all(not s["physically_approved"] for s in x["scenarios"])
+          else:
+              assert x["status"]=="BLOCKED_INCOMPLETE_GRAPH_LOOPS"
+          print("Fleet sensitivity:",x["status"])
+          PY
       - name: Export directed real road geometry
         run: |
           cd projects/puerto-plata-gis
@@ -747,6 +763,7 @@ jobs:
             projects/puerto-plata-gis/valhalla_turn_audit.csv
             projects/puerto-plata-gis/route_waypoint_consistency.json
             projects/puerto-plata-gis/route_length_comparison.json
+            projects/puerto-plata-gis/fixed_shortlist_fleet_sensitivity.json
             projects/puerto-plata-gis/service_cycle_scenarios.json
             projects/puerto-plata-gis/cycle_readiness.json
             projects/puerto-plata-gis/routed_geometry_qa.json
