@@ -111,3 +111,20 @@ Ninguno de los transectos equivale a una medida; no existen aún imágenes regis
 ## Cómo interpretar la nueva priorización
 
 El trabajo `road-width-shortlist` filtra perfiles próximos a los **puntos provisionales** de C00-09, C00-10 y C02-04. No deduce el recorrido sobre cada calle entre paradas; esas geometrías son MultiPoint. Un perfil cercano a una parada es una prioridad de inspección, no un tramo de ruta confirmado.
+
+## Resultado real del catálogo OpenAerialMap/HOT
+
+El trabajo `imagery-catalog-discovery` consulta el endpoint STAC de HOT y
+publica `open_aerial_metadata.json` con imagen, fechas, GSD, licencia
+declarada, proveedor y procedencia. En la consulta inicial del 12 de octubre
+de 2026 se observaron **14 registros**, pero solo **6 cajas delimitadoras
+distintas**, fechados en septiembre de **2017**, resolución publicada
+aproximada de **0.487 m/píxel**. Las seis zonas presentan metadatos
+conflictivos de licencia (`CC-BY-4.0` frente a `CC-BY-NC-4.0`).
+No cuentan con exactitud horizontal certificada en el inventario actual.
+
+Por ello, **0 imágenes califican automáticamente** para medición de bordillos.
+La resolución supera el umbral piloto de 0.30 m/píxel y la antigüedad es
+importante en una ciudad donde cambian bordillos, estacionamientos y sentidos.
+No confundir disponibilidad de metadatos con licencia o autorización para
+crear una base de datos derivada ni con imágenes actualizadas.
