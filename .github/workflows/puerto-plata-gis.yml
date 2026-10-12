@@ -664,6 +664,18 @@ jobs:
           assert all(r0["segments"] for r0 in r["routes"])
           print("Waypoint route evidence:",[(x["id"],x["complete_routable_sequence"],x["failed_segments"],x["sum_segment_distance_km"]) for x in r["routes"]])
           PY
+      - name: Compare terminal shortcuts against waypoint-constrained routing
+        run: |
+          cd projects/puerto-plata-gis
+          python -m unittest -v test_route_length_comparison.py
+          python route_length_comparison.py --direct valhalla_local_audit.json --via valhalla_waypoint_constrained.json --output route_length_comparison.json
+          python - <<'PY'
+          import json
+          x=json.load(open('route_length_comparison.json'))
+          assert x["total_compared"]==3
+          assert x["maneuvers_approved"]==0
+          assert all(x0["constraint_sequence_complete"] for x0 in x["routes"])
+          PY
       - name: Export directed real road geometry
         run: |
           cd projects/puerto-plata-gis
@@ -710,6 +722,7 @@ jobs:
             projects/puerto-plata-gis/valhalla_local_audit.json
             projects/puerto-plata-gis/valhalla_turn_audit.csv
             projects/puerto-plata-gis/route_waypoint_consistency.json
+            projects/puerto-plata-gis/route_length_comparison.json
             projects/puerto-plata-gis/routed_geometry_qa.json
             projects/puerto-plata-gis/routed_paths.geojson
             projects/puerto-plata-gis/valhalla_execution_evidence.json
