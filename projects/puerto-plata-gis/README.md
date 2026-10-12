@@ -23,3 +23,9 @@ Descargar el artefacto **puerto-plata-gis-completo** desde Actions. Extraer y ej
 ## Evaluación actualizada
 
 Radio predeterminado: **500 m**, editable entre 100 y 1,200 m. La suma basada en centros de celdas WorldPop de las 22 paradas provisionales aumenta aproximadamente de 17,148 a **41,114 residentes modelados** al cambiar de 250 a 500 m de radio. No es población censal ONE ni cantidad de pasajeros. Las calles de un solo sentido y los anchos de calzada no se validan automáticamente; hay que corroborar con OSM por tramo y trabajo de campo. Los nombres de comercios del panel están respaldados por fuentes, pero no se colocan pines con coordenadas no confirmadas. La acción de 'sugerir mejora' ordena las paradas por aporte residencial exclusivo, sin generar rutas viales ficticias.
+
+## Autobús de referencia (octubre 2026)
+
+El vehículo principal seleccionado para evaluar la red es **Yutong ZK6126HG**, urbano diésel Euro V: largo 12.17 m, ancho 2.55 m, altura 3.18 m y capacidad nominal anunciada de 90/95 pasajeros según la variante. Fuente primaria: https://en.yutong.com/products/ZK6126HG.shtml. Consultar `study_config.json` y `VEHICLE_AND_ACCEPTANCE_AUDIT.md`.
+
+El radio de giro, espacio barrido, ancho con espejos y pendiente máxima a plena carga todavía no están verificados. Valhalla solo evalúa conectividad sobre OSM y no demuestra que un bus de 12.17 m pueda hacer los giros. **Las rutas y curvas exploratorias 10/20/30 anteriores NO quedan aprobadas por cambiar el vehículo.**
