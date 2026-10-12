@@ -315,3 +315,24 @@ CI `38201739711` (21/21 jobs exitosos): las tres rutas C00-09, C00-10 y C02-04 s
 **Advertencia:** es incorrecto equiparar estas cifras automáticamente a un ciclo completo de ida y vuelta. Los recorridos entre terminales (7.509, 10.402, 5.132 km respectivamente) responden a otra consulta. Una diferencia negativa no implica reducción de tiempo, y la sucesión de puntos no acredita retorno terminal ni acceso a bordillos.
 
 Se integra `cycle_readiness.py` y su job CI para que cada candidata declare la separación de extremos, si la secuencia se enruta por completo y qué bloquea tratarla como ciclo medido. La optimización 10/20/30 mantiene velocidades y layovers hipotéticos en tanto no haya ciclo operacional válido, evitando introducir falsa exactitud en CP-SAT.
+
+## Escenarios de ciclos de servicio por conectores de red (sin aforos)
+
+`service_cycle_scenarios.py` usa el enrutamiento real entre waypoints de
+las tres candidatas y solicita a Valhalla una ruta adicional desde el último
+punto al primero cuando están separados. Para extremos prácticamente
+coincidentes marca explícitamente el cierre topológico, sin aprobar el retorno
+físico del autobús. Cuando Valhalla no encuentra conector se registra
+`BLOCKED_GRAPH_CONNECTOR` y no se generan escenarios falsos.
+
+Si la conexión es posible genera una matriz no calibrada de
+12/18/24 km/h × 15/30 segundos por parada provisional × 8/12 minutos
+de recuperación; los 12 resultados por ruta no son horarios ni ciclos
+medidos. Artefacto CI: `service_cycle_scenarios.json`. La política de
+CP-SAT permanece exploratoria y no adopta esos ciclos automáticamente:
+faltan sentidos operativos, retornos físicos, velocidad observada y demanda.
+
+En octubre de 2026, una ejecución encontró un fallo transitorio
+`RemoteDisconnected` descargando WorldPop; `build_population.py`
+se modificó para reintentar con fichero temporal y renombrado atómico.
+No se sustituye el raster real por datos simulados cuando falla la descarga.
