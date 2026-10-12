@@ -81,7 +81,7 @@ def build(candidates,od,walk,config,zones=None):
             points.setdefault(row["origin"],row["origin_lonlat"])
             points.setdefault(row["destination"],row["destination_lonlat"])
     endpoints={id:snap(p) for id,p in points.items()}
-    top20=next(x for x in scenarios if x["level"]=="medium" and x["exponent"]==1)["top20_zones"]
+    top20=next(x for x in scenarios if x["level"]=="medium" and x["exponent"]==1).get("top20_zones",[])
     zone_index={z["id"]:z for z in (zones or {}).get("zones",[])}
     hotspots=[(zone_index[z["id"]]["longitude"],zone_index[z["id"]]["latitude"],
               z["endpoint_flow_proxy"]) for z in top20 if z["id"] in zone_index]
