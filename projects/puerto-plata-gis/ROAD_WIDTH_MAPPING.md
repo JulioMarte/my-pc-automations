@@ -407,3 +407,11 @@ sobrevivir a los filtros de gabinete sin estar aprobada para buses.
 El objetivo final es cobertura de **viajes y oportunidades** con
 frecuencias y transbordos útiles, no solo cantidad de residentes
 cerca de un círculo alrededor de una parada.
+
+### Auditoría de crecimiento 10 → 20 → 30 autobuses
+
+`network_phasing_audit.py` compara soluciones CP-SAT de cada escala por velocidad y con/sin L1, preservando rutas existentes en un informe de cambios. Si al crecer de 10 a 20 autobuses desaparece una ruta del plan de 10, registra `REPLACEMENT_NOT_STRAIGHT_EXPANSION`; una red distinta no debe venderse como simple extensión de la misma infraestructura.
+
+El reporte `network_expansion_phasing.json` lista rutas retenidas, agregadas y reemplazadas, más la fracción de conservación. Incluso cuando las rutas quedan anidadas, `NESTED_ROUTE_SET_UNVALIDATED` no equivale a una expansión físicamente aprobada. Falta hacer **optimización multiperíodo real** con costos de transbordo, límites de inversión y obligación explícita de retener estaciones y trayectos iniciales.
+
+**Estado tras primera ejecución del ranking:** 18 propuestas evaluadas; 6 comparativas presupuestarias con/sin L1; 0 pasan todos los filtros heurísticos estrictos de gabinete; 0 tienen aprobación operativa. La falta de sobrevivientes no prueba que Puerto Plata no admita buses: evidencia que la función objetivo y supuestos actuales no satisfacen todavía el conjunto de objetivos definido.
