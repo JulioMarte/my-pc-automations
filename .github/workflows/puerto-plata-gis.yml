@@ -730,6 +730,42 @@ jobs:
             projects/puerto-plata-gis/yutong_field_survey_queue.json
           retention-days: 30
 
+  imagery-nine-turns-audit:
+    runs-on: ubuntu-latest
+    needs: [imagery-catalog-discovery, road-width-shortlist]
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-imagery-search-evidence
+          path: projects/puerto-plata-gis
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-road-width-shortlist
+          path: projects/puerto-plata-gis
+      - name: Evaluate actual STAC image metadata at nine priority locations
+        run: |
+          cd projects/puerto-plata-gis
+          python -m unittest -v test_audit_aerial_for_turns.py
+          python audit_aerial_for_turns.py --catalog open_aerial_metadata.json --turns yutong_field_survey_queue.json --output image_turn_suitability.json
+          python - <<'PY'
+          import json
+          x=json.load(open("image_turn_suitability.json"))
+          assert x["assessed_turns"]==9
+          assert x["fit_for_precision_measurements"]==0
+          assert all(t["width_measurement_status"]=="BLOCKED" for t in x["turns"])
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: puerto-plata-image-nine-turn-suitability
+          path: projects/puerto-plata-gis/image_turn_suitability.json
+          if-no-files-found: warn
+          retention-days: 30
+
   exploratory-fleet-curve:
     runs-on: ubuntu-latest
     needs: [network, package, route-competition]
