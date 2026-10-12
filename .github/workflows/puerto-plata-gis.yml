@@ -1,7 +1,7 @@
 name: Puerto Plata GIS - build and verify
 on:
   push:
-    branches: ["feat/puerto-plata-transit-gis", dev]
+    branches: ["feat/puerto-plata-transit-gis", "feat/puerto-plata-od-first-redesign", dev]
     paths: ["projects/puerto-plata-gis/**", ".github/workflows/puerto-plata-gis.yml"]
   pull_request:
     paths: ["projects/puerto-plata-gis/**", ".github/workflows/puerto-plata-gis.yml"]
