@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Puerto Plata - Captura revisable de perfiles viales</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+*{box-sizing:border-box}html,body{height:100%;margin:0;font:14px system-ui;color:#0f172a}
+#main{display:grid;grid-template-columns:minmax(320px,360px) 1fr;height:100vh}aside{background:#f8fafc;padding:16px;overflow:auto;border-right:1px solid #cbd5e1}
+#map{height:100%}h1{font-size:18px;margin:0 0 10px}p{line-height:1.45;font-size:13px;color:#334155}
+label{display:block;font-size:12px;font-weight:650;margin:9px 0 4px}
+input,select{width:100%;padding:7px;border:1px solid #a9b6c6;border-radius:5px;background:white}
+button{border:0;border-radius:6px;padding:10px 12px;margin:8px 5px 0 0;background:#1d4ed8;color:white;cursor:pointer}
+button.secondary{background:#475569}button:disabled{opacity:.4;cursor:default}
+.warning{background:#fef9c3;border:1px solid #eab308;border-radius:8px;padding:10px;font-size:12px;line-height:1.5}
+#status,#rows{font-size:12px;margin-top:10px;line-height:1.5}.row-item{padding:8px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;margin:5px 0}
+@media(max-width:760px){#main{grid-template-columns:1fr;grid-template-rows:43vh 57vh}aside{overflow:auto}}
+</style></head>
+<body><div id="main"><aside><h1>Captura manual de anchos — Puerto Plata</h1>
+<div class="warning"><b>Solo inventario preliminar.</b> Haz clic en dos puntos del mapa para definir un perfil candidato. El mapa OSM NO permite identificar bordillos con precisión topográfica. No utilices esta interfaz para declarar giros aprobados; tampoco uses imágenes de terceros como fuente de medición sin licencia.</div>
+<p>1. Introduce la identidad del tramo y la procedencia. 2. Selecciona los dos bordes candidatos. 3. Guarda el perfil y exporta CSV. Los perfiles se exportan como <b>unreviewed</b>.</p>
+<label for="segment">Identificador de segmento</label><input id="segment" placeholder="osm-edge:... / referencia de campo" required>
+<label for="source">Fuente o captura original</label><input id="source" placeholder="Levantamiento propio 2026-10-12 / imagen autorizada #...">
+<label for="license">Derechos/permiso de la fuente</label><input id="license" placeholder="Propia / permiso n° ...">
+<label for="sourceDate">Fecha de la observación</label><input id="sourceDate" type="date">
+<label for="uncertainty">Incertidumbre estimada (m; opcional)</label><input id="uncertainty" type="number" min="0" max="99" step="0.01" placeholder="No confundir con precisión comprobada">
+<div id="status">Haz clic sobre el mapa para colocar el primer punto.</div>
+<button id="save" disabled>Guardar perfil</button><button class="secondary" id="clear">Limpiar selección</button>
+<button id="export" disabled>Exportar CSV</button><button class="secondary" id="undo" disabled>Deshacer última fila</button>
+<div id="rows"></div>
+<p>El CSV generado se ingiere con <code>road_widths_pipeline.py --samples reviewed_width_samples.csv</code>. Después es obligatorio contrastar la posición de los bordes con imágenes autorizadas o medición de campo y conservar la incertidumbre real.</p>
+</aside><div id="map"></div></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const map=L.map('map').setView([19.793,-70.696],14);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap, solo referencia cartográfica'}).addTo(map);
+const points=[],markers=[],rows=[],lines=L.layerGroup().addTo(map);
+const status=document.getElementById('status'),save=document.getElementById('save');
+const required=['segment','source','license','sourceDate'];
+function ready(){return points.length===2&&required.every(id=>document.getElementById(id).value.trim())}
+function refresh(){save.disabled=!ready();document.getElementById('export').disabled=rows.length===0;document.getElementById('undo').disabled=rows.length===0}
+function reset(){for(const m of markers)map.removeLayer(m);markers.length=0;points.length=0;status.textContent='Haz clic para colocar el primer punto';refresh()}
+map.on('click',function(e){
+if(points.length===2)reset();
+const p=[e.latlng.lng,e.latlng.lat];points.push(p);
+markers.push(L.circleMarker(e.latlng,{radius:7,color:'#1d4ed8',fillOpacity:.9}).addTo(map));
+status.textContent=points.length===1?'Selecciona el segundo punto al otro lado de la calzada.':'Dos coordenadas capturadas. Completa origen, fecha y permisos.';
+refresh();
+});
+for(const id of required)document.getElementById(id).addEventListener('input',refresh);
+document.getElementById('clear').onclick=reset;
+document.getElementById('save').onclick=()=>{
+if(!ready())return;
+const val=id=>document.getElementById(id).value.trim();
+const uncertainty=val('uncertainty');
+const row={segment_id:val('segment'),left_lon:points[0][0].toFixed(8),left_lat:points[0][1].toFixed(8),
+ right_lon:points[1][0].toFixed(8),right_lat:points[1][1].toFixed(8),source:val('source'),
+ source_date:val('sourceDate'),source_license:val('license'),review_status:'unreviewed',
+ uncertainty_m:uncertainty};
+rows.push(row);
+L.polyline(points.map(p=>[p[1],p[0]]),{color:'#f59e0b',weight:3}).bindPopup('Perfil preliminar · NO medido ni revisado').addTo(lines);
+renderRows();reset();
+};
+document.getElementById('undo').onclick=()=>{if(!rows.length)return;rows.pop();lines.clearLayers();for(const r of rows)L.polyline([[+r.left_lat,+r.left_lon],[+r.right_lat,+r.right_lon]],{color:'#f59e0b',weight:3}).addTo(lines);renderRows();refresh()};
+function renderRows(){document.getElementById('rows').innerHTML='<b>Perfiles sin revisar: '+rows.length+'</b>'+rows.slice(-5).map(r=>'<div class="row-item">'+safe(r.segment_id)+' · '+safe(r.source_date)+' · unreviewed</div>').join('');refresh()}
+function safe(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function csvCell(value){let s=String(value??'');if(/^[=+@\-\t\r]/.test(s))s="'"+s;return '"'+s.replace(/"/g,'""')+'"'}
+document.getElementById('export').onclick=()=>{
+if(!rows.length)return;
+const cols=['segment_id','left_lon','left_lat','right_lon','right_lat','source','source_date','source_license','review_status','uncertainty_m'];
+const csv=[cols.join(','),...rows.map(row=>cols.map(k=>csvCell(row[k])).join(','))].join('\r\n')+'\r\n';
+const url=URL.createObjectURL(new Blob(['\ufeff',csv],{type:'text/csv;charset=utf-8'}));
+const a=document.createElement('a');a.href=url;a.download='puerto_plata_anchos_sin_revisar.csv';a.click();URL.revokeObjectURL(url);
+};
+</script></body></html>
