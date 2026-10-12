@@ -82,13 +82,13 @@ def generate(graph,od,min_candidates=100,max_candidates=300,flow_limit=240):
     for (u,v),value in edge_flow.most_common(90):
         path=[u,v];seen=set(path)
         for _ in range(18):
-            tails=[(edge_flow.get(v,w),w) for w in simple.successors(path[-1]) if w not in seen]
+            tails=[(edge_flow.get((path[-1],w),0),w) for w in simple.successors(path[-1]) if w not in seen]
             if not tails:break
             score,nxt=max(tails)
             if score<=0:break
             path.append(nxt);seen.add(nxt)
         for _ in range(18):
-            heads=[(edge_flow.get(w,path[0]),w) for w in simple.predecessors(path[0]) if w not in seen]
+            heads=[(edge_flow.get((w,path[0]),0),w) for w in simple.predecessors(path[0]) if w not in seen]
             if not heads:break
             score,prev=max(heads)
             if score<=0:break
