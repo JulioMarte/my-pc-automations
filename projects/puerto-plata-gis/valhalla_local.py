@@ -25,6 +25,8 @@ def audit(features, actor, limit=6):
     result=actor.route(request)
     if isinstance(result,str):result=json.loads(result)
     summary=result["trip"]["summary"]
+    if not isinstance(summary.get("length"),(int,float)) or summary["length"]<=0.1 or not isinstance(summary.get("time"),(int,float)) or summary["time"]<=0:
+     raise ValueError("Degenerate zero/short route; terminal data or network snapping invalid")
     row[direction]={"status":"routed","distance_km":summary.get("length"),"time_seconds":summary.get("time")}
    except Exception as exc:
     row[direction]={"status":"error","message":str(exc)[:250]}
