@@ -14,7 +14,7 @@ def numeric_limit(value):
     if value is None:return None
     text=str(value).strip().lower()
     if not text or text in {'none','nan','unknown'} or 'ft' in text or '\\u2032' in text:return None
-    match=re.fullmatch(r'([0-9]+(?:\\.[0-9]+)?)\\s*(?:m|metres?|meters?)?',text)
+    match=re.fullmatch(r'([0-9]+(?:\.[0-9]+)?)\s*(?:m|metres?|meters?)?',text)
     return float(match.group(1)) if match else None
 
 def road_graph(graph,vehicle=None):
