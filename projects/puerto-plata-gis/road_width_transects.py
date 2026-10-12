@@ -34,7 +34,7 @@ def transects(features, spacing_m=10, half_span_m=15, limit=300000):
                     lonoff=norm[0]*half_span_m/(M*scale)
                     latoff=norm[1]*half_span_m/M
                     results.append({"type":"Feature",
-                        "properties":{"segment_id":str(feature.get("properties",{}).get("osmid",feat_idx)),
+                        "properties":{"segment_id":str(feature.get("properties",{}).get("osmid") or ":".join(str(feature.get("properties",{}).get(k)) for k in ("from_node","to_node","edge_key")) if all(feature.get("properties",{}).get(k) is not None for k in ("from_node","to_node","edge_key")) else feat_idx),
                             "status":"INSPECTION_TRANSECT_NOT_MEASURED",
                             "sample_spacing_m":spacing_m,
                             "search_half_span_m":half_span_m},
