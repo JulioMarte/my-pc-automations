@@ -1,6 +1,6 @@
 import unittest
 from unittest.mock import patch
-from discover_open_aerial import parse_stac,retrieve
+from discover_open_aerial import parse_stac,retrieve,summarize
 
 class AerialDiscoveryTests(unittest.TestCase):
     def test_empty_stac_is_no_data(self):
@@ -13,6 +13,14 @@ class AerialDiscoveryTests(unittest.TestCase):
         self.assertEqual(result[0]["gsd_m_reported"],0.15)
         self.assertFalse(result[0]["eligible_for_measurement"])
         self.assertFalse(result[0]["verified_puerto_plata_coverage"])
+    def test_conflicting_licenses_are_reported(self):
+        items=[{"bbox":[-70.71,19.77,-70.70,19.78],"license_reported":"CC-BY-4.0","gsd_m_reported":0.49},
+               {"bbox":[-70.71,19.77,-70.70,19.78],"license_reported":"CC-BY-NC-4.0","gsd_m_reported":0.49}]
+        audit=summarize(items)
+        self.assertEqual(audit["footprints_with_conflicting_licenses"],1)
+        self.assertEqual(audit["gsd_above_30cm_count"],2)
+        self.assertEqual(audit["measurement_approved_images"],0)
+
     def test_malformed_api_response_raises(self):
         with self.assertRaises(ValueError):parse_stac({"results":[]})
     def test_network_failure_captured_as_evidence(self):
