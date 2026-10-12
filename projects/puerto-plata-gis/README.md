@@ -1,5 +1,7 @@
 # Puerto Plata Línea 1 — Laboratorio GIS
 
+> **Para agentes y colaboradores:** leer primero [AGENTS.md](AGENTS.md) y [PROJECT_STATUS_AND_HANDOFF.md](PROJECT_STATUS_AND_HANDOFF.md). Estos documentos distinguen resultados observados, simulaciones, bloqueos y validación operativa. La cobertura peatonal actual no equivale a demanda de pasajeros ni a aprobación de L1.
+
 Aplicación web independiente dentro de `my-pc-automations`. Mapa satelital Esri, calles y rótulos OpenStreetMap/CARTO, paradas editables y cobertura ajustable. Por defecto se usa **500 m de radio (1,000 m de diámetro)**.
 
 ## Datos demográficos
