@@ -546,7 +546,7 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
       - name: Install graph projection and optimization libraries
-        run: python -m pip install "osmnx==2.0.6" "ortools>=9.10,<10"
+        run: python -m pip install "osmnx==2.0.6" "ortools>=9.10,<10" "scipy>=1.11,<2"
       - uses: actions/download-artifact@v4
         with:
           name: puerto-plata-red-vial-osmnx
