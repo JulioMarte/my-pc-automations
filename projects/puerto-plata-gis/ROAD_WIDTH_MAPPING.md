@@ -128,3 +128,13 @@ La resolución supera el umbral piloto de 0.30 m/píxel y la antigüedad es
 importante en una ciudad donde cambian bordillos, estacionamientos y sentidos.
 No confundir disponibilidad de metadatos con licencia o autorización para
 crear una base de datos derivada ni con imágenes actualizadas.
+
+## Cola de inspección de giros del Yutong
+
+`survey_priority_queue.py` integra:
+1. `yutong_turn_risk_screen.json` (ángulos estimados, no giros certificados).
+2. `priority_road_width_transects.geojson` (puntos de inspección cercanos a paradas de las tres candidatas).
+
+Salida `yutong_field_survey_queue.json`: tareas priorizadas por cambio angular, coordenadas del waypoint, perfiles vecinos a 90 m, referencia de vehículo y evidencia necesaria. No supone que una arista próxima sea parte efectiva de la ruta; los anchos y giros siguen `UNKNOWN`/`NOT_ASSESSED`.
+
+La compilación del inventario OSM también retiene `est_width` y etiquetas de estacionamiento, antes descartadas. `width` (ancho anotado), `est_width` (estimación) y `maxwidth` (límite de paso de vehículo) nunca se intercambian; cuando falta la fuente primaria, el inventario informa la ausencia.
