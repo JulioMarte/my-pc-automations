@@ -395,3 +395,15 @@ jobs:
           name: puerto-plata-valhalla-audit
           path: projects/puerto-plata-gis/valhalla_audit.json
           retention-days: 30
+
+  local-valhalla-adapter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Unit-test local Valhalla actor adapter without network service
+        run: |
+          cd projects/puerto-plata-gis
+          python -m unittest -v test_valhalla_local.py
+          python -m py_compile valhalla_local.py
