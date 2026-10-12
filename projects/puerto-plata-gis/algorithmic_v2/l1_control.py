@@ -5,7 +5,7 @@ from pyproj import Transformer
 import osmnx as ox
 from score_candidates import build
 
-def compare(legacy_fc,scored,od,walk,config):
+def compare(legacy_fc,scored,od,walk,config,zones=None):
     lines=[f["geometry"]["coordinates"] for f in legacy_fc.get("features",[])
            if f.get("geometry",{}).get("type")=="LineString"]
     if not lines:raise ValueError("Historical L1 lacks a route polyline")
@@ -17,7 +17,7 @@ def compare(legacy_fc,scored,od,walk,config):
     record={"features":[{"properties":{"candidate_id":"CONTROL_L1_NOT_A_CANDIDATE",
           "methods":["HISTORICAL_CONTROL_ONLY"],"route_length_km_osm":round(length,3)},
           "geometry":{"type":"LineString","coordinates":coords}}]}
-    evaluated=build(record,od,walk,config)
+    evaluated=build(record,od,walk,config,zones)
     result=evaluated["ranked_candidates"][0]
     score=max(v["score_relative_od_per_bus"] for v in result["service_scenarios"])
     scores=[max(v["score_relative_od_per_bus"] for v in r["service_scenarios"])
@@ -36,9 +36,11 @@ def compare(legacy_fc,scored,od,walk,config):
 def main():
     p=argparse.ArgumentParser()
     for n in ("legacy","scored","od","walk","config","output"):p.add_argument("--"+n,type=Path,required=True)
+    p.add_argument("--zones",type=Path,required=False)
     a=p.parse_args()
     result=compare(json.loads(a.legacy.read_text()),json.loads(a.scored.read_text()),
-        json.loads(a.od.read_text()),ox.load_graphml(a.walk),json.loads(a.config.read_text()))
+        json.loads(a.od.read_text()),ox.load_graphml(a.walk),json.loads(a.config.read_text()),
+        json.loads(a.zones.read_text()) if a.zones else None)
     a.output.write_text(json.dumps(result,indent=2))
     print(json.dumps(result))
 if __name__=="__main__":main()
