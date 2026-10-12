@@ -107,6 +107,30 @@ jobs:
             projects/puerto-plata-gis/network_report.json
           retention-days: 30
 
+  road-width-ui-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Validate local interactive HTML JavaScript and required controls
+        run: |
+          python projects/puerto-plata-gis/check_review_html.py \
+            projects/puerto-plata-gis/Road_Width_Review_Puerto_Plata.html \
+            projects/puerto-plata-gis/Road_Width_Manual_Review.html
+          python - <<'PY'
+          from pathlib import Path
+          p=Path("projects/puerto-plata-gis")
+          review=(p/"Road_Width_Review_Puerto_Plata.html").read_text()
+          manual=(p/"Road_Width_Manual_Review.html").read_text()
+          assert 'id="surveyQueue"' in review
+          assert 'id="export"' in manual
+          assert "review_status:'unreviewed'" in manual
+          assert "csvCell(row[k],k)" in manual
+          print("Review UI controls present")
+          PY
+
   road-width-raster-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 10
