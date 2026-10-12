@@ -966,6 +966,7 @@ jobs:
           cd projects/puerto-plata-gis/algorithmic_v2
           python -m unittest -v test_score_candidates.py
           python score_candidates.py --candidates generated_routes.geojson --od synthetic_gravity_od.json --walk ../walk.graphml --config config.json --output scored_candidates.json
+          python robustness.py --scored scored_candidates.json --config config.json --output route_robustness.json
           python - <<'PY'
           import json
           from pathlib import Path
@@ -989,6 +990,7 @@ jobs:
             projects/puerto-plata-gis/algorithmic_v2/generated_routes.geojson
             projects/puerto-plata-gis/algorithmic_v2/yutong_turn_screen.json
             projects/puerto-plata-gis/algorithmic_v2/scored_candidates.json
+            projects/puerto-plata-gis/algorithmic_v2/route_robustness.json
           if-no-files-found: warn
           retention-days: 30
 
