@@ -257,3 +257,27 @@ Se añade `route_waypoint_consistency.py` para comprobar proximidad entre los pu
 Distancias observadas en la corrida CI: C00-09 (3.734 + 3.775 = 7.509 km), C00-10 (5.190 + 5.212 = 10.402 km), C02-04 (2.566 + 2.566 = 5.132 km). Son longitudes del camino elegido entre terminales, NO trayectos obligatoriamente visitando las paradas. Las distancias anteriores del optimizador permanecen exploratorias y no deben sustituirse sin consistencia de waypoints.
 
 La nueva CI valida código, cobertura de geometrías y denuncia paradas desviadas; no tiene aforos reales ni validación geométrica del Yutong.
+
+## Verificación de CI y nueva auditoría de waypoints
+
+La ejecución `38199157055` quedó en verde en todos los 21 jobs,
+con 19 recorridos de ida y vuelta (38 polilíneas). La ejecución
+`38199624333` también confirmó 19/19 geometrías y reportó **9/19
+candidatas con al menos un waypoint a >80 m** de las rutas calculadas
+solamente entre terminales. En la selección de 10 autobuses,
+`C00-09` tenía 0 puntos desviados, `C00-10` 9/20 y `C02-04` 6/12
+en ambas direcciones según la métrica de distancia a polilínea.
+
+**Corrección integrada:** `valhalla_waypoint_route.py` enruta cada par
+consecutivo de puntos de las tres candidatas para generar un recorrido
+que pase por esos anchors en el orden registrado. Exporta
+`valhalla_waypoint_constrained.json` y
+`valhalla_waypoint_constrained.geojson`. No fuerza aceptación de
+todas las rutas: si falta un tramo o geometría, muestra BLOCKED con
+evidencia. Las pruebas unitarias ejercitan éxito, fallo y puntos
+duplicados. Ni el nuevo itinerario ni la distancia calculada sustituyen
+la validación física de bordillos, terminales y espacio barrido.
+
+**Implicación:** hasta comprobar esos itinerarios, el ranking exploratorio
+de cobertura 10/20/30 no puede tratar los caminos directos de terminal
+como rutas que realmente atienden todos los puntos GIS.
