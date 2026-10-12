@@ -17,7 +17,7 @@ class Tests(unittest.TestCase):
     g.add_edge(i,i-1,length=105)
   route={"features":[{"properties":{"candidate_id":"AUTO-001","methods":["OD_SHORTEST"],
        "route_length_km_osm":.525},"geometry":{"coordinates":[[-70.7,19.8],[-70.695,19.8]]}}]}
-  od={"scenarios":[{"level":"medium","exponent":1,"od":[{"origin":"a","destination":"b",
+  od={"scenarios":[{"level":"medium","exponent":1,"top20_zones":[],"od":[{"origin":"a","destination":"b",
       "origin_lonlat":[-70.7,19.8],"destination_lonlat":[-70.695,19.8],
       "straight_km":.53,"relative_flow_units":100}]}]}
   x=build(route,od,g,CFG)
