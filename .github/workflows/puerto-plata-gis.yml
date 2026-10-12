@@ -930,6 +930,8 @@ jobs:
           python rank_network_proposals.py --input network_proposals_multicriteria.json --output ranked_network_proposals.json
           python -m unittest -v test_network_phasing_audit.py
           python network_phasing_audit.py --input network_proposals_multicriteria.json --output network_expansion_phasing.json
+          python -m unittest -v test_interchange_hub_candidates.py
+          python interchange_hub_candidates.py --input network_proposals_multicriteria.json --output interchange_hub_candidates.json
           python - <<'PY'
           import json
           x=json.load(open("network_proposals_multicriteria.json"))
@@ -949,6 +951,7 @@ jobs:
             projects/puerto-plata-gis/network_proposals_multicriteria.json
             projects/puerto-plata-gis/ranked_network_proposals.json
             projects/puerto-plata-gis/network_expansion_phasing.json
+            projects/puerto-plata-gis/interchange_hub_candidates.json
           retention-days: 30
 
   exploratory-fleet-curve:
