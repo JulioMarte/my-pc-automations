@@ -495,7 +495,7 @@ jobs:
       - name: Unit-test local Valhalla actor adapter without network service
         run: |
           cd projects/puerto-plata-gis
-          python -m unittest -v test_valhalla_local.py test_operational_validation.py test_turn_risk_screen.py test_road_widths_pipeline.py test_road_width_transects.py test_imagery_eligibility.py test_road_width_priorities.py test_discover_open_aerial.py
+          python -m unittest -v test_valhalla_local.py test_operational_validation.py test_turn_risk_screen.py test_road_widths_pipeline.py test_road_width_transects.py test_imagery_eligibility.py test_road_width_priorities.py test_discover_open_aerial.py test_survey_priority_queue.py
           python -m py_compile valhalla_local.py operational_validation.py
 
   local-r5py:
@@ -655,7 +655,7 @@ jobs:
 
   road-width-shortlist:
     runs-on: ubuntu-latest
-    needs: [road-width-baseline, route-competition]
+    needs: [road-width-baseline, route-competition, valhalla-local-real-tiles]
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
@@ -669,6 +669,10 @@ jobs:
         with:
           name: puerto-plata-competencia-redes
           path: projects/puerto-plata-gis
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-valhalla-rutas-locales
+          path: projects/puerto-plata-gis
       - name: Prioritize surveys by three ten-bus candidates
         run: |
           python projects/puerto-plata-gis/road_width_priorities.py --transects projects/puerto-plata-gis/road_width_transects.geojson --routes projects/puerto-plata-gis/discovered_routes.geojson --output projects/puerto-plata-gis/priority_road_width_transects.geojson
@@ -681,10 +685,25 @@ jobs:
           assert all(f["properties"]["bus_approved"] is False for f in x["features"])
           print(x["metadata"])
           PY
+      - name: Rank unknown physical turns and nearby inspection profiles
+        run: |
+          python projects/puerto-plata-gis/survey_priority_queue.py --turns projects/puerto-plata-gis/yutong_turn_risk_screen.json --transects projects/puerto-plata-gis/priority_road_width_transects.geojson --output projects/puerto-plata-gis/yutong_field_survey_queue.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path("projects/puerto-plata-gis/yutong_field_survey_queue.json").read_text())
+          assert x["status"]=="UNVERIFIED_FIELD_SURVEY_QUEUE"
+          assert x["total_tasks"]>0
+          assert x["maneuvers_approved"]==0
+          assert x["street_widths_measured"]==0
+          print("Yutong inspection priority:",x["tasks_by_route"])
+          PY
       - uses: actions/upload-artifact@v4
         with:
           name: puerto-plata-road-width-shortlist
-          path: projects/puerto-plata-gis/priority_road_width_transects.geojson
+          path: |
+            projects/puerto-plata-gis/priority_road_width_transects.geojson
+            projects/puerto-plata-gis/yutong_field_survey_queue.json
           retention-days: 30
 
   exploratory-fleet-curve:
