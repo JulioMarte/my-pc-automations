@@ -281,3 +281,23 @@ la validación física de bordillos, terminales y espacio barrido.
 **Implicación:** hasta comprobar esos itinerarios, el ranking exploratorio
 de cobertura 10/20/30 no puede tratar los caminos directos de terminal
 como rutas que realmente atienden todos los puntos GIS.
+
+## Resultado verificado de enrutamiento por waypoints
+
+En la corrida de GitHub Actions `38199841866` (21/21 jobs
+exitosos), el Valhalla local enruta cada par consecutivo del MultiPoint:
+- C00-09: 7.505 km; 0 segmentos fallidos.
+- C00-10: 9.904 km; 0 segmentos fallidos.
+- C02-04: 4.376 km; 0 segmentos fallidos.
+
+**No equivale a haber validado 3 servicios comerciales.**
+La serie de puntos podría representar una ruta circular completa,
+mientras la petición terminal a terminal representa un par de recorridos
+independientes; por ello la comparación no se utiliza automáticamente
+para reemplazar distancias de ciclo en CP-SAT. La inferencia de sentido,
+lados de parada y continuidad terminal sigue incompleta.
+
+Se añadió `route_length_comparison.py`, con prueba de regresión y
+artefacto CI `route_length_comparison.json`. La comparación siempre
+conserva `operational_approval=false` y distingue datos de red de
+aprobación de giro.
