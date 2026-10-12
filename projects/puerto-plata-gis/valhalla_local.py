@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse,json,csv
 from pathlib import Path
 from valhalla_audit import pairs
+from valhalla_route_shape import extract_shape
 
 ROOT=Path(__file__).resolve().parent
 def audit(features, actor, limit=6):
@@ -27,7 +28,7 @@ def audit(features, actor, limit=6):
     summary=result["trip"]["summary"]
     if not isinstance(summary.get("length"),(int,float)) or summary["length"]<=0.1 or not isinstance(summary.get("time"),(int,float)) or summary["time"]<=0:
      raise ValueError("Degenerate zero/short route; terminal data or network snapping invalid")
-    row[direction]={"status":"routed","distance_km":summary.get("length"),"time_seconds":summary.get("time")}
+    row[direction]={"status":"routed","distance_km":summary.get("length"),"time_seconds":summary.get("time"),"road_shape":extract_shape(result)}
    except Exception as exc:
     row[direction]={"status":"error","message":str(exc)[:250]}
   row["routed_both_directions"]=all(row[d]["status"]=="routed" for d in ("outbound","inbound"))
