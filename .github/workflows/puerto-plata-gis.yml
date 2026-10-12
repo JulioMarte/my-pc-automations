@@ -618,3 +618,42 @@ jobs:
             projects/puerto-plata-gis/turn_audit.csv
           if-no-files-found: warn
           retention-days: 30
+
+  exploratory-fleet-curve:
+    runs-on: ubuntu-latest
+    needs: [route-competition, network, package]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Install graph and exact optimization engine
+        run: python -m pip install "osmnx==2.0.6" "ortools>=9.10,<10" scipy
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-competencia-redes
+          path: projects/puerto-plata-gis
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-gis-completo
+          path: projects/puerto-plata-gis
+      - uses: actions/download-artifact@v4
+        with:
+          name: puerto-plata-red-vial-osmnx
+          path: projects/puerto-plata-gis
+      - name: Calculate illustrative fleets and A/B L1 comparison
+        run: |
+          python projects/puerto-plata-gis/run_exploratory_fleet.py             --speed-kmh 18 --layover-min 12
+          python - <<'PY'
+          import json
+          p=json.load(open("projects/puerto-plata-gis/fleet_exploratory_10_20_30.json"))
+          assert p["status"].startswith("EXPLORATORY_")
+          assert [r["budget"] for r in p["with_l1"]]==[10,20,30]
+          assert [r["budget"] for r in p["without_l1_constraint"]]==[10,20,30]
+          assert p["candidate_routes"]>=5
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: puerto-plata-curva-flota-exploratoria
+          path: projects/puerto-plata-gis/fleet_exploratory_10_20_30.json
+          retention-days: 30
