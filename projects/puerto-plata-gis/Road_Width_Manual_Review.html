@@ -61,11 +61,11 @@ renderRows();reset();
 document.getElementById('undo').onclick=()=>{if(!rows.length)return;rows.pop();lines.clearLayers();for(const r of rows)L.polyline([[+r.left_lat,+r.left_lon],[+r.right_lat,+r.right_lon]],{color:'#f59e0b',weight:3}).addTo(lines);renderRows();refresh()};
 function renderRows(){document.getElementById('rows').innerHTML='<b>Perfiles sin revisar: '+rows.length+'</b>'+rows.slice(-5).map(r=>'<div class="row-item">'+safe(r.segment_id)+' · '+safe(r.source_date)+' · unreviewed</div>').join('');refresh()}
 function safe(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-function csvCell(value){let s=String(value??'');if(/^[=+@\-\t\r]/.test(s))s="'"+s;return '"'+s.replace(/"/g,'""')+'"'}
+function csvCell(value,field){let s=String(value??'');const numeric=/^(left_lon|left_lat|right_lon|right_lat|uncertainty_m)$/.test(field);if(!numeric&&/^[=+@\-\t\r]/.test(s))s="'"+s;return '"'+s.replace(/"/g,'""')+'"'}
 document.getElementById('export').onclick=()=>{
 if(!rows.length)return;
 const cols=['segment_id','left_lon','left_lat','right_lon','right_lat','source','source_date','source_license','review_status','uncertainty_m'];
-const csv=[cols.join(','),...rows.map(row=>cols.map(k=>csvCell(row[k])).join(','))].join('\r\n')+'\r\n';
+const csv=[cols.join(','),...rows.map(row=>cols.map(k=>csvCell(row[k],k)).join(','))].join('\r\n')+'\r\n';
 const url=URL.createObjectURL(new Blob(['\ufeff',csv],{type:'text/csv;charset=utf-8'}));
 const a=document.createElement('a');a.href=url;a.download='puerto_plata_anchos_sin_revisar.csv';a.click();URL.revokeObjectURL(url);
 };
