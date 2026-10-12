@@ -652,6 +652,18 @@ jobs:
           assert d["status"]=="EXPLORATORIO_SIN_APROBACION_FISICA"
           assert len(d["risks"])>0
           PY
+      - name: Export directed real road geometry
+        run: |
+          cd projects/puerto-plata-gis
+          python -m unittest -v test_route_geometry_qa.py
+          python route_geometry_qa.py --routing valhalla_local_audit.json --report routed_geometry_qa.json --geojson routed_paths.geojson
+          python - <<'PY'
+          import json
+          x=json.load(open('routed_geometry_qa.json'))
+          assert x['routes_checked']>=19
+          assert x['routes_with_both_shapes']==x['routes_checked']
+          assert x['bus_turns_approved']==0
+          PY
       - name: Save actual Valhalla operational evidence
         run: |
           python - <<'PY'
@@ -671,6 +683,8 @@ jobs:
           path: |
             projects/puerto-plata-gis/valhalla_local_audit.json
             projects/puerto-plata-gis/valhalla_turn_audit.csv
+            projects/puerto-plata-gis/routed_geometry_qa.json
+            projects/puerto-plata-gis/routed_paths.geojson
             projects/puerto-plata-gis/valhalla_execution_evidence.json
             projects/puerto-plata-gis/operational_validation_evidence.json
             projects/puerto-plata-gis/yutong_turn_risk_screen.json
