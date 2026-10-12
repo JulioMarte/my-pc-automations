@@ -1,20 +1,34 @@
 # Auditoría de vehículo, giros, flota y aforos
 
-## Vehículo de referencia: Mercedes-Benz Citaro K
-Fuente primaria: https://www.mercedes-benz-bus.com/es/es/models/citaro/facts-citaro.html
+## Vehículo principal del estudio: Yutong ZK6126HG (urbano diésel Euro V)
 
-| Magnitud | Valor | Estado |
+Selección explícita del proyecto. Esta selección **no** significa homologación de rutas, aprobación de compra ni certificación de maniobras.
+
+Fuente primaria: https://en.yutong.com/products/ZK6126HG.shtml
+
+| Magnitud | Valor | Evidencia |
 |---|---:|---|
-| Longitud | 10.633 m | Ficha del fabricante |
-| Anchura carrocería | 2.550 m | Ficha del fabricante |
-| Anchura con espejos | 2.950 m | Ficha del fabricante |
-| Diámetro del círculo de giro | 17.284 m | Ficha del fabricante |
-| Medio diámetro (valor geométrico derivado) | 8.642 m | Derivado, **no** radio barrido |
-| Pendiente máxima admisible con carga | Desconocida | BLOQUEADO |
-| Capacidad de pasajeros de variante específica | Desconocida | BLOQUEADO |
-| Variación de ejes/voladizos y anillo barrido | Disponible parcialmente en ficha | No simulado |
+| Largo | 12.170 m | Ficha Yutong |
+| Ancho carrocería | 2.550 m | Ficha Yutong |
+| Alto | 3.180 m | Ficha Yutong |
+| Asientos | 36 pasajeros + conductor | Ficha Yutong |
+| Capacidad anunciada | 90 o 95 pasajeros según configuración | Ficha Yutong; **no 100** |
+| Emisiones | Euro V | Ficha Yutong |
+| Suspensión | Neumática | Ficha Yutong |
+| Ángulos de ataque y salida | 8° / 8° | Ficha Yutong |
+| Batalla / distancia entre ejes | Pendiente de confirmar versión | No certificar 6 m sin plano de chasis |
+| Anchura con espejos | Desconocida | Pendiente |
+| Círculo de giro y barrido lateral | Desconocido | BLOQUEADO para auditoría física |
+| Pendiente máxima cargado | Desconocida | BLOQUEADO |
+| Puertas, rampa, transmisión, frenos y anticorrosión exactos | Dependen de oferta/configuración | Pendiente de fabricante |
 
-Este vehículo es una referencia para evaluar el caso de un autobús urbano compacto, **no una selección comercial ni una aprobación de circulación local**. La ficha especifica un círculo de giro pero no permite concluir automáticamente que una intersección tenga suficiente radio libre. Se requieren acceso al carril, apertura de mediana, barrido de cola y espejos, radios efectivos, maniobras de terminal y obstáculos.
+**Regla del cálculo:** los campos geométricos no publicados siguen como null. No trasladar al Yutong el círculo de giro de 17.284 m del Citaro K. Tampoco afirmar que una ruta de OSM o Valhalla es maniobrable solo porque conecta los extremos. Para cada giro y retorno se necesitará geometría del espacio barrido, apertura libre de mediana, espejos, voladizos, ángulos de aproximación, obstáculos, pendiente y margen de seguridad.
+
+**Capacidad:** registrar variantes [90, 95], y para estimaciones preliminares usar 90 como extremo inferior anunciado. Es un supuesto de vehículo, **no** un aforo observado ni significa que sea legal operar siempre a plena capacidad.
+
+**Historia de modelos:** el Mercedes-Benz Citaro K (10.633 m) queda como referencia histórica de escenarios previos, NO como vehículo seleccionado. Los resultados anteriores 10/20/30 dependen de ciclos hipotéticos y deben recalcularse/verificarse con la geometría del Yutong antes de aprobación.
+
+**Solicitud imprescindible al fabricante:** plano acotado de la variante ofertada (incluyendo espejos y voladizos), curva de barrido/radio mínimo de giro a distintas velocidades y con carga, batalla, masas por eje, despeje al suelo, pendiente máxima arrancando con plena carga, accesibilidad/rampa y homologación de la configuración concreta.
 
 ## Pipeline aplicado
 
