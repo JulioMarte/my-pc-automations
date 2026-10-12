@@ -965,12 +965,12 @@ jobs:
         run: |
           cd projects/puerto-plata-gis/algorithmic_v2
           python -m unittest -v test_score_candidates.py
-          python score_candidates.py --candidates generated_routes.geojson --od synthetic_gravity_od.json --walk ../walk.graphml --config config.json --output scored_candidates.json
+          python score_candidates.py --candidates generated_routes.geojson --od synthetic_gravity_od.json --walk ../walk.graphml --zones zones_h3_res8.json --config config.json --output scored_candidates.json
           python robustness.py --scored scored_candidates.json --config config.json --output route_robustness.json
           python -m unittest -v test_select_network.py
           python select_network.py --scored scored_candidates.json --od synthetic_gravity_od.json --output networks_10_20_30.json
           python map_desires.py --desires desire_lines.geojson --keyzones top20_key_zones.geojson --output map_desire_lines.html
-          python l1_control.py --legacy ../initial_route.geojson --scored scored_candidates.json --od synthetic_gravity_od.json --walk ../walk.graphml --config config.json --output historical_L1_control.json
+          python l1_control.py --legacy ../initial_route.geojson --scored scored_candidates.json --od synthetic_gravity_od.json --walk ../walk.graphml --zones zones_h3_res8.json --config config.json --output historical_L1_control.json
           python phase_gates.py --zones zones_h3_res8.json --od synthetic_gravity_od.json --candidates generated_routes.geojson --turns yutong_turn_screen.json --scored scored_candidates.json --robust route_robustness.json --networks networks_10_20_30.json --config config.json --output evidence_gates.json
           python - <<'PY'
           import json
