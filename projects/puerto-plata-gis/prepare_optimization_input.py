@@ -7,9 +7,6 @@ Missing cycles are not filled from generic speeds; FAIL CLOSED.
 from __future__ import annotations
 import argparse,csv,json
 from pathlib import Path
-import osmnx as ox
-from network_access import Network
-from discover_transit_network import preproject,reached
 
 ROOT=Path(__file__).resolve().parent
 def load_cycles(path):
@@ -29,6 +26,8 @@ def load_cycles(path):
  return cycles
 
 def build(g,pop,features,cycles,max_snap=60,radius=500):
+ from network_access import Network
+ from discover_transit_network import preproject,reached
  network=Network(g)
  west,south,east,north=-70.752,19.740,-70.620,19.836
  in_bounds=[(lat,lon,val) for lat,lon,val in pop if west<=lon<=east and south<=lat<=north and val>0]
@@ -54,6 +53,7 @@ def main():
  cycles=load_cycles(args.cycles_csv)
  features=json.loads((root/"discovered_routes.geojson").read_text())["features"]
  pop=json.loads((root/"population.json").read_text())["cells"]
+ import osmnx as ox
  g=ox.load_graphml(root/"walk.graphml")
  report=build(g,pop,features,cycles)
  args.output.write_text(json.dumps(report))
