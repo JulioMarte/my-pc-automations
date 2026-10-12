@@ -1,5 +1,5 @@
 import unittest,networkx as nx
-from od_first_score import score,stop_samples
+from od_first_score import score,stop_samples,walk_index
 class ScoringTests(unittest.TestCase):
  def inputs(self):
   pts=[[-70.700,19.80],[-70.697,19.8]]
@@ -15,7 +15,14 @@ class ScoringTests(unittest.TestCase):
   g.add_edge(1,2,length=330);g.add_edge(2,1,length=330)
   return route,od,zones,g,{"primary_resolution":8,"service_assumptions":{"max_walk_m":500}}
  def test_directional_od_and_no_recommendation(self):
-  r=score(*self.inputs())
+  inputs=self.inputs()
+  stops=stop_samples(inputs[0]["candidates"][0]["geometry"]["coordinates"],inputs[2]["h3_cells"]["8"])
+  self.assertGreaterEqual(len(stops),2)
+  snap,access=walk_index(inputs[3],inputs[2]["h3_cells"]["8"])
+  self.assertIn("a",access)
+  self.assertIn("b",access)
+  print("WALK_DIAGNOSTIC",stops,snap(stops),{k:list(v[1].items()) for k,v in access.items()})
+  r=score(*inputs)
   self.assertEqual(len(r["candidate_scores"]),1)
   self.assertGreater(r["candidate_scores"][0]["captured_od_trips_hypothetical_base"],0)
   self.assertIsNone(r["initial_route_recommendation"])
