@@ -33,6 +33,7 @@ from typing import Any, Callable
 DEFAULTS: dict[str, tuple[float, float, int]] = {
     "page": (3.0, 6.0, 250),         # listado, metadatos, busqueda (cada uno son 1-3 peticiones reales)
     "transcript": (12.0, 25.0, 90),  # endpoint de subtitulos: el mas sensible
+    "supadata": (1.1, 1.6, 3000),    # proveedor externo: su limite es 1 peticion/segundo (plan gratis)
 }
 BASE_COOLDOWN = 3600.0
 MAX_COOLDOWN = 24 * 3600.0
@@ -109,7 +110,7 @@ class Pacer:
             st = self._load()
             now = self.clock()
             # un bloqueo de paginas tambien frena los subtitulos (es una senal mas fuerte)
-            for k in ([cat, "page"] if cat != "page" else [cat]):
+            for k in ([cat, "page"] if cat == "transcript" else [cat]):
                 c = self._cat(st, k)
                 if c["cooldown_until"] > now:
                     raise PausedError(

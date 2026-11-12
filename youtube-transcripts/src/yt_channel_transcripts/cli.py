@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -168,6 +169,8 @@ def main(argv: list[str] | None = None) -> int:
     pr.add_argument("--format", default="pdf", choices=("md", "pdf", "both"))
     pr.add_argument("--fetch-limit", type=int, default=20)
     pr.add_argument("--max-tokens", type=int, default=100000, help="por archivo (0 = un solo archivo)")
+    pr.add_argument("--provider", choices=("youtube", "supadata"), default=None,
+                    help="de donde bajar las transcripciones (supadata: clave en SUPADATA_API_KEY o supadata.key)")
 
     pc = sub.add_parser("pacing", help="estado del limitador (o --reset tras cambiar de red)")
     pc.add_argument("--reset", action="store_true")
@@ -253,6 +256,8 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 _print(ytcat.selection_show(store, a.name) if a.name else ytcat.selection_list(store))
         elif a.cmd == "process":
+            if a.provider:
+                os.environ["YT_TRANSCRIPT_PROVIDER"] = a.provider
             r = ytcat.process_selection(store, a.name, format=a.format, fetch_limit=a.fetch_limit,
                                         max_tokens_per_file=a.max_tokens)
             _print(r)

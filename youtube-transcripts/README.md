@@ -128,6 +128,21 @@ Otros clientes (Claude Desktop, Cursor, etc.), en su `mcpServers`:
 }
 ```
 
+## Proveedor externo opcional: Supadata
+
+Si YouTube bloquea la IP para subtitulos, las transcripciones se pueden pedir a
+[Supadata](https://supadata.ai), que las baja desde su infraestructura (esta maquina no hace
+ninguna peticion a YouTube para esos videos).
+
+- Activar: `YT_TRANSCRIPT_PROVIDER=supadata`, o `process --provider supadata` (CLI), o
+  `process_selection(provider="supadata")` (MCP).
+- Clave: `SUPADATA_API_KEY` o el archivo `~/.yt-channel-transcripts/supadata.key` (lo crea el
+  usuario desde https://dash.supadata.ai; nunca se imprime ni va al repo).
+- Siempre `mode=native`: **1 credito por video, sin importar la duracion**. Nunca se usa la
+  transcripcion con IA (2 creditos por minuto: un podcast de 2 h serian 240). Un video sin
+  subtitulos tambien cobra 1 credito. Plan gratis: 100 creditos/mes, 1 peticion/segundo.
+- Ritmo propio (1,1-1,6 s); una clave invalida o sin creditos detiene la corrida.
+
 ## Herramientas MCP
 
 | Herramienta | Uso |

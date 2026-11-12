@@ -10,6 +10,7 @@ Asi las transcripciones no inundan el contexto salvo cuando se piden.
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import anyio
@@ -168,13 +169,18 @@ def selection_show(name: str | None = None) -> Any:
 
 @mcp.tool()
 async def process_selection(name: str, format: str = "pdf", fetch_limit: int = 20,
-                            doc_title: str | None = None, max_tokens_per_file: int = 100000) -> dict[str, Any]:
+                            doc_title: str | None = None, max_tokens_per_file: int = 100000,
+                            provider: str | None = None) -> dict[str, Any]:
     """Cuando termines de revisar: baja las transcripciones de los videos de la lista (solo esos,
     hasta fetch_limit) y genera el documento (pdf | md | both) con todos, partido en archivos de
     ~max_tokens_per_file tokens sin cortar ningun video (0 = un solo archivo), mas un apendice de
     los que no se pudieron incluir y por que. Reanudable: si YouTube limita la IP, llamala de
-    nuevo mas tarde y el documento se regenera completo."""
+    nuevo mas tarde y el documento se regenera completo.
+    provider: 'youtube' (defecto, gratis, sujeto a bloqueos de la IP) o 'supadata' (servicio externo:
+    1 credito por video en modo native; requiere SUPADATA_API_KEY o el archivo supadata.key)."""
     st = _store()
+    if provider:
+        os.environ["YT_TRANSCRIPT_PROVIDER"] = provider
     return await anyio.to_thread.run_sync(lambda: ytcat.process_selection(
         st, name, format=format, fetch_limit=fetch_limit, doc_title=doc_title,
         max_tokens_per_file=max_tokens_per_file))
