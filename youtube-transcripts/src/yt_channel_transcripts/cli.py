@@ -24,6 +24,7 @@ from pathlib import Path
 
 from . import core
 from . import document as ytdoc
+from . import catalog as ytcat
 from . import search as yts
 from . import topic as yttopic
 
@@ -57,7 +58,7 @@ def main(argv: list[str] | None = None) -> int:
     h.add_argument("--all", action="store_true", help="seguir en tandas hasta terminar")
     h.add_argument("--lang", default=None, help="idiomas preferidos: original (defecto), en, es,en...")
     h.add_argument("--no-metadata", action="store_true", help="no bajar descripcion/capitulos")
-    h.add_argument("--tab", default="videos", choices=core.TABS)
+    h.add_argument("--tab", default="videos", choices=core.LIST_TABS)
     h.add_argument("--retry-errors", action="store_true")
     h.add_argument("--delay", type=float, default=1.0)
 
@@ -66,7 +67,9 @@ def main(argv: list[str] | None = None) -> int:
     m.add_argument("--max", type=int, default=50)
     m.add_argument("--title")
     m.add_argument("--refresh-list", action="store_true")
-    m.add_argument("--delay", type=float, default=1.0)
+    m.add_argument("--tab", default="all", choices=core.LIST_TABS)
+    m.add_argument("--concurrency", type=int, default=3)
+    m.add_argument("--delay", type=float, default=0.5)
 
     sub.add_parser("channels", help="canales en cache")
 
@@ -146,6 +149,25 @@ def main(argv: list[str] | None = None) -> int:
     tp.add_argument("--max-per-term", type=int, default=30)
     tp.add_argument("--no-youtube", action="store_true")
 
+    cg = sub.add_parser("catalog", help="catalogo del canal: ID | fecha | duracion | titulo | descripcion")
+    cg.add_argument("channel")
+    cg.add_argument("--offset", type=int, default=0)
+    cg.add_argument("--limit", type=int, default=100)
+    cg.add_argument("--chars", type=int, default=400)
+    cg.add_argument("--refresh", action="store_true")
+
+    sl = sub.add_parser("select", help="lista de seleccion: agregar/quitar/ver")
+    sl.add_argument("name", nargs="?")
+    sl.add_argument("--add", nargs="*")
+    sl.add_argument("--remove", nargs="*")
+    sl.add_argument("--channel")
+    sl.add_argument("--topic")
+
+    pr = sub.add_parser("process", help="transcripciones de la lista + documento unico")
+    pr.add_argument("name")
+    pr.add_argument("--format", default="pdf", choices=("md", "pdf", "both"))
+    pr.add_argument("--fetch-limit", type=int, default=100)
+
     sub.add_parser("reindex", help="reconstruir el indice de busqueda")
     sub.add_parser("serve", help="servidor MCP por stdio")
 
@@ -168,7 +190,8 @@ def main(argv: list[str] | None = None) -> int:
                     return 2 if r["blocked"] else 0
         elif a.cmd == "metadata":
             r = core.fetch_metadata(store, a.channel, max_videos=a.max, title_filter=a.title,
-                                    refresh_list=a.refresh_list, delay=a.delay, progress=_progress)
+                                    refresh_list=a.refresh_list, tab=a.tab, concurrency=a.concurrency,
+                                    delay=a.delay, progress=_progress)
             _print(r)
             return 2 if r["blocked"] else 0
         elif a.cmd == "channels":
@@ -209,6 +232,22 @@ def main(argv: list[str] | None = None) -> int:
         elif a.cmd == "topic":
             _print(yttopic.find_topic_candidates(store, a.channel, a.terms, max_per_term=a.max_per_term,
                                                  use_youtube_search=not a.no_youtube))
+        elif a.cmd == "catalog":
+            r = ytcat.catalog(store, a.channel, offset=a.offset, limit=a.limit, description_chars=a.chars,
+                              refresh=a.refresh)
+            print(f"# {r['channel']}: {r['total']} videos ({r['with_metadata']} con descripcion); "
+                  f"offset {r['offset']}, siguiente {r['next_offset']}")
+            print("\n".join(r["videos"]))
+        elif a.cmd == "select":
+            if a.add or a.remove or a.channel or a.topic:
+                _print(ytcat.selection_update(store, a.name, add=a.add, remove=a.remove, channel=a.channel,
+                                              topic=a.topic))
+            else:
+                _print(ytcat.selection_show(store, a.name) if a.name else ytcat.selection_list(store))
+        elif a.cmd == "process":
+            r = ytcat.process_selection(store, a.name, format=a.format, fetch_limit=a.fetch_limit)
+            _print(r)
+            return 2 if (r.get("fetched") or {}).get("blocked") else 0
         elif a.cmd == "reindex":
             _print(core.rebuild_index(store))
     except (KeyError, ValueError) as exc:

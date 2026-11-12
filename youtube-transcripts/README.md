@@ -89,7 +89,10 @@ Otros clientes (Claude Desktop, Cursor, etc.), en su `mcpServers`:
 | `search_channel_videos(channel, query, limit=20)` | Buscador propio del canal en YouTube: titulos y descripciones de **todo** el canal sin haberlo descargado |
 | `harvest_channel(channel, max_videos=20, title_filter, video_ids, list_limit, languages, metadata=True, tab, retry_errors, delay_seconds)` | Lista el canal y procesa hasta `max_videos` videos pendientes: metadatos + transcripcion. `title_filter`/`video_ids` limitan cuales. Si `pending > 0`, volver a llamarla |
 | `harvest_channel(channel, max_videos=0)` | Solo lista el canal (titulos de todos los videos) sin bajar nada mas |
-| `fetch_metadata(channel, max_videos=50, title_filter, video_ids)` | Solo descripcion, capitulos, tags y fecha exacta (sin transcribir), para filtrar por descripcion antes de decidir |
+| `catalog(channel, offset, limit=100, description_chars=400)` | **Catalogo completo** para que el modelo lo revise: `ID \| fecha \| duracion \| titulo \| descripcion` por video, paginado, sin el texto que el canal repite en todas sus descripciones |
+| `selection_update(name, add, remove, channel, topic, reviewed_until)` / `selection_show(name)` | **Lista persistente** de videos elegidos por el modelo mientras revisa el catalogo |
+| `process_selection(name, format=pdf, fetch_limit=100)` | Baja las transcripciones **solo** de la lista y genera **un unico** documento (con apendice de faltantes). Reanudable |
+| `fetch_metadata(channel, max_videos=500, tab=all, concurrency=3)` | Solo descripcion, capitulos, tags y fecha exacta (sin transcribir), para filtrar por descripcion antes de decidir |
 | `find_videos(channel, title, description, text, date_from, date_to, min_minutes, max_minutes, has_transcript, video_ids, sort, limit, offset)` | **Filtra** videos: titulo, enlace, fecha, duracion, estado y fragmento de la descripcion |
 | `search_transcripts(query, channel, title, description, date_from, date_to, video_ids, max_results, per_video)` | Busca en lo hablado por relevancia; enlace `&t=` al segundo, capitulo y fragmento resaltado |
 | `get_transcript(video, format=paragraphs\|text\|segments, clean, max_chars=20000, offset)` | Texto paginado (`next_offset`). Si el video no esta en cache, lo baja |
@@ -122,25 +125,31 @@ todos los videos listados.
 
 ### Dump de un canal sobre un tema -> un solo PDF
 
-Pide algo como *"dame en un PDF todo lo que QuantumFracture ha dicho sobre agujeros
-negros"* (o usa el prompt `dump_tema_canal`). El modelo:
+Pide algo como *"dame en un PDF todo lo que QuantumFracture ha explicado sobre agujeros
+negros"* (o usa el prompt `dump_tema_canal`). El modelo revisa **todo** el canal y decide
+el mismo, no un filtro por palabras:
 
 1. confirma el canal (`search_youtube(kind="channel")` si hace falta),
-2. genera de 4 a 10 terminos del tema (sinonimos, conceptos relacionados, siglas),
-3. llama `find_topic_candidates`, que junta candidatos de tres vias y dice por cual
-   aparecio cada uno (`sources`); los que aparecen por varias vias son los mas seguros,
-4. revisa titulo y descripcion y descarta lo que no encaja (aqui entra la intencion),
-5. llama `export_videos(video_ids=..., fetch_missing=true, format="pdf", max_chars_per_file=0)`,
-6. entrega la ruta del PDF, cuantos videos incluye, cuales faltan y el criterio usado.
+2. `fetch_metadata(channel)` hasta `pending=0`: titulo y descripcion de **todos** los videos,
+   incluidos Shorts y directos (`tab="all"`, la playlist de subidas del canal),
+3. recorre `catalog` pagina por pagina y juzga cada video por su titulo y descripcion
+   (sinonimos, subtemas, videos donde el tema es central; descarta menciones de paso),
+4. va anotando los elegidos con `selection_update` (la lista queda en disco, junto con hasta
+   donde reviso, para retomar si se interrumpe),
+5. al terminar la revision, `process_selection` baja **solo** esas transcripciones y genera
+   **un unico PDF** con indice, un marcador por video y, al final, "Videos relevantes no
+   incluidos" con el motivo de cada uno,
+6. informa ruta, videos revisados, elegidos (y el criterio), incluidos y faltantes.
 
-El PDF trae indice, un marcador por video y, al final, **"Videos relevantes no
-incluidos"** con el motivo de cada uno (sin subtitulos, pendiente porque YouTube limito la
-IP, Short/directo fuera del listado...). Si faltan videos por el limite de YouTube, volver a
-pedir el mismo dump mas tarde retoma la descarga y genera el PDF completo.
+Si YouTube limita la IP a mitad de camino, `process_selection` genera el PDF con lo que
+haya; llamarla de nuevo mas tarde completa lo que falta y regenera el mismo archivo.
 
-Prueba real (canal de 318 videos, terminos "agujero negro", "agujeros negros", "horizonte de
-sucesos", "singularidad", "Hawking"): 60 candidatos, incluidos Shorts que no salen en el
-listado principal; los mas fuertes aparecieron por 4-5 vias.
+Coste real medido (canal de 633 subidas): ~1,3 s por video para las descripciones con 3
+peticiones en paralelo (~14 min el canal entero, una sola vez: despues es incremental), y
+~150-250 tokens por video en el catalogo (~100-150k tokens para revisar 633 videos).
+
+`find_topic_candidates(channel, terms)` sigue disponible como atajo por palabras (buscador
+del canal en YouTube + indice local) cuando no hace falta revisar el canal entero.
 
 ### Documento final para otro LLM (`export_videos`)
 
@@ -207,6 +216,10 @@ uv run yt-transcripts youtube "neutrinos" --sort views --duration medium
 uv run yt-transcripts youtube "Reserva Federal" --upload-date week --sort date
 uv run yt-transcripts channel-search @QuantumFracture "agujero negro"
 uv run yt-transcripts topic @QuantumFracture "agujero negro" "horizonte de sucesos" "Hawking"
+uv run yt-transcripts metadata @QuantumFracture --max 1000            # descripciones de todo el canal
+uv run yt-transcripts catalog @QuantumFracture --offset 0 --limit 100  # revisar
+uv run yt-transcripts select "qf agujeros negros" --channel @QuantumFracture --topic "agujeros negros" --add ID1 ID2
+uv run yt-transcripts process "qf agujeros negros" --format pdf
 uv run yt-transcripts harvest @QuantumFracture --max 50              # 50 videos mas recientes
 uv run yt-transcripts harvest @QuantumFracture --all --delay 2       # todo el canal, en tandas
 uv run yt-transcripts harvest @QuantumFracture --title "nobel OR neutrino*"
@@ -272,7 +285,8 @@ cambies `languages`; usa `get_transcript` para pedir otro idioma de un video con
     transcripts_by_lang/      # <id>.<idioma>.json: otros idiomas pedidos con get_transcript
     export.{jsonl,csv,md}     # exportaciones
   _videos/                    # videos sueltos pedidos con get_transcript/get_video_info
-  exports/                    # documentos .md/.pdf generados con export_videos
+  exports/                    # documentos .md/.pdf generados con export_videos / process_selection
+  selections/                 # listas de videos elegidos (selection_update)
   index.sqlite                # indice FTS5 derivado (se puede borrar: se rehace solo)
 ```
 

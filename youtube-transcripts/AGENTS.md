@@ -15,7 +15,8 @@ politica del repositorio; solo anade reglas locales.
 - **Logica en `core.py`, sin red en los tests** (CONTROLLED): la red entra por los
   parametros inyectables `lister`, `fetcher`, `enricher` y `sub_fetcher`. `server.py`
   y `cli.py` son capas finas sobre `core`; `text.py` limpia y arma parrafos;
-  `search.py` busca en YouTube (inyectable `searcher`). `document.py` arma el documento MD/PDF.
+  `search.py` busca en YouTube (inyectable `searcher`). `document.py` arma el documento MD/PDF. `topic.py` busca candidatos
+  por tema; `catalog.py` catalogo, listas de seleccion y procesamiento final.
 - **Sin API key ni credenciales** (HARD): no usar la YouTube Data API ni cuentas de
   Google; todo va por paginas publicas via `yt-dlp`/`youtube-transcript-api`.
 - **JSON = verdad, SQLite = indice** (HARD): `index.py` (FTS5, biblioteca estandar)
