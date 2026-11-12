@@ -17,8 +17,16 @@ politica del repositorio; solo anade reglas locales.
   y `cli.py` son capas finas sobre `core`; `text.py` limpia y arma parrafos;
   `search.py` busca en YouTube (inyectable `searcher`). `document.py` arma el documento MD/PDF. `topic.py` busca candidatos
   por tema; `catalog.py` catalogo, listas de seleccion y procesamiento final.
-- **Sin API key ni credenciales** (HARD): no usar la YouTube Data API ni cuentas de
-  Google; todo va por paginas publicas via `yt-dlp`/`youtube-transcript-api`.
+- **Credenciales** (HARD): ninguna en el codigo ni en el repo. La API key opcional de la
+  YouTube Data API la crea el usuario y se lee de `YT_API_KEY`; solo para listado y
+  metadatos (`official.py`). Nunca cookies de cuentas de Google.
+- **Ritmo** (HARD): todo adaptador de red real pasa por `pacing.py` (`core._net`): intervalo
+  aleatorio, presupuesto horario y pausa escalonada tras bloqueo. Sin paralelismo por
+  defecto. Un bloqueo detiene la corrida; no se prueba otro endpoint.
+- **Sin evasion** (HARD): no rotar proxies, no generar tokens PO, no falsear cliente ni
+  User-Agent para esquivar limites de YouTube.
+- **Tests sin red** (HARD): ningun test fuera de `-m network` puede tocar la red (los
+  adaptadores reciben el opener/lister/fetcher como parametro).
 - **JSON = verdad, SQLite = indice** (HARD): `index.py` (FTS5, biblioteca estandar)
   es derivado y reconstruible con `rebuild_index`; nunca guardar datos solo en el indice.
 - **Respuestas MCP acotadas** (CONTROLLED): las herramientas devuelven resumenes y

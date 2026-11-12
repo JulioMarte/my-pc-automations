@@ -18,6 +18,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from . import core
 from . import document as ytdoc
 from . import catalog as ytcat
+from . import pacing as ytpace
 from . import search as yts
 from . import topic as yttopic
 
@@ -51,7 +52,9 @@ Los filtros son por palabras, no por significado. Para respetar la INTENCION del
     los que no encajan, y
  c) llama export_videos con video_ids = los elegidos. Explica al usuario que criterio usaste.
 6. get_video_info: descripcion completa, capitulos, tags. export_channel: jsonl/csv/md del canal.
-Si 'blocked' trae texto, YouTube limito la IP: no reintentes enseguida."""
+RITMO: la herramienta limita sola el ritmo y el volumen (presupuesto por hora) y, tras un bloqueo,
+se pausa 1 h, 2 h, 4 h... Si 'blocked' trae texto, NO reintentes: informa al usuario de la hora a
+partir de la cual se puede seguir (rate_status). Trabajos grandes van en varias tandas."""
 
 mcp = MCPServer("youtube-transcripts", instructions=INSTRUCTIONS)
 _STORE: core.Store | None = None
@@ -120,19 +123,17 @@ async def fetch_metadata(
     video_ids: list[str] | None = None,
     refresh_list: bool = False,
     tab: str = "all",
-    concurrency: int = 3,
-    delay_seconds: float = 0.5,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Baja solo metadatos (descripcion, capitulos, tags, fecha exacta) sin transcripcion,
     para poder revisar el canal (catalog) o filtrar por descripcion antes de decidir que transcribir.
     Si el canal no esta en cache, lo lista primero (tab='all' = videos + Shorts + directos).
-    ~1,5 s por video con concurrency=3; reanudable: si 'pending' > 0, vuelve a llamarla."""
+    ~4-5 s por video (ritmo automatico, presupuesto ~250/hora); reanudable: si 'pending' > 0 y no
+    hay 'blocked', vuelve a llamarla. Con YT_API_KEY configurada usa la API oficial (segundos)."""
     st = _store()
     return await anyio.to_thread.run_sync(lambda: core.fetch_metadata(
         st, channel, max_videos=max_videos, title_filter=title_filter, video_ids=video_ids,
-        refresh_list=refresh_list, tab=tab, concurrency=concurrency, delay=delay_seconds,
-        progress=_progress_cb(ctx)))
+        refresh_list=refresh_list, tab=tab, progress=_progress_cb(ctx)))
 
 
 @mcp.tool()
@@ -166,15 +167,17 @@ def selection_show(name: str | None = None) -> Any:
 
 
 @mcp.tool()
-async def process_selection(name: str, format: str = "pdf", fetch_limit: int = 100,
-                            doc_title: str | None = None) -> dict[str, Any]:
+async def process_selection(name: str, format: str = "pdf", fetch_limit: int = 20,
+                            doc_title: str | None = None, max_tokens_per_file: int = 100000) -> dict[str, Any]:
     """Cuando termines de revisar: baja las transcripciones de los videos de la lista (solo esos,
-    hasta fetch_limit) y genera UN unico documento (pdf | md | both) con todos, mas un apendice de
+    hasta fetch_limit) y genera el documento (pdf | md | both) con todos, partido en archivos de
+    ~max_tokens_per_file tokens sin cortar ningun video (0 = un solo archivo), mas un apendice de
     los que no se pudieron incluir y por que. Reanudable: si YouTube limita la IP, llamala de
     nuevo mas tarde y el documento se regenera completo."""
     st = _store()
     return await anyio.to_thread.run_sync(lambda: ytcat.process_selection(
-        st, name, format=format, fetch_limit=fetch_limit, doc_title=doc_title))
+        st, name, format=format, fetch_limit=fetch_limit, doc_title=doc_title,
+        max_tokens_per_file=max_tokens_per_file))
 
 
 def _annotate(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -237,6 +240,13 @@ async def find_topic_candidates(channel: str, terms: list[str], max_per_term: in
     r = await anyio.to_thread.run_sync(lambda: yttopic.find_topic_candidates(
         st, channel, terms, max_per_term=max_per_term, use_youtube_search=use_youtube_search))
     return r
+
+
+@mcp.tool()
+def rate_status() -> dict[str, Any]:
+    """Estado del limitador: peticiones usadas en la ultima hora, presupuesto, intervalo y si hay
+    una pausa activa por bloqueo de YouTube (y hasta cuando)."""
+    return ytpace.get_pacer().status()
 
 
 @mcp.tool()

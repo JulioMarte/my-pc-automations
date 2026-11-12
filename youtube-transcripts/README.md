@@ -6,7 +6,55 @@ descripcion y transcripcion** de los videos de un canal, guardarlos en una cache
 resultado como **documento Markdown o PDF** para otro LLM (o para que el mismo lo analice).
 
 **No necesita API key de YouTube ni cuenta de Google**: usa las mismas paginas publicas
-que la web, a traves de `yt-dlp` y `youtube-transcript-api`.
+que la web, a traves de `yt-dlp` y `youtube-transcript-api`. **Opcional y recomendado**: una
+API key gratuita de la YouTube Data API (`YT_API_KEY`) hace el listado y los metadatos por la
+via oficial (ver "Como evita bloqueos").
+
+## Como evita bloqueos (y que no hace)
+
+YouTube limita por IP. Lo que dispara el bloqueo es el **volumen** y **seguir pidiendo tras
+un aviso**, no "parecer humano": la decision usa la reputacion de la IP, el ritmo, el tipo de
+cliente y tokens de atestacion, y no se engana con pausas aleatorias o cambiando el
+User-Agent. En las pruebas de este proyecto se bloquearon las transcripciones tras ~20
+seguidas, y luego se insistio varias veces durante el bloqueo; la primera version de la
+descarga de metadatos llego a ~2-4 veces el ritmo que la guia de yt-dlp considera seguro.
+
+Lo que hace ahora (`pacing.py`, estado compartido por maquina en
+`~/.yt-channel-transcripts/pacing.json`):
+
+| Medida | Paginas (listado, metadatos, busqueda) | Transcripciones |
+|---|---|---|
+| Intervalo entre peticiones | 3-6 s aleatorio | 12-25 s aleatorio |
+| Presupuesto | 250/hora | 90/hora |
+| En paralelo | no (una a la vez) | no |
+
+- **Pausa tras bloqueo**: ante 429 / IpBlocked / "Sign in to confirm" se deja de pedir por
+  completo 1 h; si vuelve a pasar, 2 h, 4 h... hasta 24 h. Durante la pausa no se hace
+  ninguna peticion (la herramienta responde al instante con la hora de reanudacion). Un
+  bloqueo de paginas pausa tambien las transcripciones.
+- **Un bloqueo detiene la corrida**: ya no se prueba otro endpoint ni el siguiente video.
+- **Menos peticiones por video**: con los metadatos ya bajados, la transcripcion se pide con
+  la URL de subtitulos que trae la ficha del video (1 peticion) en vez de la API publica (2-3).
+- **Cache e incremental**: nada se pide dos veces; un canal ya listado solo pide lo nuevo.
+- Estado: `rate_status` (MCP) o `yt-transcripts pacing`. `--reset` borra pausas (solo tras
+  cambiar de red). Valores por entorno: `YT_PAGE_PER_HOUR`, `YT_TRANSCRIPT_PER_HOUR`,
+  `YT_*_MIN_SECONDS`, `YT_*_MAX_SECONDS`.
+
+Coste: un dump de 50 videos tarda ~20-40 min de transcripciones; un canal grande se hace en
+tandas, idealmente desatendido (CLI en segundo plano o tarea programada).
+
+**API oficial (`YT_API_KEY`)**: listado y metadatos por la YouTube Data API v3. 1 unidad de
+cuota por cada 50 videos (cuota gratuita: 10 000/dia): un canal de 400 videos son ~18
+peticiones en segundos, en vez de >1000 paginas web. La clave la crea el usuario en Google
+Cloud Console (proyecto -> habilitar "YouTube Data API v3" -> credenciales -> clave de API,
+restringida a esa API) y se pasa por entorno; nunca se guarda en el repo. La API oficial
+**no** da transcripciones de videos ajenos (`captions.download` exige permiso de edicion), asi
+que las transcripciones siguen por la via publica con el ritmo de arriba.
+
+**Que NO hace, a proposito**: rotar proxies para esquivar el limite, generar tokens PO para
+saltarse la verificacion anti-bots, falsear el navegador o usar las cookies de tu cuenta de
+Google (yt-dlp advierte de riesgo de baneo de la cuenta). `YT_PROXY_HTTP/HTTPS` admite un proxy
+propio, pero no es una forma de esquivar bloqueos y sigue sujeto al mismo ritmo.
 
 ## Por que existe (y que NO reinventa)
 
@@ -246,6 +294,8 @@ por `-`, pasa la URL completa (o `--` antes del ID).
 | `YT_LANGS` | `original` | Idiomas preferidos, en orden (`original` = el idioma hablado en el video) |
 | `YT_SEARCH_LANG` | `es` | Idioma de la interfaz para `search_youtube` (afecta titulos traducidos) |
 | `YT_PDF_FONT` / `YT_PDF_FONT_BOLD` | Arial o DejaVu del sistema | Fuente TTF para el PDF (si no hay ninguna, se usa Helvetica sin caracteres fuera de latin-1) |
+| `YT_API_KEY` | (vacio) | Clave de la YouTube Data API v3: listado y metadatos por la via oficial |
+| `YT_PACING_FILE` | `~/.yt-channel-transcripts/pacing.json` | Estado del limitador (compartido por maquina) |
 | `YT_PROXY_HTTP` / `YT_PROXY_HTTPS` | (vacio) | Proxy para `youtube-transcript-api` si YouTube bloquea la IP |
 
 ### Idioma
