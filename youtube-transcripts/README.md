@@ -94,7 +94,7 @@ Otros clientes (Claude Desktop, Cursor, etc.), en su `mcpServers`:
 | `get_transcript(video, format=paragraphs\|text\|segments, clean, max_chars=20000, offset)` | Texto paginado (`next_offset`). Si el video no esta en cache, lo baja |
 | `get_video_info(video)` | Descripcion completa, capitulos, tags, fecha exacta, vistas y estado de la transcripcion |
 | `list_channels()` | Canales en cache: videos listados, con metadatos y con transcripcion |
-| `export_videos(video_ids, channel, title, description, text, query, date_from, date_to, language, limit=50, format=md\|pdf\|both, doc_title, include_description, include_chapters, max_chars_per_file, return_content)` | **Documento final** con varios videos para un LLM: indice, metadatos, descripcion, capitulos y transcripcion con `[m:ss]`. Devuelve rutas y tokens aproximados |
+| `export_videos(video_ids, channel, title, description, text, query, date_from, date_to, language, limit=None, format=md\|pdf\|both, doc_title, include_description, include_chapters, max_chars_per_file=400000, return_content, fetch_missing=false, fetch_limit=50)` | **Documento final** con TODOS los videos que cumplen el filtro: indice, metadatos, descripcion, capitulos y transcripcion con `[m:ss]`. Con `fetch_missing` descarga antes lo que falta. Devuelve rutas, tokens y `coverage` |
 | `export_channel(channel, format=jsonl\|csv\|md, text_format, title_filter)` | Archivo con titulo, enlace, fecha, idioma, descripcion y transcripcion |
 | `rebuild_index()` | Reconstruye el indice desde los JSON |
 
@@ -132,10 +132,32 @@ Junta los videos elegidos en **un solo archivo**:
 
 Formatos: **`md`** (recomendado para LLM: menos tokens y estructura clara), **`pdf`** (para
 subirlo a una interfaz de chat o leerlo; minutos clicables y un marcador por video) o
-`both`. Los archivos van a `<YT_TRANSCRIPTS_DIR>/exports/`. Si el resultado es grande,
-`max_chars_per_file` lo parte en varios `.md` sin cortar ningun video (400 000 caracteres
-son ~100k tokens). `approx_tokens` estima el tamano (caracteres / 4). Los videos sin
-transcripcion se listan en `without_transcript` para descargarlos con `harvest_channel`.
+`both`. Los archivos van a `<YT_TRANSCRIPTS_DIR>/exports/`.
+
+- **Incluye todos los videos que cumplen el filtro** (`limit=None`). El Markdown se parte en
+  archivos de ~100k tokens (`max_chars_per_file=400000`; `0` = un solo archivo) sin cortar
+  ningun video. `approx_tokens` estima el tamano (caracteres / 4).
+- **`coverage`** dice cuantos videos cumplen el filtro (`matching`), cuantos entraron
+  (`with_transcript`), cuantos no tienen transcripcion todavia (`without_transcript`) y, si
+  filtraste por descripcion, cuantos **no se pudieron evaluar** por no tener metadatos
+  (`not_evaluated_no_metadata`).
+- **`fetch_missing=true`** descarga antes (hasta `fetch_limit`, ~5 s por video) los videos que
+  cumplen el filtro y no tienen transcripcion; si filtras por descripcion, baja tambien los
+  metadatos que falten. Si YouTube limita la IP, genera el documento con lo que haya y lo
+  indica en `fetched.blocked` y `hint`. `query` (lo dicho en el video) solo puede buscar en
+  transcripciones ya descargadas, asi que no dispara descargas por si sola.
+
+#### Filtro literal vs. intencion del usuario
+
+Los filtros son **por palabras**, no por significado: `inflacion` no encuentra un video
+titulado "Por que todo esta mas caro". La intencion la aporta el modelo (las instrucciones
+del servidor MCP se lo indican):
+
+1. traducir la peticion a filtros amplios con sinonimos
+   (`inflacion OR precios OR "costo de vida" OR caro*`),
+2. revisar los candidatos con `find_videos` (titulo + descripcion) o `search_channel_videos`
+   y descartar los que no encajan,
+3. llamar `export_videos(video_ids=[...])` con los elegidos y explicar el criterio usado.
 
 Ejemplo: *"Dame un documento con todo lo que dijo el canal X sobre inflacion este ano"* ->
 `export_videos(channel="@X", query="inflacion", date_from="2026-01-01", format="both")`.
@@ -171,6 +193,7 @@ uv run yt-transcripts get "https://www.youtube.com/watch?v=eLpXKTgEEbE" --format
 uv run yt-transcripts info "https://www.youtube.com/watch?v=-G3cwPHo1Qw"
 uv run yt-transcripts doc --channel QuantumFracture --query '"agujero negro" OR neutrino*' --format both
 uv run yt-transcripts doc --ids "https://www.youtube.com/watch?v=eLpXKTgEEbE" --format pdf --name chorro
+uv run yt-transcripts doc --channel @QuantumFracture --title "neutrino* OR nobel" --fetch-missing --format both
 uv run yt-transcripts export @QuantumFracture --format csv --out canal.csv
 uv run yt-transcripts reindex
 ```
