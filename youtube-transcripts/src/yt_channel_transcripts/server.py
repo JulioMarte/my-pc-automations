@@ -16,6 +16,7 @@ import anyio
 from mcp.server.mcpserver import Context, MCPServer
 
 from . import core
+from . import document as ytdoc
 from . import search as yts
 
 INSTRUCTIONS = """\
@@ -32,7 +33,10 @@ Flujo recomendado para trabajar con un canal:
    OR, NOT o -palabra. Sin tildes ni mayusculas.
 3. search_transcripts: busca dentro de lo hablado, ordenado por relevancia; acepta los mismos filtros.
 4. get_transcript: texto en parrafos con [minuto] (paginado con offset/next_offset).
-5. get_video_info: descripcion completa, capitulos, tags. export_channel: archivo jsonl/csv/md.
+5. export_videos: documento final (Markdown y/o PDF) con varios videos -indice, metadatos,
+   descripcion, capitulos y transcripcion con [minuto]- para entregar a otro LLM o analizarlo tu.
+   Selecciona por video_ids o filtros (incluida query = lo dicho en el video).
+6. get_video_info: descripcion completa, capitulos, tags. export_channel: jsonl/csv/md del canal.
 Si 'blocked' trae texto, YouTube limito la IP: no reintentes enseguida."""
 
 mcp = MCPServer("youtube-transcripts", instructions=INSTRUCTIONS)
@@ -252,6 +256,44 @@ def export_channel(channel: str, format: str = "jsonl", text_format: str = "para
 
 
 @mcp.tool()
+async def export_videos(
+    video_ids: list[str] | None = None,
+    channel: str | None = None,
+    title: str | None = None,
+    description: str | None = None,
+    text: str | None = None,
+    query: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    language: str | None = None,
+    limit: int = 50,
+    format: str = "md",
+    doc_title: str | None = None,
+    include_description: bool = True,
+    include_chapters: bool = True,
+    max_chars_per_file: int = 0,
+    return_content: bool = False,
+) -> dict[str, Any]:
+    """Genera un documento final con varios videos (solo los que tienen transcripcion) para
+    entregarlo a otro LLM o analizarlo: indice, canal, fecha, duracion, idioma, enlace,
+    descripcion, capitulos y transcripcion en parrafos con [m:ss].
+
+    Seleccion: video_ids (en ese orden) y/o filtros como find_videos; query = lo dicho en el
+      video (ordena por relevancia y anota los minutos donde aparece).
+    format: md (recomendado para LLM) | pdf (para subir a un chat o leer) | both.
+    max_chars_per_file: si > 0, parte el Markdown en varios archivos (p. ej. 400000 ~ 100k tokens).
+    return_content: incluir el Markdown en la respuesta (solo si es corto; si no, lee el archivo
+      o el recurso yt://exports/{nombre}).
+    Devuelve rutas, tokens aproximados y que videos quedaron fuera por no tener transcripcion."""
+    st = _store()
+    return await anyio.to_thread.run_sync(lambda: ytdoc.export_videos(
+        st, video_ids=video_ids, channel=channel, title=title, description=description, text=text,
+        query=query, date_from=date_from, date_to=date_to, language=language, limit=limit, format=format,
+        doc_title=doc_title, include_description=include_description, include_chapters=include_chapters,
+        max_chars_per_file=max_chars_per_file, return_content=return_content))
+
+
+@mcp.tool()
 def rebuild_index() -> dict[str, Any]:
     """Reconstruye el indice de busqueda desde los archivos de la cache (si algo no aparece
     en find_videos o search_transcripts)."""
@@ -272,6 +314,16 @@ def video_resource(video_id: str) -> str:
     desc = (meta.get("description") or "").strip()
     return (f"# {doc.get('title') or meta.get('title') or doc['id']}\n\n{doc.get('url')}\n\n"
             + (f"## Descripcion\n\n{desc}\n\n" if desc else "") + f"## Transcripcion\n\n{body}\n")
+
+
+@mcp.resource("yt://exports/{name}", mime_type="text/markdown")
+def export_resource(name: str) -> str:
+    """Documento Markdown generado con export_videos (por nombre de archivo)."""
+    base = (_store().root / "exports").resolve()
+    p = (base / name).resolve()
+    if p.parent != base or p.suffix != ".md" or not p.exists():
+        return f"No existe el documento {name!r} en {base}."
+    return p.read_text(encoding="utf-8")
 
 
 @mcp.resource("yt://channels", mime_type="application/json")

@@ -40,3 +40,12 @@ def test_parrafos_respetan_capitulos():
 
 def test_fmt_ts_con_horas():
     assert T.fmt_ts(3725) == "1:02:05" and T.fmt_ts(65.9) == "1:05"
+
+
+def test_parrafos_cortan_dentro_del_segmento_en_final_de_frase():
+    segs = [seg(i * 5, f"palabra {i}") for i in range(10)]  # 0..45 s sin puntos
+    segs.append(seg(50, "fin de la idea. Empieza otra"))
+    segs.append(seg(55, "y sigue"))
+    ps = T.paragraphs(segs)
+    assert ps[0]["text"].endswith("fin de la idea.")
+    assert ps[1]["text"] == "Empieza otra y sigue" and ps[1]["start"] == 50

@@ -10,6 +10,7 @@
     yt-transcripts info <url|id>
     yt-transcripts search "frase" [--channel @canal] [--title ...]
     yt-transcripts export @canal --format md|jsonl|csv [--out ruta]
+    yt-transcripts doc [--ids ...] [--channel @c] [--query "..."] [--format md|pdf|both]
     yt-transcripts reindex
     yt-transcripts serve            # servidor MCP por stdio
 """
@@ -22,6 +23,7 @@ import sys
 from pathlib import Path
 
 from . import core
+from . import document as ytdoc
 from . import search as yts
 
 
@@ -117,6 +119,24 @@ def main(argv: list[str] | None = None) -> int:
     cs.add_argument("query")
     cs.add_argument("--limit", type=int, default=20)
 
+    d = sub.add_parser("doc", help="documento MD/PDF con varios videos para un LLM")
+    d.add_argument("--ids", nargs="*")
+    d.add_argument("--channel")
+    d.add_argument("--title")
+    d.add_argument("--description")
+    d.add_argument("--text")
+    d.add_argument("--query", help="lo dicho en el video")
+    d.add_argument("--from", dest="date_from")
+    d.add_argument("--to", dest="date_to")
+    d.add_argument("--language")
+    d.add_argument("--limit", type=int, default=50)
+    d.add_argument("--format", default="md", choices=("md", "pdf", "both"))
+    d.add_argument("--doc-title")
+    d.add_argument("--no-description", action="store_true")
+    d.add_argument("--max-chars", type=int, default=0, help="partir el MD en archivos de este tamano")
+    d.add_argument("--out-dir")
+    d.add_argument("--name", help="nombre de archivo sin extension")
+
     sub.add_parser("reindex", help="reconstruir el indice de busqueda")
     sub.add_parser("serve", help="servidor MCP por stdio")
 
@@ -170,6 +190,13 @@ def main(argv: list[str] | None = None) -> int:
                                       upload_date=a.upload_date, duration=a.duration))
         elif a.cmd == "channel-search":
             _print(yts.search_in_channel(a.channel, a.query, limit=a.limit))
+        elif a.cmd == "doc":
+            _print(ytdoc.export_videos(
+                store, video_ids=a.ids, channel=a.channel, title=a.title, description=a.description,
+                text=a.text, query=a.query, date_from=a.date_from, date_to=a.date_to, language=a.language,
+                limit=a.limit, format=a.format, doc_title=a.doc_title, include_description=not a.no_description,
+                max_chars_per_file=a.max_chars, out_dir=Path(a.out_dir) if a.out_dir else None,
+                filename=a.name))
         elif a.cmd == "reindex":
             _print(core.rebuild_index(store))
     except (KeyError, ValueError) as exc:
