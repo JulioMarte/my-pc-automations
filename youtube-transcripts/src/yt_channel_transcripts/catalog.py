@@ -204,7 +204,7 @@ def process_selection(store: core.Store, name: str, *, format: str = "pdf", fetc
                           "videos": r.get("videos", 0), "missing": r.get("coverage", {}).get("without_transcript")}
     core._write_json(_path(store, name), sel)
     r["selection"] = sel["name"]
-    if r.get("coverage", {}).get("without_transcript"):
+    if r.get("coverage", {}).get("without_transcript") and not (r.get("fetched") or {}).get("blocked"):
         r["hint"] = (r.get("hint", "") + " Vuelve a llamar process_selection mas tarde para completar; "
                      "el documento se regenera con todo lo descargado.").strip()
     return r

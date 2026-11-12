@@ -175,6 +175,11 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("reindex", help="reconstruir el indice de busqueda")
     sub.add_parser("serve", help="servidor MCP por stdio")
 
+    # IDs de YouTube que empiezan por "-" (p. ej. -VCdtSAtSUU) se confunden con opciones:
+    # se convierten a URL antes de parsear. Las opciones largas empiezan por "--".
+    argv = list(sys.argv[1:] if argv is None else argv)
+    argv = [core.watch_url(t) if (t.startswith("-") and not t.startswith("--") and core.VIDEO_ID_RE.match(t))
+            else t for t in argv]
     a = p.parse_args(argv)
     if a.cmd == "serve":
         from .server import main as serve
