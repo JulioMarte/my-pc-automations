@@ -142,7 +142,7 @@ class Index:
     def _filters(self, *, channel_id: str | None, date_from: str | None, date_to: str | None,
                  min_minutes: float | None, max_minutes: float | None, has_transcript: bool | None,
                  video_ids: list[str] | None, title: str | None, description: str | None,
-                 text: str | None) -> tuple[list[str], list[Any]]:
+                 text: str | None, language: str | None = None) -> tuple[list[str], list[Any]]:
         where: list[str] = []
         args: list[Any] = []
         if channel_id:
@@ -159,6 +159,9 @@ class Index:
             where.append("v.status = 'ok'")
         elif has_transcript is False:
             where.append("COALESCE(v.status,'') <> 'ok'")
+        if language:
+            where.append("(v.language = ? OR v.language LIKE ?)")
+            args += [language.lower(), language.lower() + "-%"]
         if video_ids:
             where.append(f"v.id IN ({','.join('?' * len(video_ids))})"); args += list(video_ids)
         for col, q in (("title", title), ("description", description), (None, text)):
@@ -178,11 +181,12 @@ class Index:
                     date_from: str | None = None, date_to: str | None = None,
                     min_minutes: float | None = None, max_minutes: float | None = None,
                     has_transcript: bool | None = None, video_ids: list[str] | None = None,
+                    language: str | None = None,
                     sort: str = "date_desc", limit: int = 50, offset: int = 0) -> dict[str, Any]:
         where, args = self._filters(channel_id=channel_id, date_from=date_from, date_to=date_to,
                                     min_minutes=min_minutes, max_minutes=max_minutes,
                                     has_transcript=has_transcript, video_ids=video_ids,
-                                    title=title, description=description, text=text)
+                                    title=title, description=description, text=text, language=language)
         rank_q = text or title or description
         order = {"date_desc": "v.date DESC", "date_asc": "v.date ASC", "views": "v.views DESC",
                  "duration": "v.duration DESC", "title": "v.title COLLATE NOCASE"}.get(sort)
@@ -221,7 +225,7 @@ class Index:
                       **filters: Any) -> dict[str, Any]:
         where, args = self._filters(**{k: filters.get(k) for k in (
             "channel_id", "date_from", "date_to", "min_minutes", "max_minutes", "video_ids",
-            "title", "description", "text")}, has_transcript=None)
+            "title", "description", "text", "language")}, has_transcript=None)
         wsql = (" AND " + " AND ".join(where)) if where else ""
         last_err: Exception | None = None
         for q in _safe_query(query):

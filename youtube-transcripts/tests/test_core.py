@@ -423,3 +423,87 @@ def test_tras_bloqueo_de_api_el_resto_va_directo_a_ytdlp(tmp_path: Path):
     r = core.harvest(st, "@prueba", **yt.kw())
     assert r["downloaded"] == 3 and r["sources"] == {"yt-dlp": 3} and r["blocked"] is None
     assert yt.fetched == [IDS[0]]  # la API solo se intento una vez
+
+
+# --- idioma original / idioma pedido -------------------------------------------
+
+def test_por_defecto_el_idioma_es_original(monkeypatch):
+    monkeypatch.delenv("YT_LANGS", raising=False)
+    assert core.default_languages() == ["original"]
+    monkeypatch.setenv("YT_LANGS", "en,original")
+    assert core.default_languages() == ["en", "original"]
+
+
+def test_original_evita_traducciones_subidas_como_manuales():
+    # canal en ingles que sube una traduccion IA al espanol como pista "manual"
+    ts = [T("es", False), T("en", False), T("en", True)]
+    assert core.pick_transcript(ts, ["original"]) == T("en", False)  # manual en el idioma hablado
+    assert core.pick_transcript([T("es", False), T("en", True)], ["original"]) == T("en", True)
+
+
+def test_idioma_pedido_y_caida_al_original():
+    ts = [T("es", False), T("es", True), T("en", False)]
+    assert core.pick_transcript(ts, ["en"]) == T("en", False)
+    assert core.pick_transcript([T("es", False), T("es", True)], ["en", "original"]) == T("es", False)
+    assert core.pick_transcript([T("es", True)], ["en"]) == T("es", True)  # sin ingles: el original
+
+
+def test_original_sin_pista_automatica_usa_la_pista_de_metadatos():
+    ts = [T("de", False), T("pt", False)]
+    assert core.pick_transcript(ts, ["original"]) == T("de", False)  # sin pistas: la primera
+    assert core.pick_transcript(ts, ["original", "pt"]) == T("pt", False)
+
+
+def test_subtitulos_ytdlp_modo_original():
+    info = {"subtitles": {"en": [{"ext": "json3", "url": "m-en"}]},
+            "automatic_captions": {"es-orig": [{"ext": "json3", "url": "a-es"}],
+                                   "en": [{"ext": "json3", "url": "a-en-traducida"}]}}
+    urls = []
+    r = core.subtitles_from_info(info, ["original"], get_json=lambda u: urls.append(u) or _json3("hola"))
+    assert urls == ["a-es"] and r.language == "es"
+    info["subtitles"]["es"] = [{"ext": "json3", "url": "m-es"}]
+    core.subtitles_from_info(info, ["original"], get_json=lambda u: urls.append(u) or _json3("hola"))
+    assert urls[-1] == "m-es"  # manual en el idioma original gana a la automatica
+    core.subtitles_from_info({"language": "pt", "subtitles": {"en": [{"ext": "json3", "url": "x"}],
+                                                               "pt": [{"ext": "json3", "url": "m-pt"}]}},
+                             ["original"], get_json=lambda u: urls.append(u) or _json3("ola"))
+    assert urls[-1] == "m-pt"  # sin ASR: idioma declarado del video
+
+
+def test_harvest_pasa_el_idioma_declarado_como_respaldo(tmp_path: Path):
+    st, yt = Store(tmp_path), FakeYT(IDS[:1])
+    seen = []
+    base_enr = yt.enricher
+    r = core.harvest(st, "@prueba", languages=["original"],
+                     **{**yt.kw(), "enricher": lambda v: {**base_enr(v), "language": "pt"},
+                        "fetcher": lambda v, l: seen.append(list(l)) or ok()})
+    assert r["downloaded"] == 1 and seen == [["original", "pt"]]
+
+
+def test_get_transcript_en_otro_idioma_se_guarda_aparte(poblado: Store):
+    calls = []
+
+    def fetch_en(v, langs):
+        calls.append(list(langs))
+        return TranscriptResult(core.ST_OK, "en", False, [{"start": 0, "duration": 1, "text": "hello world"}])
+
+    r = core.get_transcript(poblado, IDS[0], languages=["en"], format="text", fetcher=fetch_en)
+    assert r["language"] == "en" and r["transcript"] == "hello world" and calls == [["en"]]
+    r = core.get_transcript(poblado, IDS[0], languages=["en"], format="text", fetcher=fetch_en)
+    assert len(calls) == 1  # la variante quedo en cache
+    assert core.get_transcript(poblado, IDS[0], format="text")["language"] == "es"  # la principal no cambio
+    assert core.search(poblado, "hello")["total_matches"] == 0  # las variantes no se indexan
+    assert core.get_transcript(poblado, IDS[0], languages=["es"], format="text")["language"] == "es"
+
+
+def test_get_transcript_idioma_inexistente_devuelve_la_guardada_con_nota(poblado: Store):
+    r = core.get_transcript(poblado, IDS[1], languages=["en"], fetcher=lambda v, l: ok())  # solo hay "es"
+    assert r["language"] == "es" and "No hay pista en 'en'" in r["note"]
+
+
+def test_find_videos_por_idioma(tmp_path: Path):
+    st, yt = Store(tmp_path), FakeYT(IDS[:2])
+    yt.plan = {IDS[1]: TranscriptResult(core.ST_OK, "en-US", True, [{"start": 0, "duration": 1, "text": "x"}])}
+    core.harvest(st, "@prueba", **yt.kw())
+    assert [v["id"] for v in core.find_videos(st, language="en")["videos"]] == [IDS[1]]
+    assert [v["id"] for v in core.find_videos(st, language="es")["videos"]] == [IDS[0]]

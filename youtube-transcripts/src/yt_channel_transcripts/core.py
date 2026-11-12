@@ -33,7 +33,8 @@ from typing import Any, Callable, Iterable
 from . import text as T
 from .index import Index
 
-DEFAULT_LANGS = ("es", "en")
+ORIGINAL = "original"  # idioma en que se habla en el video
+DEFAULT_LANGS = (ORIGINAL,)
 VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 CHANNEL_ID_RE = re.compile(r"^UC[A-Za-z0-9_-]{22}$")
 TABS = ("videos", "streams", "shorts")
@@ -60,6 +61,22 @@ class BlockedError(RuntimeError):
 def default_data_dir() -> Path:
     env = os.environ.get("YT_TRANSCRIPTS_DIR")
     return Path(env).expanduser() if env else Path.home() / ".yt-channel-transcripts"
+
+
+def lang_base(code: str | None) -> str | None:
+    """'es-419' -> 'es'; 'en-orig' -> 'en'."""
+    return code.lower().replace("-orig", "").split("-")[0] if code else None
+
+
+def resolve_languages(languages: list[str], original: str | None) -> list[str]:
+    """Sustituye 'original' por el idioma original detectado (si se conoce) y quita
+    duplicados, respetando el orden de preferencia."""
+    out: list[str] = []
+    for lang in languages:
+        code = (lang_base(original) if lang.lower() == ORIGINAL else lang.lower())
+        if code and code not in out:
+            out.append(code)
+    return out
 
 
 def default_languages() -> list[str]:
@@ -238,15 +255,15 @@ def subtitles_from_info(info: dict[str, Any], languages: list[str],
                         get_json: Callable[[str], Any] = _urlopen_json) -> "TranscriptResult":
     """Respaldo: subtitulos via yt-dlp (formato json3). Mismo criterio de idioma:
     manual en idioma pedido > automatica original en idioma pedido > automatica
-    original en cualquier idioma > cualquier manual."""
+    original en cualquier idioma > cualquier manual. 'original' = idioma de la pista
+    automatica original ('xx-orig') o, si no hay, el idioma declarado del video."""
     manual = info.get("subtitles") or {}
     auto = info.get("automatic_captions") or {}
-    langs = [x.lower() for x in languages]
-
-    def base(code: str) -> str:
-        return code.lower().replace("-orig", "").split("-")[0]
+    base = lang_base
 
     origs = [k for k in auto if k.endswith("-orig")] or ([info["language"]] if info.get("language") in auto else [])
+    original = base(origs[0]) if origs else base(info.get("language"))
+    langs = resolve_languages(languages, original)
     candidates: list[tuple[str, str, bool]] = []
     for lang in langs:
         candidates += [(k, "manual", False) for k in manual if base(k) == lang and k != "live_chat"]
@@ -294,9 +311,12 @@ class TranscriptResult:
 
 def pick_transcript(transcripts: Iterable[Any], languages: list[str]) -> Any | None:
     """Elige la mejor pista: manual en idioma pedido > automatica en idioma pedido
-    > automatica en el idioma original del video > cualquier manual."""
+    > automatica en el idioma original del video > cualquier manual.
+    'original' en `languages` = idioma de la pista automatica (la ASR de YouTube siempre
+    esta en el idioma hablado); asi se evita bajar traducciones subidas como pista manual."""
     items = list(transcripts)
-    langs = [lang.lower() for lang in languages]
+    asr = next((t for t in items if t.is_generated), None)
+    langs = resolve_languages(languages, asr.language_code if asr else None)
 
     def matches(t: Any, lang: str) -> bool:
         code = t.language_code.lower()
@@ -455,6 +475,26 @@ class Store:
             "date": video.get("date"), "language": res.language, "is_generated": res.is_generated,
             "source": res.source, "fetched_at": _now(), "segments": res.segments,
         })
+
+    def variant_path(self, cid: str, vid: str, lang: str) -> Path:
+        """Transcripcion adicional en otro idioma (no reemplaza la principal ni se indexa)."""
+        return self.root / cid / "transcripts_by_lang" / f"{vid}.{lang}.json"
+
+    def save_variant(self, cid: str, video: dict[str, Any], res: TranscriptResult) -> None:
+        _write_json(self.variant_path(cid, video["id"], lang_base(res.language) or "xx"), {
+            "id": video["id"], "title": video.get("title"), "url": video.get("url"),
+            "date": video.get("date"), "language": res.language, "is_generated": res.is_generated,
+            "source": res.source, "fetched_at": _now(), "segments": res.segments,
+        })
+
+    def load_variant(self, vid: str, lang: str) -> dict[str, Any] | None:
+        if not self.root.exists():
+            return None
+        for d in self.root.iterdir():
+            p = d / "transcripts_by_lang" / f"{vid}.{lang}.json"
+            if p.exists():
+                return _read_json(p, None)
+        return None
 
     def find_file(self, kind: str, vid: str) -> tuple[str, dict[str, Any]] | None:
         """Busca transcripts/ o meta/ de un video en cualquier canal (incluye _videos)."""
@@ -647,11 +687,15 @@ def harvest(
                     raise
                 except Exception as exc:  # metadatos opcionales: no frenan la transcripcion
                     v["meta_error"] = f"{type(exc).__name__}: {str(exc)[:150]}"
+            vlangs = langs
+            hint = (meta or {}).get("language") or _read_json(store.meta_path(cid, v["id"]), {}).get("language")
+            if hint and ORIGINAL in [x.lower() for x in langs]:
+                vlangs = langs + [hint]  # respaldo si el video no tiene pista automatica
             api_blocked: BlockedError | None = api_down
             try:
                 if api_down is not None:
                     raise api_down
-                res = fetcher(v["id"], langs)
+                res = fetcher(v["id"], vlangs)
             except BlockedError as exc:
                 res = TranscriptResult(ST_ERROR, error=f"bloqueado: {exc}")
                 api_blocked = api_down = exc
@@ -664,7 +708,7 @@ def harvest(
                     except Exception:
                         info = None
                 if info is not None:
-                    alt = sub_fetcher(info, langs)
+                    alt = sub_fetcher(info, vlangs)
                     if alt.status == ST_OK:  # un error transitorio no se degrada a "sin transcripcion"
                         res = alt
             if api_blocked is not None and res.status != ST_OK:
@@ -778,7 +822,24 @@ def get_transcript(store: Store, video: str, *, format: str = "paragraphs", clea
     """Transcripcion (de la cache o, si no esta, la baja y la guarda en `_videos`).
     Paginada por caracteres para no saturar el contexto."""
     vid = video_id(video)
-    doc = store.load_transcript(vid)
+    hit = store.find_file("transcripts", vid)
+    doc = hit[1] if hit else None
+    note = None
+    if doc is not None and languages and languages[0].lower() != ORIGINAL:
+        # Se pidio un idioma concreto: usar la principal si coincide, si no una variante.
+        wanted = lang_base(languages[0])
+        if lang_base(doc.get("language")) != wanted:
+            var = store.load_variant(vid, wanted)
+            if var is None:
+                langs = resolve_languages(languages, None) or [wanted]
+                res = fetcher(vid, langs)
+                if res.status == ST_OK and lang_base(res.language) == wanted:
+                    store.save_variant(hit[0], doc, res)
+                    var = store.load_variant(vid, wanted)
+            if var is not None:
+                doc = var
+            else:
+                note = f"No hay pista en '{wanted}'; se devuelve la guardada ({doc.get('language')})."
     if doc is None:
         langs = languages or default_languages()
         res = fetcher(vid, langs)
@@ -813,6 +874,7 @@ def get_transcript(store: Store, video: str, *, format: str = "paragraphs", clea
         "date": meta.get("date") or doc.get("date"), "language": doc.get("language"),
         "is_generated": doc.get("is_generated"), "source": doc.get("source"),
         "total_chars": len(body), "offset": offset, "next_offset": end if end < len(body) else None,
+        **({"note": note} if note else {}),
         "transcript": chunk,
     }
 

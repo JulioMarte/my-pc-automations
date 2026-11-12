@@ -81,7 +81,9 @@ async def harvest_channel(
     video_ids: procesar solo estos IDs/URLs (p. ej. los que devolvio find_videos).
     list_limit: cuantos videos recientes listar en la primera pasada (None = canal completo;
       despues el listado es incremental).
-    languages: preferencia de idioma, p. ej. ["es","en"]; manual antes que automatica.
+    languages: preferencia de idioma. Por defecto ["original"] = el idioma en que se habla
+      en el video (evita traducciones). ["en"] = ingles si existe, si no el original;
+      ["en","es"] = ingles, si no espanol, si no el original. El resultado dice el idioma.
     metadata: bajar tambien descripcion, capitulos, tags y fecha exacta (una peticion extra por video).
     tab: videos | streams | shorts.
     """
@@ -173,6 +175,7 @@ def find_videos(
     max_minutes: float | None = None,
     has_transcript: bool | None = None,
     video_ids: list[str] | None = None,
+    language: str | None = None,
     sort: str = "date_desc",
     limit: int = 50,
     offset: int = 0,
@@ -185,12 +188,13 @@ def find_videos(
       No distingue tildes ni mayusculas. La descripcion solo existe si se bajaron metadatos.
     date_from / date_to: 'YYYY-MM-DD'. min_minutes / max_minutes: duracion.
     has_transcript: true = solo con transcripcion; false = solo sin ella.
+    language: idioma de la transcripcion guardada, p. ej. 'en' o 'es'.
     sort: date_desc | date_asc | relevance | views | duration | title.
     """
     return core.find_videos(_store(), channel, title=title, description=description, text=text,
                             date_from=date_from, date_to=date_to, min_minutes=min_minutes,
                             max_minutes=max_minutes, has_transcript=has_transcript,
-                            video_ids=video_ids, sort=sort, limit=limit, offset=offset)
+                            video_ids=video_ids, language=language, sort=sort, limit=limit, offset=offset)
 
 
 @mcp.tool()
@@ -221,6 +225,9 @@ async def get_transcript(video: str, format: str = "paragraphs", clean: bool = T
     """Transcripcion de un video (ID o URL). Si no esta en cache la descarga.
     format: paragraphs ('[1:05] texto' por parrafo, con titulos de capitulo) | text | segments.
     clean: quita etiquetas como [Musica] y lineas repetidas.
+    languages: por defecto la transcripcion guardada (idioma original). Con ["en"] devuelve la
+      pista en ingles (la baja y la guarda aparte si hace falta); si no existe, devuelve la
+      guardada con un 'note'. Para traducir, mejor traduce tu el original.
     Paginada: si next_offset no es null, vuelve a llamar con offset=next_offset."""
     st = _store()
     return await anyio.to_thread.run_sync(lambda: core.get_transcript(

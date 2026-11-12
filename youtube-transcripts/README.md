@@ -74,7 +74,7 @@ Otros clientes (Claude Desktop, Cursor, etc.), en su `mcpServers`:
   "youtube-transcripts": {
     "command": "uv",
     "args": ["--directory", "C:/ruta/a/youtube-transcripts", "run", "yt-transcripts-mcp"],
-    "env": { "YT_TRANSCRIPTS_DIR": "C:/ruta/a/datos", "YT_LANGS": "es,en" }
+    "env": { "YT_TRANSCRIPTS_DIR": "C:/ruta/a/datos", "YT_LANGS": "original" }
   }
 }
 ```
@@ -158,12 +158,34 @@ por `-`, pasa la URL completa (o `--` antes del ID).
 | Variable | Defecto | Efecto |
 |---|---|---|
 | `YT_TRANSCRIPTS_DIR` | `~/.yt-channel-transcripts` | Carpeta de la cache |
-| `YT_LANGS` | `es,en` | Idiomas preferidos, en orden |
+| `YT_LANGS` | `original` | Idiomas preferidos, en orden (`original` = el idioma hablado en el video) |
+| `YT_SEARCH_LANG` | `es` | Idioma de la interfaz para `search_youtube` (afecta titulos traducidos) |
 | `YT_PROXY_HTTP` / `YT_PROXY_HTTPS` | (vacio) | Proxy para `youtube-transcript-api` si YouTube bloquea la IP |
 
-Seleccion de idioma: pista **manual** en el primer idioma pedido que exista; si no,
-**automatica** en un idioma pedido; si no, la automatica del idioma original del video;
-si no, cualquier manual. El idioma y si era automatica quedan guardados por video.
+### Idioma
+
+**Por defecto se baja solo el idioma original** (el que se habla en el video), para que
+el modelo lo traduzca despues si hace falta. El original se detecta por la pista
+automatica de YouTube (siempre esta en el idioma hablado) y, si no la hay, por el idioma
+declarado en los metadatos. Dentro de ese idioma se prefiere la pista manual (mejor
+puntuacion) sobre la automatica. Esto evita bajar traducciones automaticas que algunos
+canales suben como si fueran pistas manuales.
+
+| `languages` | Resultado |
+|---|---|
+| `["original"]` (defecto) | idioma hablado en el video |
+| `["en"]` | ingles si existe; si no, el original |
+| `["en", "es"]` | ingles, si no espanol, si no el original |
+
+El idioma bajado queda guardado por video (`language`, y `is_generated` si era
+automatica) y se puede filtrar con `find_videos(language="en")`.
+
+Si un video ya esta guardado en su idioma original y luego pides otro con
+`get_transcript(video, languages=["en"])`, se baja esa pista y se guarda **aparte**
+(`transcripts_by_lang/<id>.en.json`), sin reemplazar la original. Si ese idioma no
+existe, devuelve la guardada con un `note` que lo indica. Las variantes no entran en el
+indice de busqueda. `harvest_channel` no vuelve a bajar videos ya procesados aunque
+cambies `languages`; usa `get_transcript` para pedir otro idioma de un video concreto.
 
 ## Estructura de la cache
 
@@ -174,6 +196,7 @@ si no, cualquier manual. El idioma y si era automatica quedan guardados por vide
     videos.json               # indice ligero: id, titulo, url, fecha, duracion, estado, idioma, palabras
     meta/<id>.json            # descripcion, capitulos, tags, categorias, fecha exacta
     transcripts/<id>.json     # segmentos {start, duration, text} + idioma y fuente
+    transcripts_by_lang/      # <id>.<idioma>.json: otros idiomas pedidos con get_transcript
     export.{jsonl,csv,md}     # exportaciones
   _videos/                    # videos sueltos pedidos con get_transcript/get_video_info
   index.sqlite                # indice FTS5 derivado (se puede borrar: se rehace solo)
@@ -206,9 +229,11 @@ uv run pytest -q -m network --network      # prueba real contra YouTube
   `metadata=false` y despues `fetch_metadata` solo donde haga falta.
 - `yt-dlp` avisa si no hay `deno`/`node`; se configura para usarlos si existen. No hacen
   falta para metadatos ni subtitulos.
-- **Pistas "manuales" que son traducciones automaticas**: algunos canales suben subtitulos
-  traducidos por IA como pista manual; no se pueden distinguir. Si quieres el idioma
-  original, pide `languages=["en"]` (o el que sea).
+- **Pistas "manuales" que son traducciones automaticas**: con el modo `original` (defecto)
+  se evitan, porque se elige la pista del idioma hablado. Si pides un idioma concreto que
+  solo existe como una de esas traducciones, se bajara esa.
+- **Videos sin pista automatica ni idioma declarado**: el modo `original` no puede
+  saber cual es el idioma hablado y toma la primera pista disponible.
 - **Videos sin subtitulos** (muchos Shorts, directos recientes, videos con subtitulos
   desactivados) quedan como `sin_transcripcion`; esta herramienta no transcribe audio.
 - **Busqueda por palabras** (FTS5 con BM25), no semantica: "coche" no encuentra "automovil".
