@@ -225,6 +225,36 @@
       "timeout_seconds": 2700,
       "artifact_namespace": "dr-recovery-qemu",
       "enabled": true
+    },
+    {
+      "selector": "yt-test",
+      "description": "Tests de youtube-transcripts (pytest): unitarios de core y servidor MCP por stdio, sin red.",
+      "owner": "youtube-transcripts",
+      "tier": "unit",
+      "cwd": "youtube-transcripts",
+      "command": "uv run pytest -q",
+      "policy": { "pr": true, "merge": true, "nightly": false, "manual": false },
+      "cost": "small",
+      "requires_sudo": false,
+      "requires_docker": false,
+      "timeout_seconds": 300,
+      "artifact_namespace": "yt-test",
+      "enabled": true
+    },
+    {
+      "selector": "yt-network",
+      "description": "Prueba real de youtube-transcripts contra YouTube (puede fallar por bloqueo de IP).",
+      "owner": "youtube-transcripts",
+      "tier": "e2e",
+      "cwd": "youtube-transcripts",
+      "command": "uv run pytest -q -m network --network",
+      "policy": { "pr": false, "merge": false, "nightly": false, "manual": true },
+      "cost": "small",
+      "requires_sudo": false,
+      "requires_docker": false,
+      "timeout_seconds": 300,
+      "artifact_namespace": "yt-network",
+      "enabled": true
     }
   ]
 }

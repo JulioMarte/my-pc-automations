@@ -32,6 +32,7 @@ feat/<feature>  --(tests + verificacion OK)-->  dev  --(PR + review)-->  main
 - `AGENTS.md` (este archivo): alcance repositorio completo.
 - `local-proxy/AGENTS.md`: alcance `local-proxy/**`.
 - `vps-disaster-recovery/AGENTS.md`: alcance `vps-disaster-recovery/**`.
+- `youtube-transcripts/AGENTS.md`: alcance `youtube-transcripts/**`.
 - `tests/AGENTS.md`: alcance `tests/**`.
 - `scripts/AGENTS.md`: alcance `scripts/**`.
 - `.github/AGENTS.md`: alcance `.github/**`.
@@ -141,6 +142,17 @@ Laboratorio de recuperacion ante desastres para `vps-backup`, en bash puro y sin
   `grep -q` en ese probe.
 - **No usar `pkill`** con el patron en la linea de comandos (el propio proceso
   hace match y se auto-mata).
+
+## Proyecto `youtube-transcripts`
+
+Servidor MCP y CLI (Python + uv) para titulo, enlace y transcripcion de los videos
+de un canal de YouTube, con cache local reanudable, busqueda y exportacion.
+Reutiliza `yt-dlp` y `youtube-transcript-api`; no usa API key.
+
+- `uv sync` y `uv run pytest -q` (sin red); `uv run pytest -q -m network --network` toca YouTube.
+- Servidor: `uv run yt-transcripts-mcp` (stdio). CLI: `uv run yt-transcripts --help`.
+- Cache en `YT_TRANSCRIPTS_DIR` (defecto `~/.yt-channel-transcripts`), fuera de git.
+- Ante bloqueo de IP de YouTube la descarga se detiene; no reintentar en bucle.
 
 ## Idioma y estilo
 

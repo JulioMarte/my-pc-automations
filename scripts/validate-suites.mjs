@@ -16,7 +16,7 @@ export const MANIFEST_PATH = path.join(REPO_ROOT, 'tests', 'suites.json');
 
 const TIERS = new Set(['unit', 'integration', 'e2e', 'stress', 'architecture']);
 const COSTS = new Set(['small', 'medium', 'large']);
-const OWNERS = new Set(['local-proxy', 'vps-disaster-recovery']);
+const OWNERS = new Set(['local-proxy', 'vps-disaster-recovery', 'youtube-transcripts']);
 
 function isNonEmptyString(value) {
   return typeof value === 'string' && value.trim().length > 0;
