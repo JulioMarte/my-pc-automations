@@ -127,3 +127,11 @@ def test_cli_acepta_ids_que_empiezan_por_guion(st: Store, capsys):
     from yt_channel_transcripts import cli
     rc = cli.main(["--data-dir", str(st.root), "select", "x", "--channel", "@prueba", "--add", "-VCdtSAtSUU", IDS[0]])
     assert rc == 0 and catalog.selection_show(st, "x")["total"] == 2
+
+
+def test_aviso_cuando_lo_que_falta_no_tiene_subtitulos(st: Store):
+    yt = FakeYT()
+    yt.plan = {IDS[2]: core.TranscriptResult(core.ST_NONE, error="TranscriptsDisabled")}
+    catalog.selection_update(st, "eco", add=[IDS[0], IDS[2]], channel="@prueba", topic="economia")
+    r = catalog.process_selection(st, "eco", format="md", net=yt.kw())
+    assert r["videos"] == 1 and "no tienen subtitulos" in r["hint"] and "No hace falta reintentar" in r["hint"]
