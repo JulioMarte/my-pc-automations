@@ -17,6 +17,7 @@ from mcp.server.mcpserver import Context, MCPServer
 
 from . import core
 from . import document as ytdoc
+from . import catalog as ytcat
 from . import search as yts
 from . import topic as yttopic
 
@@ -39,8 +40,11 @@ Flujo recomendado para trabajar con un canal:
    Selecciona por video_ids o filtros (incluida query = lo dicho en el video). Incluye TODOS los
    que cumplen el filtro (se parte en archivos de ~100k tokens) y 'coverage' dice cuantos faltan;
    con fetch_missing=true descarga antes los que cumplen el filtro y no tienen transcripcion.
-Para un DUMP de un canal sobre un tema (p. ej. "dame todo lo de X sobre Y en PDF"): usa el prompt
-dump_tema_canal o sigue sus pasos (find_topic_candidates -> revisar -> export_videos format=pdf).
+Para un DUMP de un canal sobre un tema (p. ej. "dame todo lo de X sobre Y en PDF") usa el prompt
+dump_tema_canal: fetch_metadata (titulo+descripcion de TODO el canal) -> catalog (lees todas las
+paginas y juzgas cada video tu mismo) -> selection_update (anotas los elegidos) ->
+process_selection (baja solo esas transcripciones y genera UN PDF). find_topic_candidates es un
+atajo por palabras cuando no hace falta revisar el canal entero.
 Los filtros son por palabras, no por significado. Para respetar la INTENCION del usuario:
  a) traduce la peticion a filtros amplios con sinonimos (p. ej. 'inflacion OR precios OR "costo de vida"'),
  b) revisa los candidatos con find_videos (titulo + descripcion) o search_channel_videos y descarta
@@ -111,20 +115,66 @@ async def harvest_channel(
 @mcp.tool()
 async def fetch_metadata(
     channel: str,
-    max_videos: int = 50,
+    max_videos: int = 500,
     title_filter: str | None = None,
     video_ids: list[str] | None = None,
     refresh_list: bool = False,
-    delay_seconds: float = 1.0,
+    tab: str = "all",
+    concurrency: int = 3,
+    delay_seconds: float = 0.5,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Baja solo metadatos (descripcion, capitulos, tags, fecha exacta) sin transcripcion,
-    para poder filtrar por descripcion con find_videos antes de decidir que transcribir.
-    Si el canal no esta en cache, lo lista primero."""
+    para poder revisar el canal (catalog) o filtrar por descripcion antes de decidir que transcribir.
+    Si el canal no esta en cache, lo lista primero (tab='all' = videos + Shorts + directos).
+    ~1,5 s por video con concurrency=3; reanudable: si 'pending' > 0, vuelve a llamarla."""
     st = _store()
     return await anyio.to_thread.run_sync(lambda: core.fetch_metadata(
         st, channel, max_videos=max_videos, title_filter=title_filter, video_ids=video_ids,
-        refresh_list=refresh_list, delay=delay_seconds, progress=_progress_cb(ctx)))
+        refresh_list=refresh_list, tab=tab, concurrency=concurrency, delay=delay_seconds,
+        progress=_progress_cb(ctx)))
+
+
+@mcp.tool()
+def catalog(channel: str, offset: int = 0, limit: int = 100, description_chars: int = 400,
+            refresh: bool = False) -> dict[str, Any]:
+    """Catalogo COMPLETO del canal para que lo revises tu: una linea por video
+    'ID | fecha | duracion | titulo | descripcion', paginado (next_offset). Incluye todos los
+    videos (tambien Shorts y directos si se listo con tab='all'); los que aun no tienen metadatos
+    dicen '(sin descripcion todavia)' -> llama antes fetch_metadata hasta pending=0.
+    Lee TODAS las paginas y juzga cada video por su titulo y descripcion."""
+    return ytcat.catalog(_store(), channel, offset=offset, limit=limit,
+                         description_chars=description_chars, refresh=refresh)
+
+
+@mcp.tool()
+def selection_update(name: str, add: list[str] | None = None, remove: list[str] | None = None,
+                     channel: str | None = None, topic: str | None = None,
+                     reviewed_until: int | None = None) -> dict[str, Any]:
+    """Crea o actualiza una lista de videos elegidos (persistente, en disco). Ve agregando los IDs
+    que pasan tu criterio pagina por pagina del catalog. reviewed_until = hasta que posicion del
+    catalogo revisaste (para retomar si se interrumpe)."""
+    return ytcat.selection_update(_store(), name, add=add, remove=remove, channel=channel, topic=topic,
+                                  reviewed_until=reviewed_until)
+
+
+@mcp.tool()
+def selection_show(name: str | None = None) -> Any:
+    """Contenido de una lista (ID | estado | titulo) o, sin nombre, todas las listas."""
+    st = _store()
+    return ytcat.selection_show(st, name) if name else ytcat.selection_list(st)
+
+
+@mcp.tool()
+async def process_selection(name: str, format: str = "pdf", fetch_limit: int = 100,
+                            doc_title: str | None = None) -> dict[str, Any]:
+    """Cuando termines de revisar: baja las transcripciones de los videos de la lista (solo esos,
+    hasta fetch_limit) y genera UN unico documento (pdf | md | both) con todos, mas un apendice de
+    los que no se pudieron incluir y por que. Reanudable: si YouTube limita la IP, llamala de
+    nuevo mas tarde y el documento se regenera completo."""
+    st = _store()
+    return await anyio.to_thread.run_sync(lambda: ytcat.process_selection(
+        st, name, format=format, fetch_limit=fetch_limit, doc_title=doc_title))
 
 
 def _annotate(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -384,20 +434,25 @@ def investigar_tema(channel: str, tema: str) -> str:
 @mcp.prompt()
 def dump_tema_canal(canal: str, tema: str, formato: str = "pdf") -> str:
     """Dump de un canal sobre un tema: busca, elige y entrega UN solo documento (PDF por defecto)."""
+    nombre = f"{canal} {tema}"
     return (
         f"Quiero un unico documento {formato.upper()} con TODOS los videos del canal {canal} que traten sobre: {tema}.\n"
+        "Tu decides que videos entran leyendo el titulo y la descripcion de CADA video del canal.\n"
         "Pasos:\n"
         "1. Si no conoces el canal exacto, buscalo con search_youtube(kind='channel') y confirma el @handle.\n"
-        f"2. Genera de 4 a 10 terminos para '{tema}': sinonimos, conceptos relacionados, siglas, nombres propios, "
-        "en el idioma del canal (y en ingles si el canal mezcla idiomas).\n"
-        "3. Llama find_topic_candidates(channel, terms).\n"
-        "4. Revisa titulo y descripcion de cada candidato. Descarta lo que no trate el tema de verdad; si dudas y "
-        "aparece por varias vias, incluyelo. Si un termino trajo resultados irrelevantes, ignora ese termino.\n"
-        f"5. Llama export_videos(video_ids=<elegidos>, fetch_missing=true, fetch_limit=<numero de elegidos>, "
-        f"format='{formato}', max_chars_per_file=0, doc_title='{canal}: {tema}').\n"
-        "6. Responde con: la ruta del archivo, cuantos videos incluye, cuantos quedaron fuera y por que "
-        "(coverage, fetched y el apendice del documento), y el criterio que usaste para elegir. Si YouTube "
-        "limito la IP, dilo y explica que basta con volver a pedirlo mas tarde: se reanuda donde quedo."
+        f"2. fetch_metadata(channel) y repitela hasta pending=0, para tener titulo y descripcion de todo el canal "
+        "(si 'blocked' trae texto, sigue con lo que haya y avisa que hay videos sin descripcion).\n"
+        f"3. selection_update(name='{nombre}', channel=<canal>, topic='{tema}').\n"
+        "4. Recorre catalog(channel, offset=0, limit=100) pagina por pagina hasta next_offset=null. En cada pagina, "
+        f"decide para cada video si trata sobre '{tema}' segun su titulo y descripcion (no solo palabras exactas: "
+        "sinonimos, subtemas y videos donde el tema es central). Descarta menciones de paso y publicidad en la "
+        f"descripcion. Al terminar cada pagina llama selection_update(name='{nombre}', add=<IDs elegidos>, "
+        "reviewed_until=<offset + 100>). No pidas transcripciones todavia.\n"
+        f"5. Cuando hayas revisado TODO el catalogo, selection_show('{nombre}') para confirmar la lista.\n"
+        f"6. process_selection('{nombre}', format='{formato}', fetch_limit=<total de la lista>).\n"
+        "7. Responde con: la ruta del archivo, cuantos videos revisaste, cuantos elegiste y con que criterio, "
+        "cuantos entraron al documento y cuales faltan y por que (apendice del documento). Si YouTube limito "
+        f"la IP, explica que basta con pedir de nuevo process_selection('{nombre}') mas tarde: se reanuda."
     )
 
 

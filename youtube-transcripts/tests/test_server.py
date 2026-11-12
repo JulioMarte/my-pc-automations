@@ -12,7 +12,7 @@ import anyio
 from yt_channel_transcripts import core
 from yt_channel_transcripts.core import Store, TranscriptResult
 
-EXPECTED = {"search_youtube", "search_channel_videos", "find_topic_candidates", "harvest_channel", "fetch_metadata", "list_channels", "find_videos", "search_transcripts",
+EXPECTED = {"search_youtube", "search_channel_videos", "find_topic_candidates", "catalog", "selection_update", "selection_show", "process_selection", "harvest_channel", "fetch_metadata", "list_channels", "find_videos", "search_transcripts",
             "get_transcript", "get_video_info", "export_channel", "export_videos", "rebuild_index"}
 
 
@@ -59,9 +59,13 @@ def test_servidor_stdio_end_to_end(tmp_path):
                                                       "return_content": True})
             name = _payload(doc)["files"][0]["path"].replace("\\", "/").rsplit("/", 1)[1]
             via_res = await s.read_resource(f"yt://exports/{name}")
-            return names, prompts, templates, found, by_title, hits, res, doc, via_res
+            cat = await s.call_tool("catalog", {"channel": "@mcp"})
+            await s.call_tool("selection_update", {"name": "prueba mcp", "add": ["bbbbbbbbbbb"],
+                                                   "channel": "@mcp", "topic": "cocina"})
+            proc = await s.call_tool("process_selection", {"name": "prueba mcp", "format": "md"})
+            return names, prompts, templates, found, by_title, hits, res, doc, via_res, cat, proc
 
-    names, prompts, templates, found, by_title, hits, res, doc, via_res = anyio.run(run)
+    names, prompts, templates, found, by_title, hits, res, doc, via_res, cat, proc = anyio.run(run)
     assert names == EXPECTED
     assert prompts == {"investigar_tema", "resumir_video", "dump_tema_canal"}
     assert "yt://video/{video_id}" in templates
@@ -76,3 +80,7 @@ def test_servidor_stdio_end_to_end(tmp_path):
     d = _payload(doc)
     assert d["videos"] == 2 and [f["format"] for f in d["files"]] == ["md", "pdf"]
     assert d["content"].startswith("# Canal MCP: 2 videos") and via_res.contents[0].text == d["content"]
+    c = _payload(cat)
+    assert c["total"] == 2 and c["videos"][1] == "bbbbbbbbbbb | 2026-02-01 | 0:10 | Otro tema | Cocina facil"
+    pr = _payload(proc)
+    assert pr["videos"] == 1 and pr["title"] == "@mcp: cocina" and pr["files"][0]["path"].endswith("prueba-mcp.md")

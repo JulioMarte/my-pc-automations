@@ -38,6 +38,8 @@ DEFAULT_LANGS = (ORIGINAL,)
 VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 CHANNEL_ID_RE = re.compile(r"^UC[A-Za-z0-9_-]{22}$")
 TABS = ("videos", "streams", "shorts")
+ALL_UPLOADS = "all"  # playlist de subidas: videos + Shorts + directos
+LIST_TABS = TABS + (ALL_UPLOADS,)
 STOP_AFTER_KNOWN = 10  # videos conocidos seguidos que cortan el listado incremental
 LOOSE = "_videos"  # carpeta para videos sueltos (sin canal descargado)
 
@@ -562,18 +564,27 @@ def _refresh_listing(store: Store, channel: str, tab: str, list_limit: int | Non
                      lister: Lister) -> tuple[str, dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
     """Lista el canal (incremental si ya se recorrio completo antes), fusiona con lo
     conocido y actualiza indice y JSON. Devuelve (cid, channel_meta, merged, info)."""
-    source = channel_url(channel, tab)
     prev_cid = None
     try:
         prev_cid = store.resolve(channel)
     except KeyError:
         pass
+    forced_cid = None
+    if tab == ALL_UPLOADS:
+        forced_cid = prev_cid
+        if not forced_cid:  # averiguar el ID del canal con una pagina minima
+            forced_cid = lister(channel_url(channel, "videos"), 1, None).get("channel_id")
+        if not forced_cid or not CHANNEL_ID_RE.match(forced_cid):
+            raise RuntimeError(f"No pude obtener el ID del canal {channel!r}")
+        source = f"https://www.youtube.com/playlist?list=UU{forced_cid[2:]}"
+    else:
+        source = channel_url(channel, tab)
     prev_meta = store.channel_meta(prev_cid) if prev_cid else {}
     known_list = store.videos(prev_cid) if prev_cid else []
     known = {v["id"]: v for v in known_list}
     incremental = bool(prev_meta.get("listing_complete")) and prev_meta.get("source") == source
     listing = lister(source, list_limit, set(known) if incremental else None)
-    cid = listing.get("channel_id")
+    cid = forced_cid or listing.get("channel_id")
     if not cid:
         raise RuntimeError(f"yt-dlp no devolvio un ID de canal para {source}")
     complete = bool(prev_meta.get("listing_complete")) or (bool(listing.get("exhausted")) and not list_limit)
@@ -751,11 +762,12 @@ def harvest(
 
 def fetch_metadata(store: Store, channel: str, *, max_videos: int = 50, title_filter: str | None = None,
                    video_ids: list[str] | None = None, tab: str = "videos", list_limit: int | None = None,
-                   refresh_list: bool = False, delay: float = 1.0, lister: Lister = ytdlp_lister,
-                   enricher: Enricher = ytdlp_video_info, progress: Progress | None = None,
-                   sleep: Callable[[float], None] = time.sleep) -> dict[str, Any]:
-    """Solo metadatos (descripcion, capitulos, tags, fecha exacta), sin transcripcion.
-    Sirve para filtrar por descripcion antes de decidir que transcribir."""
+                   refresh_list: bool = False, delay: float = 0.5, concurrency: int = 3,
+                   lister: Lister = ytdlp_lister, enricher: Enricher = ytdlp_video_info,
+                   progress: Progress | None = None, sleep: Callable[[float], None] = time.sleep) -> dict[str, Any]:
+    """Solo metadatos (descripcion, capitulos, tags, fecha exacta), sin transcripcion, con
+    `concurrency` peticiones en paralelo (~1,5 s por video). Reanudable: solo pide lo que falta.
+    Sirve para que el modelo revise titulo + descripcion de todo el canal antes de transcribir."""
     try:
         cid = store.resolve(channel)
         cname = store.channel_meta(cid).get("channel")
@@ -771,22 +783,42 @@ def fetch_metadata(store: Store, channel: str, *, max_videos: int = 50, title_fi
     todo = _select(store, cid, merged, all_states, title_filter, video_ids, need)[: max(0, max_videos)]
     done = errors = 0
     blocked = None
-    for i, v in enumerate(todo):
-        if progress:
-            progress(i, len(todo), v.get("title") or v["id"])
-        try:
-            _apply_meta(store, cid, cname, v, enricher(v["id"]))
-            v.pop("meta_error", None)
-            done += 1
-        except BlockedError as exc:
-            blocked = str(exc) or "bloqueado"
-            break
-        except Exception as exc:
-            v["meta_error"] = f"{type(exc).__name__}: {str(exc)[:150]}"
-            errors += 1
-        store.save_videos(cid, merged)
-        if delay and i < len(todo) - 1:
-            sleep(delay)
+    from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+
+    pending_iter = iter(todo)
+    with ThreadPoolExecutor(max_workers=max(1, concurrency)) as ex:
+        futs: dict[Any, dict[str, Any]] = {}
+
+        def submit_next() -> None:
+            v = next(pending_iter, None)
+            if v is not None:
+                futs[ex.submit(enricher, v["id"])] = v
+
+        for _ in range(max(1, concurrency)):
+            submit_next()
+        n = 0
+        while futs:
+            finished, _ = wait(list(futs), return_when=FIRST_COMPLETED)
+            for fut in finished:
+                v = futs.pop(fut)
+                n += 1
+                if progress:
+                    progress(n - 1, len(todo), v.get("title") or v["id"])
+                try:
+                    _apply_meta(store, cid, cname, v, fut.result())
+                    v.pop("meta_error", None)
+                    done += 1
+                except BlockedError as exc:
+                    blocked = blocked or (str(exc) or "bloqueado")
+                except Exception as exc:
+                    v["meta_error"] = f"{type(exc).__name__}: {str(exc)[:150]}"
+                    errors += 1
+                if n % 20 == 0:
+                    store.save_videos(cid, merged)
+                if not blocked:
+                    if delay:
+                        sleep(delay)
+                    submit_next()
     store.save_videos(cid, merged)
     pending = len(_select(store, cid, merged, all_states, title_filter, video_ids, need))
     return {"channel_id": cid, "channel": cname, **linfo, "fetched": done, "errors": errors,
