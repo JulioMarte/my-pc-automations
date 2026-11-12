@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -50,8 +51,32 @@ def test_md_partido_en_varios_archivos(st: Store, tmp_path: Path):
     assert len(paths) > 1 and paths[0] == "x-parte1.md"
     first = Path(r["files"][0]["path"]).read_text(encoding="utf-8")
     assert f"(parte 1 de {len(paths)})" in first
-    total = sum(Path(f["path"]).read_text(encoding="utf-8").count("\n## ") for f in r["files"])
-    assert total - len(paths) == r["videos"]  # cada video en exactamente un archivo (+ un indice por archivo)
+    total = sum(len(re.findall(r"\n## \d+\. ", Path(f["path"]).read_text(encoding="utf-8"))) for f in r["files"])
+    assert total == r["videos"]  # cada video en exactamente un archivo
+    last = Path(r["files"][-1]["path"]).read_text(encoding="utf-8")
+    assert "## Videos relevantes no incluidos" in last and IDS[3] in last  # apendice solo al final
+    assert "Videos relevantes" not in first
+
+
+# --- apendice de no incluidos -------------------------------------------------------
+
+def test_apendice_con_motivo_en_md_y_pdf(st: Store):
+    r = document.export_videos(st, video_ids=[IDS[0], IDS[3], "zzzzzzzzzzz"], format="both", return_content=True)
+    md = r["content"]
+    assert "## Videos relevantes no incluidos" in md and "2 videos cumplen la seleccion" in md
+    assert f"{TITLES[IDS[3]]} - https://www.youtube.com/watch?v={IDS[3]} - el video no tiene subtitulos" in md
+    assert "zzzzzzzzzzz - https://www.youtube.com/watch?v=zzzzzzzzzzz - no esta descargado" in md
+    pdf = Path(r["files"][1]["path"]).read_bytes()
+    assert pdf.count(b"/Title") >= 3  # marcadores: 1 video + apendice (+ titulo del documento)
+
+
+def test_fetch_missing_baja_ids_fuera_del_listado_por_via_suelta(tmp_path: Path):
+    s, yt = Store(tmp_path), FakeYT()
+    core.harvest(s, "@prueba", max_videos=0, **yt.kw())
+    directo = "liveliveliv"  # p. ej. un directo encontrado por la busqueda, no esta en /videos
+    r = document.export_videos(s, channel="@prueba", video_ids=[IDS[0], directo], fetch_missing_videos=True,
+                               net=yt.kw())
+    assert sorted(yt.fetched) == sorted([IDS[0], directo]) and r["videos"] == 2
 
 
 def test_pdf_valido_con_marcadores(st: Store):

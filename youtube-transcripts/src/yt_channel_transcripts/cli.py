@@ -25,6 +25,7 @@ from pathlib import Path
 from . import core
 from . import document as ytdoc
 from . import search as yts
+from . import topic as yttopic
 
 
 def _print(data: object) -> None:
@@ -139,6 +140,12 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("--out-dir")
     d.add_argument("--name", help="nombre de archivo sin extension")
 
+    tp = sub.add_parser("topic", help="candidatos de un canal para un tema (varias vias)")
+    tp.add_argument("channel")
+    tp.add_argument("terms", nargs="+")
+    tp.add_argument("--max-per-term", type=int, default=30)
+    tp.add_argument("--no-youtube", action="store_true")
+
     sub.add_parser("reindex", help="reconstruir el indice de busqueda")
     sub.add_parser("serve", help="servidor MCP por stdio")
 
@@ -199,6 +206,9 @@ def main(argv: list[str] | None = None) -> int:
                 limit=a.limit, format=a.format, doc_title=a.doc_title, include_description=not a.no_description,
                 max_chars_per_file=a.max_chars, out_dir=Path(a.out_dir) if a.out_dir else None,
                 filename=a.name, fetch_missing_videos=a.fetch_missing, fetch_limit=a.fetch_limit))
+        elif a.cmd == "topic":
+            _print(yttopic.find_topic_candidates(store, a.channel, a.terms, max_per_term=a.max_per_term,
+                                                 use_youtube_search=not a.no_youtube))
         elif a.cmd == "reindex":
             _print(core.rebuild_index(store))
     except (KeyError, ValueError) as exc:
