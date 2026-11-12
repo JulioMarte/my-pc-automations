@@ -2,7 +2,8 @@
 
 Servidor MCP y CLI para **buscar canales y videos en YouTube**, obtener **titulo, enlace,
 descripcion y transcripcion** de los videos de un canal, guardarlos en una cache local,
-**filtrarlos por titulo y descripcion**, buscar dentro de lo hablado y exportarlos.
+**filtrarlos por titulo y descripcion**, buscar dentro de lo hablado y entregar el
+resultado como **documento Markdown o PDF** para otro LLM (o para que el mismo lo analice).
 
 **No necesita API key de YouTube ni cuenta de Google**: usa las mismas paginas publicas
 que la web, a traves de `yt-dlp` y `youtube-transcript-api`.
@@ -93,11 +94,12 @@ Otros clientes (Claude Desktop, Cursor, etc.), en su `mcpServers`:
 | `get_transcript(video, format=paragraphs\|text\|segments, clean, max_chars=20000, offset)` | Texto paginado (`next_offset`). Si el video no esta en cache, lo baja |
 | `get_video_info(video)` | Descripcion completa, capitulos, tags, fecha exacta, vistas y estado de la transcripcion |
 | `list_channels()` | Canales en cache: videos listados, con metadatos y con transcripcion |
+| `export_videos(video_ids, channel, title, description, text, query, date_from, date_to, language, limit=50, format=md\|pdf\|both, doc_title, include_description, include_chapters, max_chars_per_file, return_content)` | **Documento final** con varios videos para un LLM: indice, metadatos, descripcion, capitulos y transcripcion con `[m:ss]`. Devuelve rutas y tokens aproximados |
 | `export_channel(channel, format=jsonl\|csv\|md, text_format, title_filter)` | Archivo con titulo, enlace, fecha, idioma, descripcion y transcripcion |
 | `rebuild_index()` | Reconstruye el indice desde los JSON |
 
 Tambien expone el recurso `yt://video/{video_id}` (transcripcion en Markdown con
-descripcion), `yt://channels`, y los prompts `investigar_tema(channel, tema)` y
+descripcion), `yt://exports/{nombre}.md` (documentos generados), `yt://channels`, y los prompts `investigar_tema(channel, tema)` y
 `resumir_video(video)`.
 
 `channel` acepta `@handle`, `handle`, ID `UC...`, URL del canal o URL de playlist. En las
@@ -116,6 +118,27 @@ herramientas de lectura tambien vale el nombre del canal.
 La descripcion solo se puede filtrar en videos con metadatos (`harvest_channel` con
 `metadata=true`, que es el defecto, o `fetch_metadata`). El titulo esta disponible para
 todos los videos listados.
+
+### Documento final para otro LLM (`export_videos`)
+
+Junta los videos elegidos en **un solo archivo**:
+
+- encabezado con fecha, numero de videos, idiomas, criterio de seleccion e instrucciones
+  de lectura para el modelo (que significa `[m:ss]`, como enlazar un minuto),
+- indice de videos,
+- por video: titulo, canal, fecha, duracion, idioma (manual/automatica), enlace, minutos
+  donde aparece la busqueda (si se uso `query`), descripcion, capitulos y transcripcion
+  en parrafos que empiezan en inicio de frase con `[m:ss]`.
+
+Formatos: **`md`** (recomendado para LLM: menos tokens y estructura clara), **`pdf`** (para
+subirlo a una interfaz de chat o leerlo; minutos clicables y un marcador por video) o
+`both`. Los archivos van a `<YT_TRANSCRIPTS_DIR>/exports/`. Si el resultado es grande,
+`max_chars_per_file` lo parte en varios `.md` sin cortar ningun video (400 000 caracteres
+son ~100k tokens). `approx_tokens` estima el tamano (caracteres / 4). Los videos sin
+transcripcion se listan en `without_transcript` para descargarlos con `harvest_channel`.
+
+Ejemplo: *"Dame un documento con todo lo que dijo el canal X sobre inflacion este ano"* ->
+`export_videos(channel="@X", query="inflacion", date_from="2026-01-01", format="both")`.
 
 ### Flujos tipicos para un modelo
 
@@ -146,6 +169,8 @@ uv run yt-transcripts find --description "nobel OR telescopio" --from 2026-01-01
 uv run yt-transcripts search '"agujero negro" velocidad*' --channel @QuantumFracture
 uv run yt-transcripts get "https://www.youtube.com/watch?v=eLpXKTgEEbE" --format paragraphs
 uv run yt-transcripts info "https://www.youtube.com/watch?v=-G3cwPHo1Qw"
+uv run yt-transcripts doc --channel QuantumFracture --query '"agujero negro" OR neutrino*' --format both
+uv run yt-transcripts doc --ids "https://www.youtube.com/watch?v=eLpXKTgEEbE" --format pdf --name chorro
 uv run yt-transcripts export @QuantumFracture --format csv --out canal.csv
 uv run yt-transcripts reindex
 ```
@@ -160,6 +185,7 @@ por `-`, pasa la URL completa (o `--` antes del ID).
 | `YT_TRANSCRIPTS_DIR` | `~/.yt-channel-transcripts` | Carpeta de la cache |
 | `YT_LANGS` | `original` | Idiomas preferidos, en orden (`original` = el idioma hablado en el video) |
 | `YT_SEARCH_LANG` | `es` | Idioma de la interfaz para `search_youtube` (afecta titulos traducidos) |
+| `YT_PDF_FONT` / `YT_PDF_FONT_BOLD` | Arial o DejaVu del sistema | Fuente TTF para el PDF (si no hay ninguna, se usa Helvetica sin caracteres fuera de latin-1) |
 | `YT_PROXY_HTTP` / `YT_PROXY_HTTPS` | (vacio) | Proxy para `youtube-transcript-api` si YouTube bloquea la IP |
 
 ### Idioma
@@ -199,6 +225,7 @@ cambies `languages`; usa `get_transcript` para pedir otro idioma de un video con
     transcripts_by_lang/      # <id>.<idioma>.json: otros idiomas pedidos con get_transcript
     export.{jsonl,csv,md}     # exportaciones
   _videos/                    # videos sueltos pedidos con get_transcript/get_video_info
+  exports/                    # documentos .md/.pdf generados con export_videos
   index.sqlite                # indice FTS5 derivado (se puede borrar: se rehace solo)
 ```
 
@@ -236,6 +263,8 @@ uv run pytest -q -m network --network      # prueba real contra YouTube
   saber cual es el idioma hablado y toma la primera pista disponible.
 - **Videos sin subtitulos** (muchos Shorts, directos recientes, videos con subtitulos
   desactivados) quedan como `sin_transcripcion`; esta herramienta no transcribe audio.
+- **PDF**: los emojis de las descripciones se omiten (las fuentes del sistema no los tienen).
+  `approx_tokens` es una estimacion; cada modelo tokeniza distinto.
 - **Busqueda por palabras** (FTS5 con BM25), no semantica: "coche" no encuentra "automovil".
 - **Busqueda en YouTube** (`search_youtube`, `search_channel_videos`): depende del orden y
   la personalizacion de YouTube; los titulos pueden venir traducidos automaticamente segun

@@ -6,7 +6,8 @@ politica del repositorio; solo anade reglas locales.
 ## Reglas
 
 - **Python >= 3.12 con uv** (HARD): dependencias declaradas en `pyproject.toml` y
-  fijadas en `uv.lock`. Runtime: `mcp`, `yt-dlp`, `youtube-transcript-api`. Anadir
+  fijadas en `uv.lock`. Runtime: `mcp`, `yt-dlp`, `youtube-transcript-api` y
+  `fpdf2` (PDF; aprobado por el usuario el 2026-11-12). Anadir
   otra dependencia de runtime requiere aprobacion.
 - **No reinventar** (CONTROLLED): el listado de canales lo hace `yt-dlp` y las
   transcripciones `youtube-transcript-api`. Este proyecto solo aporta cache,
@@ -14,7 +15,7 @@ politica del repositorio; solo anade reglas locales.
 - **Logica en `core.py`, sin red en los tests** (CONTROLLED): la red entra por los
   parametros inyectables `lister`, `fetcher`, `enricher` y `sub_fetcher`. `server.py`
   y `cli.py` son capas finas sobre `core`; `text.py` limpia y arma parrafos;
-  `search.py` busca en YouTube (inyectable `searcher`).
+  `search.py` busca en YouTube (inyectable `searcher`). `document.py` arma el documento MD/PDF.
 - **Sin API key ni credenciales** (HARD): no usar la YouTube Data API ni cuentas de
   Google; todo va por paginas publicas via `yt-dlp`/`youtube-transcript-api`.
 - **JSON = verdad, SQLite = indice** (HARD): `index.py` (FTS5, biblioteca estandar)

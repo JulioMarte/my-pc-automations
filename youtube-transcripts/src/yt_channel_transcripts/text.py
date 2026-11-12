@@ -14,6 +14,7 @@ from typing import Any
 _TAG_RE = re.compile(r"\[[^\[\]]{1,30}\]|\((?:m[uú]sica|music|aplausos|applause|risas|laughter)\)", re.I)
 _WS_RE = re.compile(r"\s+")
 _SENT_END = (".", "?", "!", "…", "。", "?", "!")
+_SENT_SPLIT = re.compile(r"[.?!…][\"'»”)\]]?\s+(?=\S)")
 
 PARAGRAPH_TARGET = 45.0  # segundos: a partir de aqui se corta en el siguiente final de frase
 PARAGRAPH_MAX = 75.0  # segundos: corte forzado (transcripciones sin puntuacion)
@@ -77,8 +78,22 @@ def paragraphs(segments: list[dict[str, Any]], chapters: list[dict[str, Any]] | 
             span = s["start"] - cur[0]["start"]
             new_chapter = chapter_at(s["start"]) != chapter_at(cur[0]["start"])
             sentence_done = cur[-1]["text"].endswith(_SENT_END)
-            if new_chapter or span >= PARAGRAPH_MAX or (span >= PARAGRAPH_TARGET and sentence_done):
+            if new_chapter or (span >= PARAGRAPH_TARGET and sentence_done):
                 flush()
+            elif span >= PARAGRAPH_TARGET:
+                # El final de frase suele caer dentro de un segmento: cortar ahi mismo.
+                m = None
+                for m in _SENT_SPLIT.finditer(s["text"]):
+                    pass
+                if m is not None:
+                    head, tail = s["text"][: m.end()].strip(), s["text"][m.end():].strip()
+                    cur.append({**s, "text": head})
+                    flush()
+                    if not tail:
+                        continue
+                    s = {**s, "text": tail}
+                elif span >= PARAGRAPH_MAX:
+                    flush()
         cur.append(s)
     flush()
     return out

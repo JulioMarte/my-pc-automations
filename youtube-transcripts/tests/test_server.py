@@ -13,7 +13,7 @@ from yt_channel_transcripts import core
 from yt_channel_transcripts.core import Store, TranscriptResult
 
 EXPECTED = {"search_youtube", "search_channel_videos", "harvest_channel", "fetch_metadata", "list_channels", "find_videos", "search_transcripts",
-            "get_transcript", "get_video_info", "export_channel", "rebuild_index"}
+            "get_transcript", "get_video_info", "export_channel", "export_videos", "rebuild_index"}
 
 
 def _seed(root):
@@ -55,9 +55,13 @@ def test_servidor_stdio_end_to_end(tmp_path):
             by_title = await s.call_tool("find_videos", {"title": "otro"})
             hits = await s.call_tool("search_transcripts", {"query": "FRASE clave", "title": "hola"})
             res = await s.read_resource("yt://video/abcdefghijk")
-            return names, prompts, templates, found, by_title, hits, res
+            doc = await s.call_tool("export_videos", {"query": "frase clave", "format": "both",
+                                                      "return_content": True})
+            name = _payload(doc)["files"][0]["path"].replace("\\", "/").rsplit("/", 1)[1]
+            via_res = await s.read_resource(f"yt://exports/{name}")
+            return names, prompts, templates, found, by_title, hits, res, doc, via_res
 
-    names, prompts, templates, found, by_title, hits, res = anyio.run(run)
+    names, prompts, templates, found, by_title, hits, res, doc, via_res = anyio.run(run)
     assert names == EXPECTED
     assert prompts == {"investigar_tema", "resumir_video"}
     assert "yt://video/{video_id}" in templates
@@ -69,3 +73,6 @@ def test_servidor_stdio_end_to_end(tmp_path):
     assert h["results"][0]["link"] == "https://www.youtube.com/watch?v=abcdefghijk&t=3s"
     md = res.contents[0].text
     assert md.startswith("# Hola MCP") and "Video sobre protocolos" in md and "[0:03] frase clave" in md
+    d = _payload(doc)
+    assert d["videos"] == 2 and [f["format"] for f in d["files"]] == ["md", "pdf"]
+    assert d["content"].startswith("# Canal MCP: 2 videos") and via_res.contents[0].text == d["content"]
