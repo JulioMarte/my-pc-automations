@@ -21,6 +21,7 @@ from . import core
 from . import text as T
 
 CHARS_PER_TOKEN = 4  # aproximacion habitual para estimar tokens
+DEFAULT_MAX_CHARS = 400_000  # ~100k tokens por archivo Markdown; 0 = un solo archivo
 
 
 # ---------------------------------------------------------------------------
@@ -30,9 +31,11 @@ CHARS_PER_TOKEN = 4  # aproximacion habitual para estimar tokens
 def collect(store: core.Store, *, video_ids: list[str] | None = None, channel: str | None = None,
             title: str | None = None, description: str | None = None, text: str | None = None,
             query: str | None = None, date_from: str | None = None, date_to: str | None = None,
-            language: str | None = None, limit: int = 50) -> dict[str, Any]:
-    """Elige videos con transcripcion segun IDs y/o filtros. Con `query` (busqueda en lo
-    hablado) se ordenan por relevancia y se anotan los minutos donde aparece."""
+            language: str | None = None, limit: int | None = None) -> dict[str, Any]:
+    """Elige TODOS los videos con transcripcion que cumplen IDs y/o filtros (o los primeros
+    `limit`). Con `query` (busqueda en lo hablado) se ordenan por relevancia y se anotan los
+    minutos donde aparece. Devuelve tambien la cobertura: cuantos cumplen el filtro pero no
+    tienen transcripcion y cuantos no se pudieron evaluar por falta de metadatos."""
     ids = [core.video_id(v) for v in video_ids] if video_ids else None
     filters = dict(channel=channel, title=title, description=description, text=text,
                    date_from=date_from, date_to=date_to)
@@ -49,21 +52,36 @@ def collect(store: core.Store, *, video_ids: list[str] | None = None, channel: s
             hits.setdefault(vid, []).append(r)
         order = list(hits) if ids is None else [i for i in ids if i in hits]
         if not order:  # la busqueda no encontro nada: no caer a "todos los videos"
-            return {"records": [], "without_transcript": [], "truncated": False}
+            return {"records": [], "without_transcript": [], "truncated": False,
+                    "coverage": {"matching": 0, "with_transcript": 0, "without_transcript": 0,
+                                 "note": "query solo busca en transcripciones ya descargadas"}}
 
     found = core.find_videos(store, video_ids=order, has_transcript=True, limit=100000,
                              **{k: v for k, v in filters.items() if v})
     ok_ids = {v["id"] for v in found["videos"]}
     if order is None:
         order = [v["id"] for v in found["videos"]]  # mas reciente primero
-    selected = [i for i in order if i in ok_ids][: max(1, limit)]
+    matched = [i for i in order if i in ok_ids]
+    selected = matched[: max(1, limit)] if limit else matched
 
     missing: list[str] = []
     if ids:
         missing = [i for i in ids if i not in ok_ids]
     elif not query:
-        nt = core.find_videos(store, has_transcript=False, limit=50, **{k: v for k, v in filters.items() if v})
+        nt = core.find_videos(store, has_transcript=False, limit=100000, **{k: v for k, v in filters.items() if v})
         missing = [v["id"] for v in nt["videos"]]
+    coverage: dict[str, Any] = {"matching": len(matched) + len(missing), "with_transcript": len(matched),
+                                "without_transcript": len(missing)}
+    if (description or text) and not ids:
+        scope = {k: v for k, v in dict(channel=channel, date_from=date_from, date_to=date_to).items() if v}
+        allv = core.find_videos(store, limit=100000, **scope)["videos"]
+        n = sum(1 for v in allv if not v.get("has_metadata"))
+        if n:
+            coverage["not_evaluated_no_metadata"] = n
+            coverage["note"] = (f"{n} videos no tienen metadatos y no se pudo evaluar su descripcion; "
+                                "usa fetch_metadata o fetch_missing.")
+    if query:
+        coverage["note"] = "query solo busca en transcripciones ya descargadas"
 
     records = []
     for vid in selected:
@@ -72,7 +90,60 @@ def collect(store: core.Store, *, video_ids: list[str] | None = None, channel: s
             rec["hits"] = sorted(hits.get(vid, []), key=lambda h: _secs(h["at"]))
             records.append(rec)
     return {"records": records, "without_transcript": missing,
-            "truncated": len([i for i in order if i in ok_ids]) > len(selected)}
+            "truncated": len(matched) > len(selected), "coverage": coverage}
+
+
+def _channel_of(store: core.Store, vid: str) -> str | None:
+    for d in store.channel_dirs():
+        if any(v["id"] == vid for v in store.videos(d.name)):
+            return d.name
+    return None
+
+
+def fetch_missing(store: core.Store, *, video_ids: list[str] | None, channel: str | None, title: str | None,
+                  description: str | None, text: str | None, date_from: str | None, date_to: str | None,
+                  fetch_limit: int, describe_first: bool, net: dict[str, Any]) -> dict[str, Any]:
+    """Descarga (metadatos + transcripcion) los videos que cumplen el filtro y aun no tienen
+    transcripcion, hasta `fetch_limit`. Si se filtra por descripcion, primero baja los
+    metadatos que falten del canal para poder evaluar ese filtro."""
+    summary: dict[str, Any] = {"attempted": 0, "downloaded": 0, "without_transcript": 0, "errors": 0,
+                               "metadata_fetched": 0, "blocked": None}
+    meta_net = {k: v for k, v in net.items() if k in ("lister", "enricher", "delay", "sleep")}
+    if describe_first and channel and (description or text) and not video_ids:
+        m = core.fetch_metadata(store, channel, max_videos=fetch_limit * 4, **meta_net)
+        summary["metadata_fetched"] = m["fetched"]
+        if m["blocked"]:
+            summary["blocked"] = m["blocked"]
+            return summary
+    pre = collect(store, video_ids=video_ids, channel=channel, title=title, description=description,
+                  text=text, date_from=date_from, date_to=date_to)
+    missing = pre["without_transcript"][: max(0, fetch_limit)]
+    if not missing:
+        return summary
+    groups: dict[str | None, list[str]] = {}
+    if channel:
+        groups[channel] = missing
+    else:
+        for vid in missing:
+            groups.setdefault(_channel_of(store, vid), []).append(vid)
+    harvest_net = {k: v for k, v in net.items() if k in ("lister", "fetcher", "enricher", "sub_fetcher", "delay", "sleep")}
+    for ch, vids in groups.items():
+        if ch is None:  # videos sueltos: sin canal conocido
+            for vid in vids:
+                summary["attempted"] += 1
+                r = core.get_transcript(store, vid, max_chars=1, **{k: v for k, v in net.items()
+                                                                     if k in ("fetcher", "enricher", "sub_fetcher")})
+                key = "downloaded" if "transcript" in r else ("without_transcript" if r.get("status") == core.ST_NONE
+                                                               else "errors")
+                summary[key] += 1
+            continue
+        r = core.harvest(store, ch, video_ids=vids, max_videos=len(vids), retry_errors=True, **harvest_net)
+        for k in ("attempted", "downloaded", "without_transcript", "errors", "metadata_fetched"):
+            summary[k] += r.get(k, 0)
+        if r.get("blocked"):
+            summary["blocked"] = r["blocked"]
+            break
+    return summary
 
 
 def _record(store: core.Store, vid: str, language: str | None) -> dict[str, Any] | None:
@@ -339,20 +410,35 @@ def _criteria(**kw: Any) -> str:
 def export_videos(store: core.Store, *, video_ids: list[str] | None = None, channel: str | None = None,
                   title: str | None = None, description: str | None = None, text: str | None = None,
                   query: str | None = None, date_from: str | None = None, date_to: str | None = None,
-                  language: str | None = None, limit: int = 50, format: str = "md",
+                  language: str | None = None, limit: int | None = None, format: str = "md",
                   doc_title: str | None = None, include_description: bool = True,
-                  include_chapters: bool = True, max_chars_per_file: int = 0,
+                  include_chapters: bool = True, max_chars_per_file: int = DEFAULT_MAX_CHARS,
                   out_dir: Path | None = None, filename: str | None = None,
-                  return_content: bool = False) -> dict[str, Any]:
-    """Genera el documento (md, pdf o both) y devuelve rutas y estadisticas."""
+                  return_content: bool = False, fetch_missing_videos: bool = False,
+                  fetch_limit: int = 50, net: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Genera el documento (md, pdf o both) con TODOS los videos que cumplen el filtro (o los
+    primeros `limit`) y devuelve rutas, cobertura y estadisticas. Con `fetch_missing_videos`
+    primero descarga los que cumplen el filtro y aun no tienen transcripcion."""
     if format not in ("md", "pdf", "both"):
         raise ValueError("format debe ser md, pdf o both")
+    fetched = None
+    only_query = not (video_ids or channel or title or description or text or date_from or date_to)
+    if fetch_missing_videos and only_query:
+        fetched = {"note": "fetch_missing necesita canal, IDs u otro filtro ademas de query: query solo "
+                           "busca en transcripciones ya descargadas."}
+    elif fetch_missing_videos:
+        fetched = fetch_missing(store, video_ids=video_ids, channel=channel, title=title,
+                                description=description, text=text, date_from=date_from, date_to=date_to,
+                                fetch_limit=fetch_limit, describe_first=True, net=net or {})
     sel = collect(store, video_ids=video_ids, channel=channel, title=title, description=description,
                   text=text, query=query, date_from=date_from, date_to=date_to, language=language, limit=limit)
     records = sel["records"]
     if not records:
-        return {"videos": 0, "files": [], "without_transcript": sel["without_transcript"],
-                "hint": "Ningun video seleccionado tiene transcripcion. Usa harvest_channel(video_ids=[...])."}
+        out = {"videos": 0, "files": [], "coverage": sel["coverage"], "without_transcript": sel["without_transcript"][:50],
+               "hint": "Ningun video seleccionado tiene transcripcion. Usa fetch_missing_videos=true o harvest_channel."}
+        if fetched is not None:
+            out["fetched"] = fetched
+        return out
     crit = _criteria(video_ids=video_ids, channel=channel, title=title, description=description, text=text,
                      query=query, date_from=date_from, date_to=date_to, language=language)
     if not doc_title:
@@ -383,8 +469,17 @@ def export_videos(store: core.Store, *, video_ids: list[str] | None = None, chan
         "title": doc_title, "videos": len(records), "files": files,
         "approx_tokens": total_chars // CHARS_PER_TOKEN,
         "videos_included": [{"title": r["title"], "url": r["url"], "language": r["language"]} for r in records],
-        "without_transcript": sel["without_transcript"], "truncated_by_limit": sel["truncated"],
+        "coverage": sel["coverage"], "without_transcript": sel["without_transcript"][:50],
+        "truncated_by_limit": sel["truncated"],
     }
+    if fetched is not None:
+        out["fetched"] = fetched
+        if fetched.get("blocked"):
+            out["hint"] = ("YouTube limito la IP durante la descarga; el documento incluye lo que ya habia. "
+                           "Vuelve a intentarlo mas tarde para completar.")
+    if sel["coverage"].get("without_transcript"):
+        out.setdefault("hint", f"{sel['coverage']['without_transcript']} videos cumplen el filtro pero no tienen "
+                               "transcripcion; usa fetch_missing_videos=true para incluirlos.")
     if return_content:
         out["content"] = md_docs[0] if len(md_docs) == 1 else md_docs
     return out

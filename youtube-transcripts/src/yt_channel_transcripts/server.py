@@ -35,7 +35,14 @@ Flujo recomendado para trabajar con un canal:
 4. get_transcript: texto en parrafos con [minuto] (paginado con offset/next_offset).
 5. export_videos: documento final (Markdown y/o PDF) con varios videos -indice, metadatos,
    descripcion, capitulos y transcripcion con [minuto]- para entregar a otro LLM o analizarlo tu.
-   Selecciona por video_ids o filtros (incluida query = lo dicho en el video).
+   Selecciona por video_ids o filtros (incluida query = lo dicho en el video). Incluye TODOS los
+   que cumplen el filtro (se parte en archivos de ~100k tokens) y 'coverage' dice cuantos faltan;
+   con fetch_missing=true descarga antes los que cumplen el filtro y no tienen transcripcion.
+Los filtros son por palabras, no por significado. Para respetar la INTENCION del usuario:
+ a) traduce la peticion a filtros amplios con sinonimos (p. ej. 'inflacion OR precios OR "costo de vida"'),
+ b) revisa los candidatos con find_videos (titulo + descripcion) o search_channel_videos y descarta
+    los que no encajan, y
+ c) llama export_videos con video_ids = los elegidos. Explica al usuario que criterio usaste.
 6. get_video_info: descripcion completa, capitulos, tags. export_channel: jsonl/csv/md del canal.
 Si 'blocked' trae texto, YouTube limito la IP: no reintentes enseguida."""
 
@@ -266,13 +273,15 @@ async def export_videos(
     date_from: str | None = None,
     date_to: str | None = None,
     language: str | None = None,
-    limit: int = 50,
+    limit: int | None = None,
     format: str = "md",
     doc_title: str | None = None,
     include_description: bool = True,
     include_chapters: bool = True,
-    max_chars_per_file: int = 0,
+    max_chars_per_file: int = 400000,
     return_content: bool = False,
+    fetch_missing: bool = False,
+    fetch_limit: int = 50,
 ) -> dict[str, Any]:
     """Genera un documento final con varios videos (solo los que tienen transcripcion) para
     entregarlo a otro LLM o analizarlo: indice, canal, fecha, duracion, idioma, enlace,
@@ -281,16 +290,23 @@ async def export_videos(
     Seleccion: video_ids (en ese orden) y/o filtros como find_videos; query = lo dicho en el
       video (ordena por relevancia y anota los minutos donde aparece).
     format: md (recomendado para LLM) | pdf (para subir a un chat o leer) | both.
-    max_chars_per_file: si > 0, parte el Markdown en varios archivos (p. ej. 400000 ~ 100k tokens).
+    Por defecto incluye TODOS los que cumplen el filtro (limit=None).
+    max_chars_per_file: parte el Markdown en varios archivos sin cortar videos (defecto 400000
+      ~ 100k tokens; 0 = un solo archivo).
+    fetch_missing: antes de exportar, descarga (hasta fetch_limit) los videos que cumplen el filtro
+      y aun no tienen transcripcion; si filtras por descripcion, baja tambien los metadatos que falten.
+      Puede tardar ~5 s por video.
     return_content: incluir el Markdown en la respuesta (solo si es corto; si no, lee el archivo
       o el recurso yt://exports/{nombre}).
-    Devuelve rutas, tokens aproximados y que videos quedaron fuera por no tener transcripcion."""
+    Devuelve rutas, tokens aproximados y 'coverage' (cuantos cumplen el filtro, cuantos se incluyeron,
+    cuantos no tienen transcripcion y cuantos no se pudieron evaluar por falta de metadatos)."""
     st = _store()
     return await anyio.to_thread.run_sync(lambda: ytdoc.export_videos(
         st, video_ids=video_ids, channel=channel, title=title, description=description, text=text,
         query=query, date_from=date_from, date_to=date_to, language=language, limit=limit, format=format,
         doc_title=doc_title, include_description=include_description, include_chapters=include_chapters,
-        max_chars_per_file=max_chars_per_file, return_content=return_content))
+        max_chars_per_file=max_chars_per_file, return_content=return_content,
+        fetch_missing_videos=fetch_missing, fetch_limit=fetch_limit))
 
 
 @mcp.tool()

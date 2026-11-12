@@ -129,11 +129,13 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("--from", dest="date_from")
     d.add_argument("--to", dest="date_to")
     d.add_argument("--language")
-    d.add_argument("--limit", type=int, default=50)
+    d.add_argument("--limit", type=int, default=None, help="maximo de videos (defecto: todos)")
     d.add_argument("--format", default="md", choices=("md", "pdf", "both"))
     d.add_argument("--doc-title")
     d.add_argument("--no-description", action="store_true")
-    d.add_argument("--max-chars", type=int, default=0, help="partir el MD en archivos de este tamano")
+    d.add_argument("--max-chars", type=int, default=400000, help="partir el MD (defecto ~100k tokens; 0 = no)")
+    d.add_argument("--fetch-missing", action="store_true", help="descargar antes lo que falte")
+    d.add_argument("--fetch-limit", type=int, default=50)
     d.add_argument("--out-dir")
     d.add_argument("--name", help="nombre de archivo sin extension")
 
@@ -196,7 +198,7 @@ def main(argv: list[str] | None = None) -> int:
                 text=a.text, query=a.query, date_from=a.date_from, date_to=a.date_to, language=a.language,
                 limit=a.limit, format=a.format, doc_title=a.doc_title, include_description=not a.no_description,
                 max_chars_per_file=a.max_chars, out_dir=Path(a.out_dir) if a.out_dir else None,
-                filename=a.name))
+                filename=a.name, fetch_missing_videos=a.fetch_missing, fetch_limit=a.fetch_limit))
         elif a.cmd == "reindex":
             _print(core.rebuild_index(store))
     except (KeyError, ValueError) as exc:

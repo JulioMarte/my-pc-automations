@@ -72,3 +72,60 @@ def test_validaciones(st: Store):
         document.export_videos(st)  # sin seleccion
     with pytest.raises(ValueError):
         document.export_videos(st, channel="@prueba", format="docx")
+
+
+# --- todos los que cumplen el filtro, cobertura y descarga de faltantes ---------
+
+def _parcial(tmp_path: Path, n_transcritos: int, metadata: bool = True):
+    """Canal listado completo pero con solo los primeros n videos descargados."""
+    s, yt = Store(tmp_path), FakeYT()
+    core.harvest(s, "@prueba", max_videos=n_transcritos, metadata=metadata, **yt.kw())
+    return s, yt
+
+
+def test_sin_tope_incluye_todos_y_reporta_cobertura(tmp_path: Path):
+    s, yt = _parcial(tmp_path, 1)
+    r = document.export_videos(s, title="inflacion")  # IDS[0] descargado, IDS[4] no
+    assert r["videos"] == 1 and r["truncated_by_limit"] is False
+    assert r["coverage"] == {"matching": 2, "with_transcript": 1, "without_transcript": 1}
+    assert r["without_transcript"] == [IDS[4]] and "fetch_missing_videos" in r["hint"]
+    many = [core.watch_url(v) for v in IDS]
+    core.harvest(s, "@prueba", max_videos=10, **yt.kw())
+    assert document.export_videos(s, video_ids=many)["videos"] == 5  # sin el tope viejo
+
+
+def test_fetch_missing_descarga_lo_que_cumple_el_filtro_y_exporta(tmp_path: Path):
+    s, yt = _parcial(tmp_path, 1)
+    yt.fetched.clear()
+    r = document.export_videos(s, channel="@prueba", title="inflacion", fetch_missing_videos=True,
+                               net=yt.kw(), return_content=True)
+    assert yt.fetched == [IDS[4]]  # solo el que faltaba y cumple el filtro
+    assert r["videos"] == 2 and r["coverage"]["without_transcript"] == 0
+    assert r["fetched"]["downloaded"] == 1 and TITLES[IDS[4]] in r["content"]
+
+
+def test_filtro_de_descripcion_avisa_y_baja_metadatos_que_faltan(tmp_path: Path):
+    s, yt = _parcial(tmp_path, 0, metadata=False)  # solo listado: sin descripciones
+    r = document.export_videos(s, channel="@prueba", description="precios")
+    assert r["videos"] == 0 and r["coverage"]["not_evaluated_no_metadata"] == 5
+    r = document.export_videos(s, channel="@prueba", description="precios", fetch_missing_videos=True,
+                               net=yt.kw())
+    assert r["fetched"]["metadata_fetched"] == 5 and r["videos"] == 2
+    assert {v["title"] for v in r["videos_included"]} == {TITLES[IDS[0]], TITLES[IDS[4]]}
+    assert "not_evaluated_no_metadata" not in r["coverage"]
+
+
+def test_fetch_missing_respeta_limite_y_bloqueo(tmp_path: Path):
+    s, yt = _parcial(tmp_path, 0)
+    r = document.export_videos(s, channel="@prueba", fetch_missing_videos=True, fetch_limit=2, net=yt.kw())
+    assert r["fetched"]["downloaded"] == 2 and r["videos"] == 2 and r["coverage"]["without_transcript"] == 3
+    yt.plan = {v: core.BlockedError("429") for v in IDS}
+    r = document.export_videos(s, channel="@prueba", fetch_missing_videos=True, net=yt.kw())
+    assert r["fetched"]["blocked"] == "429" and r["videos"] == 2 and "limito" in r["hint"]
+
+
+def test_fetch_missing_solo_con_query_no_descarga(tmp_path: Path):
+    s, yt = _parcial(tmp_path, 1)
+    yt.fetched.clear()
+    r = document.export_videos(s, query="financiera", fetch_missing_videos=True, net=yt.kw())
+    assert yt.fetched == [] and "query" in r["fetched"]["note"] and r["videos"] == 1
