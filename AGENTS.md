@@ -145,7 +145,8 @@ Laboratorio de recuperacion ante desastres para `vps-backup`, en bash puro y sin
 
 ## Proyecto `youtube-transcripts`
 
-Servidor MCP y CLI (Python + uv) para titulo, enlace, descripcion y transcripcion de
+Servidor MCP y CLI (Python + uv) para buscar canales/videos en YouTube y obtener
+titulo, enlace, descripcion y transcripcion de
 los videos de un canal de YouTube, con cache local reanudable, listado incremental,
 indice SQLite FTS5 (filtros por titulo/descripcion y busqueda) y exportacion.
 Reutiliza `yt-dlp` y `youtube-transcript-api`; no usa API key.

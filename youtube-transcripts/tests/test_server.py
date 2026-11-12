@@ -12,7 +12,7 @@ import anyio
 from yt_channel_transcripts import core
 from yt_channel_transcripts.core import Store, TranscriptResult
 
-EXPECTED = {"harvest_channel", "fetch_metadata", "list_channels", "find_videos", "search_transcripts",
+EXPECTED = {"search_youtube", "search_channel_videos", "harvest_channel", "fetch_metadata", "list_channels", "find_videos", "search_transcripts",
             "get_transcript", "get_video_info", "export_channel", "rebuild_index"}
 
 
