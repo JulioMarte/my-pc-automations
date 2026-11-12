@@ -12,8 +12,10 @@ politica del repositorio; solo anade reglas locales.
   transcripciones `youtube-transcript-api`. Este proyecto solo aporta cache,
   seleccion de idioma, busqueda, exportacion y la capa MCP/CLI.
 - **Logica en `core.py`, sin red en los tests** (CONTROLLED): la red entra por los
-  parametros inyectables `lister` y `fetcher`. `server.py` y `cli.py` son capas
-  finas sobre `core`.
+  parametros inyectables `lister`, `fetcher`, `enricher` y `sub_fetcher`. `server.py`
+  y `cli.py` son capas finas sobre `core`; `text.py` limpia y arma parrafos.
+- **JSON = verdad, SQLite = indice** (HARD): `index.py` (FTS5, biblioteca estandar)
+  es derivado y reconstruible con `rebuild_index`; nunca guardar datos solo en el indice.
 - **Respuestas MCP acotadas** (CONTROLLED): las herramientas devuelven resumenes y
   paginan el texto (`max_chars`/`offset`); ninguna vuelca un canal entero al contexto.
 - **Escrituras atomicas y reanudables** (HARD): la cache se escribe con
