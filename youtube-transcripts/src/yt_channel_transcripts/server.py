@@ -18,6 +18,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from . import core
 from . import document as ytdoc
 from . import search as yts
+from . import topic as yttopic
 
 INSTRUCTIONS = """\
 Herramientas para buscar en YouTube y procesar videos y transcripciones de canales (sin API key).
@@ -38,6 +39,8 @@ Flujo recomendado para trabajar con un canal:
    Selecciona por video_ids o filtros (incluida query = lo dicho en el video). Incluye TODOS los
    que cumplen el filtro (se parte en archivos de ~100k tokens) y 'coverage' dice cuantos faltan;
    con fetch_missing=true descarga antes los que cumplen el filtro y no tienen transcripcion.
+Para un DUMP de un canal sobre un tema (p. ej. "dame todo lo de X sobre Y en PDF"): usa el prompt
+dump_tema_canal o sigue sus pasos (find_topic_candidates -> revisar -> export_videos format=pdf).
 Los filtros son por palabras, no por significado. Para respetar la INTENCION del usuario:
  a) traduce la peticion a filtros amplios con sinonimos (p. ej. 'inflacion OR precios OR "costo de vida"'),
  b) revisa los candidatos con find_videos (titulo + descripcion) o search_channel_videos y descarta
@@ -165,6 +168,24 @@ async def search_channel_videos(channel: str, query: str, limit: int = 20) -> di
     harvest_channel(video_ids=[...])."""
     r = await anyio.to_thread.run_sync(lambda: yts.search_in_channel(channel, query, limit=limit))
     r["results"] = _annotate(r["results"])
+    return r
+
+
+@mcp.tool()
+async def find_topic_candidates(channel: str, terms: list[str], max_per_term: int = 30,
+                                use_youtube_search: bool = True) -> dict[str, Any]:
+    """Encuentra los videos de un canal que podrian tratar un tema, buscando por varias vias:
+    buscador propio del canal en YouTube (titulos y descripciones de TODO el canal), titulo y
+    descripcion en la cache local y lo hablado en transcripciones ya descargadas.
+
+    terms: 3-10 terminos del tema, con sinonimos y variantes (frases se buscan exactas; 'precio*'
+      es prefijo). Ej.: ["inflacion", "costo de vida", "precios", "IPC", "devaluacion"].
+    Devuelve candidatos con titulo, enlace, fecha, duracion, fragmento de descripcion, si ya tienen
+    transcripcion y 'sources' (vias por las que aparecio). NO descarga transcripciones: revisa,
+    descarta lo que no encaje y pasa los elegidos a export_videos(video_ids=..., fetch_missing=true)."""
+    st = _store()
+    r = await anyio.to_thread.run_sync(lambda: yttopic.find_topic_candidates(
+        st, channel, terms, max_per_term=max_per_term, use_youtube_search=use_youtube_search))
     return r
 
 
@@ -358,6 +379,26 @@ def investigar_tema(channel: str, tema: str) -> str:
             f"search_transcripts con query='{tema}' para lo hablado.\n"
             "3. Lee con get_transcript solo los fragmentos necesarios.\n"
             "4. Responde con un resumen y cita cada afirmacion con [titulo](enlace con &t=).")
+
+
+@mcp.prompt()
+def dump_tema_canal(canal: str, tema: str, formato: str = "pdf") -> str:
+    """Dump de un canal sobre un tema: busca, elige y entrega UN solo documento (PDF por defecto)."""
+    return (
+        f"Quiero un unico documento {formato.upper()} con TODOS los videos del canal {canal} que traten sobre: {tema}.\n"
+        "Pasos:\n"
+        "1. Si no conoces el canal exacto, buscalo con search_youtube(kind='channel') y confirma el @handle.\n"
+        f"2. Genera de 4 a 10 terminos para '{tema}': sinonimos, conceptos relacionados, siglas, nombres propios, "
+        "en el idioma del canal (y en ingles si el canal mezcla idiomas).\n"
+        "3. Llama find_topic_candidates(channel, terms).\n"
+        "4. Revisa titulo y descripcion de cada candidato. Descarta lo que no trate el tema de verdad; si dudas y "
+        "aparece por varias vias, incluyelo. Si un termino trajo resultados irrelevantes, ignora ese termino.\n"
+        f"5. Llama export_videos(video_ids=<elegidos>, fetch_missing=true, fetch_limit=<numero de elegidos>, "
+        f"format='{formato}', max_chars_per_file=0, doc_title='{canal}: {tema}').\n"
+        "6. Responde con: la ruta del archivo, cuantos videos incluye, cuantos quedaron fuera y por que "
+        "(coverage, fetched y el apendice del documento), y el criterio que usaste para elegir. Si YouTube "
+        "limito la IP, dilo y explica que basta con volver a pedirlo mas tarde: se reanuda donde quedo."
+    )
 
 
 @mcp.prompt()

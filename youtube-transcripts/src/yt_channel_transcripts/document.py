@@ -37,7 +37,9 @@ def collect(store: core.Store, *, video_ids: list[str] | None = None, channel: s
     minutos donde aparece. Devuelve tambien la cobertura: cuantos cumplen el filtro pero no
     tienen transcripcion y cuantos no se pudieron evaluar por falta de metadatos."""
     ids = [core.video_id(v) for v in video_ids] if video_ids else None
-    filters = dict(channel=channel, title=title, description=description, text=text,
+    # Con IDs explicitos el canal no filtra: un directo encontrado por busqueda puede no estar
+    # en el listado del canal y se guarda como video suelto.
+    filters = dict(channel=None if ids else channel, title=title, description=description, text=text,
                    date_from=date_from, date_to=date_to)
     if not ids and not query and not any(filters.values()):
         raise ValueError("Indica video_ids o algun filtro (channel, title, description, text, query, fechas).")
@@ -122,7 +124,16 @@ def fetch_missing(store: core.Store, *, video_ids: list[str] | None, channel: st
         return summary
     groups: dict[str | None, list[str]] = {}
     if channel:
-        groups[channel] = missing
+        try:
+            listed = {v["id"] for v in store.videos(store.resolve(channel))}
+        except KeyError:
+            listed = set()
+        inside = [v for v in missing if v in listed]
+        outside = [v for v in missing if v not in listed]  # p. ej. directos encontrados por busqueda
+        if inside:
+            groups[channel] = inside
+        if outside:
+            groups[None] = outside
     else:
         for vid in missing:
             groups.setdefault(_channel_of(store, vid), []).append(vid)
@@ -131,8 +142,13 @@ def fetch_missing(store: core.Store, *, video_ids: list[str] | None, channel: st
         if ch is None:  # videos sueltos: sin canal conocido
             for vid in vids:
                 summary["attempted"] += 1
-                r = core.get_transcript(store, vid, max_chars=1, **{k: v for k, v in net.items()
-                                                                     if k in ("fetcher", "enricher", "sub_fetcher")})
+                try:
+                    r = core.get_transcript(store, vid, max_chars=1, **{k: v for k, v in net.items()
+                                                                         if k in ("fetcher", "enricher", "sub_fetcher")})
+                except core.BlockedError as exc:
+                    summary["attempted"] -= 1
+                    summary["blocked"] = str(exc) or "bloqueado"
+                    return summary
                 key = "downloaded" if "transcript" in r else ("without_transcript" if r.get("status") == core.ST_NONE
                                                                else "errors")
                 summary[key] += 1
@@ -144,6 +160,46 @@ def fetch_missing(store: core.Store, *, video_ids: list[str] | None, channel: st
             summary["blocked"] = r["blocked"]
             break
     return summary
+
+
+_REASONS = {
+    core.ST_NONE: "el video no tiene subtitulos/transcripcion en YouTube",
+    core.ST_ERROR: "fallo la descarga (se reintentara)",
+    core.ST_PENDING: "pendiente de descarga (no se intento todavia o YouTube limito la IP)",
+}
+
+
+def missing_info(store: core.Store, ids: list[str], cap: int = 500) -> list[dict[str, Any]]:
+    """Titulo, enlace y motivo de los videos seleccionados que no entraron al documento."""
+    rows: dict[str, dict[str, Any]] = {}
+    for d in store.channel_dirs():
+        for v in store.videos(d.name):
+            if v["id"] in ids:
+                rows[v["id"]] = v
+    unknown = [i for i in ids[:cap] if i not in rows]
+    if unknown:  # p. ej. Shorts/directos encontrados por busqueda: titulo desde el indice
+        for v in store.index.find_videos(video_ids=unknown, limit=len(unknown))["videos"]:
+            rows[v["id"]] = {"title": v.get("title"), "status": v.get("status"), "outside": True}
+    out = []
+    for vid in ids[:cap]:
+        v = rows.get(vid, {})
+        st = v.get("status")
+        reason = _REASONS.get(st, "no esta descargado")
+        if v.get("outside"):
+            reason = "fuera del listado principal del canal (Short o directo); " + reason
+        if st == core.ST_ERROR and v.get("error"):
+            reason += f": {v['error'][:80]}"
+        out.append({"id": vid, "title": v.get("title") or vid, "url": core.watch_url(vid), "reason": reason})
+    return out
+
+
+def _missing_md(missing: list[dict[str, Any]], total: int) -> str:
+    lines = ["## Videos relevantes no incluidos", "",
+             f"{total} videos cumplen la seleccion pero no estan en este documento:", ""]
+    lines += [f"- {m['title']} - {m['url']} - {m['reason']}" for m in missing]
+    if total > len(missing):
+        lines.append(f"- ... y {total - len(missing)} mas")
+    return "\n".join(lines) + "\n"
 
 
 def _record(store: core.Store, vid: str, language: str | None) -> dict[str, Any] | None:
@@ -240,13 +296,15 @@ def _header_md(doc_title: str, records: list[dict[str, Any]], criteria: str, par
 
 def render_markdown(records: list[dict[str, Any]], *, doc_title: str, criteria: str,
                     include_description: bool = True, include_chapters: bool = True,
-                    query: str | None = None, max_chars_per_file: int = 0) -> list[str]:
+                    query: str | None = None, max_chars_per_file: int = 0,
+                    missing: list[dict[str, Any]] | None = None, missing_total: int = 0) -> list[str]:
     """Devuelve uno o varios documentos Markdown. Con `max_chars_per_file` > 0 se parte
     entre videos (un video nunca se corta; si uno solo supera el limite va solo)."""
     bodies = [_video_md(i, r, include_description=include_description, include_chapters=include_chapters,
                         query=query) for i, r in enumerate(records, 1)]
+    tail = ("\n---\n\n" + _missing_md(missing, missing_total or len(missing))) if missing else ""
     if max_chars_per_file <= 0:
-        return [_header_md(doc_title, records, criteria) + "\n---\n\n" + "\n---\n\n".join(bodies)]
+        return [_header_md(doc_title, records, criteria) + "\n---\n\n" + "\n---\n\n".join(bodies) + tail]
     groups: list[list[int]] = [[]]
     size = 0
     for i, b in enumerate(bodies):
@@ -261,6 +319,8 @@ def render_markdown(records: list[dict[str, Any]], *, doc_title: str, criteria: 
         recs = [records[i] for i in idxs]
         head = _header_md(doc_title, recs, criteria, part)
         docs.append(head + "\n---\n\n" + "\n---\n\n".join(bodies[i] for i in idxs))
+    if tail:
+        docs[-1] += tail
     return docs
 
 
@@ -301,7 +361,8 @@ def _pdf_text(s: str, unicode_font: bool) -> str:
 
 def render_pdf(records: list[dict[str, Any]], path: Path, *, doc_title: str, criteria: str,
                include_description: bool = True, include_chapters: bool = True,
-               query: str | None = None) -> Path:
+               query: str | None = None, missing: list[dict[str, Any]] | None = None,
+               missing_total: int = 0) -> Path:
     from fpdf import FPDF
 
     logging.getLogger("fontTools").setLevel(logging.ERROR)
@@ -381,6 +442,24 @@ def render_pdf(records: list[dict[str, Any]], path: Path, *, doc_title: str, cri
             pdf.set_font(fam, "", 10)
             pdf.write(5, tx(p["text"]))
             pdf.ln(7)
+    if missing:
+        pdf.add_page()
+        pdf.start_section("Videos relevantes no incluidos")
+        heading("Videos relevantes no incluidos", 14)
+        total = missing_total or len(missing)
+        para(f"{total} videos cumplen la seleccion pero no estan en este documento:", 10)
+        pdf.ln(2)
+        for m in missing:
+            pdf.set_font(fam, "B", 9)
+            pdf.multi_cell(0, 4.5, tx(m["title"]), new_x="LMARGIN", new_y="NEXT")
+            pdf.set_font(fam, "", 8)
+            pdf.set_text_color(20, 60, 160)
+            pdf.cell(0, 4, m["url"], link=m["url"], new_x="LMARGIN", new_y="NEXT")
+            pdf.set_text_color(0, 0, 0)
+            pdf.multi_cell(0, 4, tx(m["reason"]), new_x="LMARGIN", new_y="NEXT")
+            pdf.ln(1.5)
+        if total > len(missing):
+            para(f"... y {total - len(missing)} mas", 9)
     path.parent.mkdir(parents=True, exist_ok=True)
     pdf.output(str(path))
     return path
@@ -453,8 +532,11 @@ def export_videos(store: core.Store, *, video_ids: list[str] | None = None, chan
     stem = re.sub(r"\.(md|pdf)$", "", stem)
     out_dir.mkdir(parents=True, exist_ok=True)
     files: list[dict[str, Any]] = []
+    miss_ids = sel["without_transcript"]
+    missing = missing_info(store, miss_ids) if miss_ids else []
     md_docs = render_markdown(records, doc_title=doc_title, criteria=crit, include_description=include_description,
-                              include_chapters=include_chapters, query=query, max_chars_per_file=max_chars_per_file)
+                              include_chapters=include_chapters, query=query, max_chars_per_file=max_chars_per_file,
+                              missing=missing, missing_total=len(miss_ids))
     if format in ("md", "both"):
         for n, d in enumerate(md_docs, 1):
             p = out_dir / (f"{stem}.md" if len(md_docs) == 1 else f"{stem}-parte{n}.md")
@@ -462,7 +544,8 @@ def export_videos(store: core.Store, *, video_ids: list[str] | None = None, chan
             files.append({"path": str(p), "format": "md", "chars": len(d), "approx_tokens": len(d) // CHARS_PER_TOKEN})
     if format in ("pdf", "both"):
         p = render_pdf(records, out_dir / f"{stem}.pdf", doc_title=doc_title, criteria=crit,
-                       include_description=include_description, include_chapters=include_chapters, query=query)
+                       include_description=include_description, include_chapters=include_chapters, query=query,
+                       missing=missing, missing_total=len(miss_ids))
         files.append({"path": str(p), "format": "pdf", "bytes": p.stat().st_size})
     total_chars = sum(len(d) for d in md_docs)
     out: dict[str, Any] = {

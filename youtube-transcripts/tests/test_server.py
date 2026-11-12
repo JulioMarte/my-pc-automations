@@ -12,7 +12,7 @@ import anyio
 from yt_channel_transcripts import core
 from yt_channel_transcripts.core import Store, TranscriptResult
 
-EXPECTED = {"search_youtube", "search_channel_videos", "harvest_channel", "fetch_metadata", "list_channels", "find_videos", "search_transcripts",
+EXPECTED = {"search_youtube", "search_channel_videos", "find_topic_candidates", "harvest_channel", "fetch_metadata", "list_channels", "find_videos", "search_transcripts",
             "get_transcript", "get_video_info", "export_channel", "export_videos", "rebuild_index"}
 
 
@@ -63,7 +63,7 @@ def test_servidor_stdio_end_to_end(tmp_path):
 
     names, prompts, templates, found, by_title, hits, res, doc, via_res = anyio.run(run)
     assert names == EXPECTED
-    assert prompts == {"investigar_tema", "resumir_video"}
+    assert prompts == {"investigar_tema", "resumir_video", "dump_tema_canal"}
     assert "yt://video/{video_id}" in templates
     f = _payload(found)
     assert [v["id"] for v in f["videos"]] == ["abcdefghijk"] and f["videos"][0]["description"] == "Video sobre protocolos"

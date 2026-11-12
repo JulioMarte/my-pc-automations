@@ -85,6 +85,7 @@ Otros clientes (Claude Desktop, Cursor, etc.), en su `mcpServers`:
 | Herramienta | Uso |
 |---|---|
 | `search_youtube(query, kind=video\|channel\|playlist, limit=10, sort=relevance\|date\|views\|rating, upload_date=hour\|today\|week\|month\|year, duration=short\|medium\|long)` | **Busca en todo YouTube**, en vivo. Videos: titulo, enlace, canal (@handle, ID), duracion, vistas, descripcion. Canales: ID, @handle, suscriptores, descripcion. Marca lo que ya esta en cache |
+| `find_topic_candidates(channel, terms, max_per_term=30, use_youtube_search=True)` | **Descubrimiento por tema**: busca varios terminos por tres vias (buscador del canal en YouTube, titulo/descripcion local, lo hablado ya descargado) y devuelve candidatos con `sources` para que el modelo elija |
 | `search_channel_videos(channel, query, limit=20)` | Buscador propio del canal en YouTube: titulos y descripciones de **todo** el canal sin haberlo descargado |
 | `harvest_channel(channel, max_videos=20, title_filter, video_ids, list_limit, languages, metadata=True, tab, retry_errors, delay_seconds)` | Lista el canal y procesa hasta `max_videos` videos pendientes: metadatos + transcripcion. `title_filter`/`video_ids` limitan cuales. Si `pending > 0`, volver a llamarla |
 | `harvest_channel(channel, max_videos=0)` | Solo lista el canal (titulos de todos los videos) sin bajar nada mas |
@@ -99,8 +100,8 @@ Otros clientes (Claude Desktop, Cursor, etc.), en su `mcpServers`:
 | `rebuild_index()` | Reconstruye el indice desde los JSON |
 
 Tambien expone el recurso `yt://video/{video_id}` (transcripcion en Markdown con
-descripcion), `yt://exports/{nombre}.md` (documentos generados), `yt://channels`, y los prompts `investigar_tema(channel, tema)` y
-`resumir_video(video)`.
+descripcion), `yt://exports/{nombre}.md` (documentos generados), `yt://channels`, y los prompts
+`dump_tema_canal(canal, tema, formato=pdf)`, `investigar_tema(channel, tema)` y `resumir_video(video)`.
 
 `channel` acepta `@handle`, `handle`, ID `UC...`, URL del canal o URL de playlist. En las
 herramientas de lectura tambien vale el nombre del canal.
@@ -118,6 +119,28 @@ herramientas de lectura tambien vale el nombre del canal.
 La descripcion solo se puede filtrar en videos con metadatos (`harvest_channel` con
 `metadata=true`, que es el defecto, o `fetch_metadata`). El titulo esta disponible para
 todos los videos listados.
+
+### Dump de un canal sobre un tema -> un solo PDF
+
+Pide algo como *"dame en un PDF todo lo que QuantumFracture ha dicho sobre agujeros
+negros"* (o usa el prompt `dump_tema_canal`). El modelo:
+
+1. confirma el canal (`search_youtube(kind="channel")` si hace falta),
+2. genera de 4 a 10 terminos del tema (sinonimos, conceptos relacionados, siglas),
+3. llama `find_topic_candidates`, que junta candidatos de tres vias y dice por cual
+   aparecio cada uno (`sources`); los que aparecen por varias vias son los mas seguros,
+4. revisa titulo y descripcion y descarta lo que no encaja (aqui entra la intencion),
+5. llama `export_videos(video_ids=..., fetch_missing=true, format="pdf", max_chars_per_file=0)`,
+6. entrega la ruta del PDF, cuantos videos incluye, cuales faltan y el criterio usado.
+
+El PDF trae indice, un marcador por video y, al final, **"Videos relevantes no
+incluidos"** con el motivo de cada uno (sin subtitulos, pendiente porque YouTube limito la
+IP, Short/directo fuera del listado...). Si faltan videos por el limite de YouTube, volver a
+pedir el mismo dump mas tarde retoma la descarga y genera el PDF completo.
+
+Prueba real (canal de 318 videos, terminos "agujero negro", "agujeros negros", "horizonte de
+sucesos", "singularidad", "Hawking"): 60 candidatos, incluidos Shorts que no salen en el
+listado principal; los mas fuertes aparecieron por 4-5 vias.
 
 ### Documento final para otro LLM (`export_videos`)
 
@@ -183,6 +206,7 @@ uv run yt-transcripts youtube "QuantumFracture" --kind channel       # buscar ca
 uv run yt-transcripts youtube "neutrinos" --sort views --duration medium
 uv run yt-transcripts youtube "Reserva Federal" --upload-date week --sort date
 uv run yt-transcripts channel-search @QuantumFracture "agujero negro"
+uv run yt-transcripts topic @QuantumFracture "agujero negro" "horizonte de sucesos" "Hawking"
 uv run yt-transcripts harvest @QuantumFracture --max 50              # 50 videos mas recientes
 uv run yt-transcripts harvest @QuantumFracture --all --delay 2       # todo el canal, en tandas
 uv run yt-transcripts harvest @QuantumFracture --title "nobel OR neutrino*"
