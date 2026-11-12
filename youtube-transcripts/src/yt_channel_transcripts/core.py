@@ -592,6 +592,9 @@ def _refresh_listing(store: Store, channel: str, tab: str, list_limit: int | Non
         prev_cid = store.resolve(channel)
     except KeyError:
         pass
+    if tab is None:  # mantener el tipo de listado con el que se registro el canal
+        prev_src = store.channel_meta(prev_cid).get("source") if prev_cid else ""
+        tab = ALL_UPLOADS if "list=UU" in (prev_src or "") else "videos"
     forced_cid = None
     key = official.api_key()
     use_api = bool(key) and tab == ALL_UPLOADS and lister is ytdlp_lister
@@ -681,6 +684,16 @@ def _apply_meta(store: Store, cid: str, cname: str | None, v: dict[str, Any], in
     return meta
 
 
+def _resolve_fetcher(fetcher: Fetcher) -> tuple[Fetcher, bool]:
+    """Si se eligio Supadata (YT_TRANSCRIPT_PROVIDER=supadata) y no se inyecto otro fetcher,
+    usa Supadata. Devuelve (fetcher, usa_youtube)."""
+    if fetcher is api_fetcher:
+        from . import supadata
+        if supadata.provider() == "supadata":
+            return supadata.fetcher, False
+    return fetcher, True
+
+
 def harvest(
     store: Store,
     channel: str,
@@ -688,7 +701,7 @@ def harvest(
     max_videos: int = 20,
     list_limit: int | None = None,
     languages: list[str] | None = None,
-    tab: str = "videos",
+    tab: str | None = None,
     retry_errors: bool = False,
     delay: float = 1.0,
     metadata: bool = True,
@@ -707,6 +720,7 @@ def harvest(
     yt-dlp). Reanudable. `title_filter` (sintaxis de busqueda) o `video_ids` limitan
     que videos se procesan."""
     langs = languages or default_languages()
+    fetcher, uses_youtube = _resolve_fetcher(fetcher)
     cid, cmeta, merged, linfo = _refresh_listing(store, channel, tab, list_limit, lister)
     cname = cmeta.get("channel")
     states = {ST_PENDING} | ({ST_ERROR} if retry_errors else set())
@@ -739,13 +753,13 @@ def harvest(
             # subtitulos permiten bajar la pista con UNA peticion. Si no, la API (2-3 peticiones).
             # Cualquier bloqueo detiene la corrida entera: no se prueba otro endpoint.
             res: TranscriptResult | None = None
-            if info is not None:
+            if info is not None and uses_youtube:  # con Supadata no se toca YouTube
                 res = sub_fetcher(info, vlangs)
             if res is None or res.status == ST_ERROR:
                 api_res = fetcher(v["id"], vlangs)
                 if res is None or api_res.status != ST_ERROR:
                     res = api_res
-            if res.status != ST_OK and info is None and not metadata:
+            if res.status != ST_OK and info is None and not metadata and uses_youtube:
                 try:  # sin metadatos: ultimo intento con la info de yt-dlp
                     info = enricher(v["id"])
                     alt = sub_fetcher(info, vlangs)
@@ -906,6 +920,7 @@ def get_transcript(store: Store, video: str, *, format: str = "paragraphs", clea
     """Transcripcion (de la cache o, si no esta, la baja y la guarda en `_videos`).
     Paginada por caracteres para no saturar el contexto."""
     vid = video_id(video)
+    fetcher, _ = _resolve_fetcher(fetcher)
     hit = store.find_file("transcripts", vid)
     doc = hit[1] if hit else None
     note = None
