@@ -25,6 +25,7 @@ from pathlib import Path
 from . import core
 from . import document as ytdoc
 from . import catalog as ytcat
+from . import pacing as ytpace
 from . import search as yts
 from . import topic as yttopic
 
@@ -68,8 +69,7 @@ def main(argv: list[str] | None = None) -> int:
     m.add_argument("--title")
     m.add_argument("--refresh-list", action="store_true")
     m.add_argument("--tab", default="all", choices=core.LIST_TABS)
-    m.add_argument("--concurrency", type=int, default=3)
-    m.add_argument("--delay", type=float, default=0.5)
+
 
     sub.add_parser("channels", help="canales en cache")
 
@@ -166,7 +166,11 @@ def main(argv: list[str] | None = None) -> int:
     pr = sub.add_parser("process", help="transcripciones de la lista + documento unico")
     pr.add_argument("name")
     pr.add_argument("--format", default="pdf", choices=("md", "pdf", "both"))
-    pr.add_argument("--fetch-limit", type=int, default=100)
+    pr.add_argument("--fetch-limit", type=int, default=20)
+    pr.add_argument("--max-tokens", type=int, default=100000, help="por archivo (0 = un solo archivo)")
+
+    pc = sub.add_parser("pacing", help="estado del limitador (o --reset tras cambiar de red)")
+    pc.add_argument("--reset", action="store_true")
 
     sub.add_parser("reindex", help="reconstruir el indice de busqueda")
     sub.add_parser("serve", help="servidor MCP por stdio")
@@ -190,8 +194,7 @@ def main(argv: list[str] | None = None) -> int:
                     return 2 if r["blocked"] else 0
         elif a.cmd == "metadata":
             r = core.fetch_metadata(store, a.channel, max_videos=a.max, title_filter=a.title,
-                                    refresh_list=a.refresh_list, tab=a.tab, concurrency=a.concurrency,
-                                    delay=a.delay, progress=_progress)
+                                    refresh_list=a.refresh_list, tab=a.tab, progress=_progress)
             _print(r)
             return 2 if r["blocked"] else 0
         elif a.cmd == "channels":
@@ -245,9 +248,14 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 _print(ytcat.selection_show(store, a.name) if a.name else ytcat.selection_list(store))
         elif a.cmd == "process":
-            r = ytcat.process_selection(store, a.name, format=a.format, fetch_limit=a.fetch_limit)
+            r = ytcat.process_selection(store, a.name, format=a.format, fetch_limit=a.fetch_limit,
+                                        max_tokens_per_file=a.max_tokens)
             _print(r)
             return 2 if (r.get("fetched") or {}).get("blocked") else 0
+        elif a.cmd == "pacing":
+            if a.reset:
+                ytpace.get_pacer().reset()
+            _print(ytpace.get_pacer().status())
         elif a.cmd == "reindex":
             _print(core.rebuild_index(store))
     except (KeyError, ValueError) as exc:

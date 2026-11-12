@@ -184,18 +184,20 @@ def selection_list(store: core.Store) -> list[dict[str, Any]]:
     return out
 
 
-def process_selection(store: core.Store, name: str, *, format: str = "pdf", fetch_limit: int = 100,
+def process_selection(store: core.Store, name: str, *, format: str = "pdf", fetch_limit: int = 20,
                       doc_title: str | None = None, include_description: bool = True,
-                      net: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Baja las transcripciones que falten de la lista (hasta `fetch_limit`) y genera UN solo
-    documento con todos sus videos, con apendice de los que no se pudieron incluir.
+                      max_tokens_per_file: int = 100_000, net: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Baja las transcripciones que falten de la lista (hasta `fetch_limit`) y genera el documento
+    con todos sus videos, partido en archivos de ~`max_tokens_per_file` tokens sin cortar ningun
+    video (0 = un solo archivo), con apendice de los que no se pudieron incluir.
     Reanudable: si YouTube limita la IP, volver a llamarla completa lo que falte."""
     sel = load_selection(store, name)
     if not sel["video_ids"]:
         raise ValueError(f"La seleccion {name!r} esta vacia")
     title = doc_title or (f"{sel.get('channel') or 'YouTube'}: {sel['topic']}" if sel.get("topic") else sel["name"])
     r = ytdoc.export_videos(store, video_ids=sel["video_ids"], channel=sel.get("channel"), format=format,
-                            doc_title=title, include_description=include_description, max_chars_per_file=0,
+                            doc_title=title, include_description=include_description,
+                            max_chars_per_file=max(0, max_tokens_per_file) * ytdoc.CHARS_PER_TOKEN,
                             filename=f"{_slug(sel['name'])}", fetch_missing_videos=True,
                             fetch_limit=fetch_limit, net=net)
     sel["last_export"] = {"at": _now(), "files": [f["path"] for f in r.get("files", [])],

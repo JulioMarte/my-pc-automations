@@ -12,7 +12,7 @@ import anyio
 from yt_channel_transcripts import core
 from yt_channel_transcripts.core import Store, TranscriptResult
 
-EXPECTED = {"search_youtube", "search_channel_videos", "find_topic_candidates", "catalog", "selection_update", "selection_show", "process_selection", "harvest_channel", "fetch_metadata", "list_channels", "find_videos", "search_transcripts",
+EXPECTED = {"search_youtube", "search_channel_videos", "find_topic_candidates", "catalog", "selection_update", "selection_show", "process_selection", "rate_status", "harvest_channel", "fetch_metadata", "list_channels", "find_videos", "search_transcripts",
             "get_transcript", "get_video_info", "export_channel", "export_videos", "rebuild_index"}
 
 
@@ -25,6 +25,7 @@ def _seed(root):
                     "views": 1} for k, (t, _) in vids.items()]}
     st = Store(root)
     core.harvest(st, "@mcp", lister=lister, delay=0,
+                 sub_fetcher=lambda info, l: TranscriptResult(core.ST_ERROR, error="sin json3"),
                  enricher=lambda v: {"id": v, "title": vids[v][0], "description": vids[v][1], "upload_date": "20260201"},
                  fetcher=lambda v, l: TranscriptResult(core.ST_OK, "es", True,
                                                        [{"start": 3, "duration": 1, "text": f"frase clave {v}"}]))

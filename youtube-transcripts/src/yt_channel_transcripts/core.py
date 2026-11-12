@@ -30,6 +30,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+from . import official
+from . import pacing
 from . import text as T
 from .index import Index
 
@@ -132,6 +134,11 @@ def fold(text: str) -> str:
     return "".join(ch for ch in norm if not unicodedata.combining(ch))
 
 
+def _net(cat: str):
+    """Aplica ritmo, presupuesto y pausa tras bloqueo (ver pacing.py) a un adaptador de red real."""
+    return pacing.paced(cat, BlockedError, lambda e: BlockedError(str(e)))
+
+
 def _is_rate_limit(exc: BaseException) -> bool:
     s = str(exc)
     return "429" in s or "Too Many Requests" in s or "Sign in to confirm" in s
@@ -151,6 +158,7 @@ def _ydl_opts(**extra: Any) -> dict[str, Any]:
     return opts
 
 
+@_net("page")
 def ytdlp_lister(url: str, limit: int | None, known: set[str] | None = None) -> dict[str, Any]:
     """Lista videos de un canal/playlist sin descargar nada, paginando de forma
     perezosa. Con `known`, deja de paginar tras STOP_AFTER_KNOWN videos conocidos
@@ -212,6 +220,7 @@ def _fmt_upload_date(d: str | None) -> str | None:
     return None
 
 
+@_net("page")
 def ytdlp_video_info(vid: str) -> dict[str, Any]:
     """Metadatos completos de un video (una peticion). Incluye las URLs de subtitulos."""
     import yt_dlp
@@ -246,6 +255,7 @@ def metadata_from_info(info: dict[str, Any]) -> dict[str, Any]:
     }.items() if v is not None}
 
 
+@_net("transcript")
 def _urlopen_json(url: str) -> Any:
     import yt_dlp
 
@@ -335,6 +345,7 @@ def pick_transcript(transcripts: Iterable[Any], languages: list[str]) -> Any | N
     return items[0] if items else None
 
 
+@_net("transcript")
 def api_fetcher(vid: str, languages: list[str]) -> TranscriptResult:
     """Baja la transcripcion con youtube-transcript-api."""
     from youtube_transcript_api import YouTubeTranscriptApi
@@ -560,6 +571,18 @@ SubFetcher = Callable[[dict[str, Any], list[str]], TranscriptResult]
 Progress = Callable[[int, int, str], None]
 
 
+def _channel_ref(channel: str) -> str:
+    """'@handle' o 'UC...' a partir de lo que escriba el usuario (URL, handle, ID)."""
+    c = channel.strip()
+    m = re.search(r"/channel/(UC[A-Za-z0-9_-]{22})", c) or re.search(r"(UC[A-Za-z0-9_-]{22})$", c)
+    if m:
+        return m.group(1)
+    m = re.search(r"(@[\w.\-]+)", c)
+    if m:
+        return m.group(1)
+    return "@" + c.lstrip("@")
+
+
 def _refresh_listing(store: Store, channel: str, tab: str, list_limit: int | None,
                      lister: Lister) -> tuple[str, dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
     """Lista el canal (incremental si ya se recorrio completo antes), fusiona con lo
@@ -570,7 +593,13 @@ def _refresh_listing(store: Store, channel: str, tab: str, list_limit: int | Non
     except KeyError:
         pass
     forced_cid = None
-    if tab == ALL_UPLOADS:
+    key = official.api_key()
+    use_api = bool(key) and tab == ALL_UPLOADS and lister is ytdlp_lister
+    if use_api:  # API oficial: 1 unidad por 50 videos, sin cargar paginas web
+        look = official.channel_lookup(prev_cid or _channel_ref(channel), key)
+        forced_cid = look["channel_id"]
+        source = f"https://www.youtube.com/playlist?list={official.uploads_playlist(forced_cid)}"
+    elif tab == ALL_UPLOADS:
         forced_cid = prev_cid
         if not forced_cid:  # averiguar el ID del canal con una pagina minima
             forced_cid = lister(channel_url(channel, "videos"), 1, None).get("channel_id")
@@ -583,7 +612,12 @@ def _refresh_listing(store: Store, channel: str, tab: str, list_limit: int | Non
     known_list = store.videos(prev_cid) if prev_cid else []
     known = {v["id"]: v for v in known_list}
     incremental = bool(prev_meta.get("listing_complete")) and prev_meta.get("source") == source
-    listing = lister(source, list_limit, set(known) if incremental else None)
+    if use_api:
+        up = official.list_uploads(forced_cid, key, list_limit, set(known) if incremental else None)
+        listing = {"channel_id": forced_cid, "channel": look["channel"], "handle": look["handle"],
+                   "channel_url": f"https://www.youtube.com/channel/{forced_cid}", **up}
+    else:
+        listing = lister(source, list_limit, set(known) if incremental else None)
     cid = forced_cid or listing.get("channel_id")
     if not cid:
         raise RuntimeError(f"yt-dlp no devolvio un ID de canal para {source}")
@@ -682,7 +716,6 @@ def harvest(
     sources: dict[str, int] = {}
     meta_count = 0
     blocked: str | None = None
-    api_down: BlockedError | None = None  # tras un bloqueo de la API, el resto va directo a yt-dlp
     for i, v in enumerate(todo):
         if progress:
             progress(i, len(todo), v.get("title") or v["id"])
@@ -702,28 +735,26 @@ def harvest(
             hint = (meta or {}).get("language") or _read_json(store.meta_path(cid, v["id"]), {}).get("language")
             if hint and ORIGINAL in [x.lower() for x in langs]:
                 vlangs = langs + [hint]  # respaldo si el video no tiene pista automatica
-            api_blocked: BlockedError | None = api_down
-            try:
-                if api_down is not None:
-                    raise api_down
-                res = fetcher(v["id"], vlangs)
-            except BlockedError as exc:
-                res = TranscriptResult(ST_ERROR, error=f"bloqueado: {exc}")
-                api_blocked = api_down = exc
-            if res.status != ST_OK:  # respaldo con yt-dlp
-                if info is None:
-                    try:
-                        info = enricher(v["id"])
-                    except BlockedError:
-                        raise
-                    except Exception:
-                        info = None
-                if info is not None:
+            # Minimo de peticiones: si ya tenemos la info del video (metadatos), sus URLs de
+            # subtitulos permiten bajar la pista con UNA peticion. Si no, la API (2-3 peticiones).
+            # Cualquier bloqueo detiene la corrida entera: no se prueba otro endpoint.
+            res: TranscriptResult | None = None
+            if info is not None:
+                res = sub_fetcher(info, vlangs)
+            if res is None or res.status == ST_ERROR:
+                api_res = fetcher(v["id"], vlangs)
+                if res is None or api_res.status != ST_ERROR:
+                    res = api_res
+            if res.status != ST_OK and info is None and not metadata:
+                try:  # sin metadatos: ultimo intento con la info de yt-dlp
+                    info = enricher(v["id"])
                     alt = sub_fetcher(info, vlangs)
-                    if alt.status == ST_OK:  # un error transitorio no se degrada a "sin transcripcion"
+                    if alt.status == ST_OK:
                         res = alt
-            if api_blocked is not None and res.status != ST_OK:
-                raise api_blocked  # el respaldo tampoco sirvio: la IP sigue limitada
+                except BlockedError:
+                    raise
+                except Exception:
+                    pass
         except BlockedError as exc:
             blocked = str(exc) or "bloqueado"
             store.save_videos(cid, merged)
@@ -762,11 +793,12 @@ def harvest(
 
 def fetch_metadata(store: Store, channel: str, *, max_videos: int = 50, title_filter: str | None = None,
                    video_ids: list[str] | None = None, tab: str = "videos", list_limit: int | None = None,
-                   refresh_list: bool = False, delay: float = 0.5, concurrency: int = 3,
+                   refresh_list: bool = False, delay: float = 0.0, concurrency: int = 1,
                    lister: Lister = ytdlp_lister, enricher: Enricher = ytdlp_video_info,
                    progress: Progress | None = None, sleep: Callable[[float], None] = time.sleep) -> dict[str, Any]:
-    """Solo metadatos (descripcion, capitulos, tags, fecha exacta), sin transcripcion, con
-    `concurrency` peticiones en paralelo (~1,5 s por video). Reanudable: solo pide lo que falta.
+    """Solo metadatos (descripcion, capitulos, tags, fecha exacta), sin transcripcion.
+    El ritmo lo pone pacing.py (~4-5 s por video, presupuesto horario); `concurrency` > 1 solo
+    para pruebas: en paralelo no se gana nada y se parece mas a un bot. Reanudable.
     Sirve para que el modelo revise titulo + descripcion de todo el canal antes de transcribir."""
     try:
         cid = store.resolve(channel)
@@ -783,6 +815,26 @@ def fetch_metadata(store: Store, channel: str, *, max_videos: int = 50, title_fi
     todo = _select(store, cid, merged, all_states, title_filter, video_ids, need)[: max(0, max_videos)]
     done = errors = 0
     blocked = None
+    key = official.api_key()
+    if key and enricher is ytdlp_video_info and todo:  # API oficial: 50 videos por peticion
+        try:
+            infos = official.videos_info([v["id"] for v in todo], key)
+        except official.OfficialAPIError as exc:
+            return {"channel_id": cid, "channel": cname, **linfo, "fetched": 0, "errors": len(todo),
+                    "pending": len(todo), "blocked": None, "source": "api_oficial", "api_error": str(exc),
+                    "hint": "Fallo la API oficial (cuota o clave). Quita YT_API_KEY para usar la via web."}
+        for v in todo:
+            if v["id"] in infos:
+                _apply_meta(store, cid, cname, v, infos[v["id"]])
+                v.pop("meta_error", None)
+                done += 1
+            else:
+                v["meta_error"] = "no disponible en la API (privado, borrado o directo programado)"
+                errors += 1
+        store.save_videos(cid, merged)
+        pending = len(_select(store, cid, merged, all_states, title_filter, video_ids, need))
+        return {"channel_id": cid, "channel": cname, **linfo, "fetched": done, "errors": errors,
+                "pending": pending, "blocked": None, "source": "api_oficial", "hint": _harvest_hint(pending, None)}
     from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
     pending_iter = iter(todo)

@@ -70,7 +70,7 @@ class FakeYT:
                              {"start_time": 60, "end_time": 200, "title": "Tema"}]}
 
     def sub_fetcher(self, info, langs):
-        return self.sub_plan.get(info["id"], TranscriptResult(core.ST_NONE, error="sin subs"))
+        return self.sub_plan.get(info["id"], TranscriptResult(core.ST_ERROR, error="yt-dlp: sin formato json3"))
 
     def kw(self, **extra):
         return {"lister": self.lister, "fetcher": self.fetcher, "enricher": self.enricher,
@@ -221,11 +221,10 @@ def test_harvest_estados_reintento_y_respaldo(tmp_path: Path):
     yt.fetched.clear()
     core.harvest(st, "@prueba", **yt.kw())
     assert yt.fetched == []  # sin retry_errors no se reintenta
-    yt.sub_plan = {IDS[1]: ok("desde ytdlp")}
-    yt.sub_plan[IDS[1]].source = "yt-dlp"
+    del yt.plan[IDS[1]]  # el error transitorio ya paso
+    yt.fetched.clear()
     r = core.harvest(st, "@prueba", retry_errors=True, **yt.kw())
-    assert yt.fetched == [IDS[1]] and r["sources"] == {"yt-dlp": 1}  # el permanente nunca se reintenta
-    assert st.load_transcript(IDS[1])["source"] == "yt-dlp"
+    assert yt.fetched == [IDS[1]] and r["downloaded"] == 1  # el permanente (IDS[0]) nunca se reintenta
 
 
 def test_respaldo_ytdlp_cuando_api_no_tiene_pista(tmp_path: Path):
@@ -237,18 +236,15 @@ def test_respaldo_ytdlp_cuando_api_no_tiene_pista(tmp_path: Path):
     assert r["downloaded"] == 1 and yt.enriched == [IDS[0]]  # pidio info solo para el respaldo
 
 
-def test_bloqueo_para_conserva_y_respaldo_no_enmascara(tmp_path: Path):
+def test_bloqueo_para_y_conserva(tmp_path: Path):
     st, yt = Store(tmp_path), FakeYT()
     yt.plan = {IDS[2]: BlockedError("429")}
     r = core.harvest(st, "@prueba", max_videos=5, **yt.kw())
     assert r["blocked"] == "429" and r["downloaded"] == 2 and r["pending"] == 3
     assert "limito" in r["hint"]
     assert sum(v["status"] == core.ST_OK for v in st.videos(CID)) == 2
-    # si el respaldo yt-dlp funciona, el bloqueo de la API no detiene la descarga
-    yt.sub_plan = {IDS[2]: TranscriptResult(core.ST_OK, "es", True, [{"start": 0, "duration": 1, "text": "y"}],
-                                            source="yt-dlp")}
-    r = core.harvest(st, "@prueba", max_videos=1, **yt.kw())
-    assert r["blocked"] is None and r["sources"] == {"yt-dlp": 1}
+    # tras el bloqueo no se intenta ningun otro video ni otro endpoint en esa corrida
+    assert yt.fetched == IDS[:3]
 
 
 def test_bloqueo_en_metadatos_detiene(tmp_path: Path):
@@ -415,14 +411,20 @@ def test_export_formatos(poblado: Store, tmp_path: Path):
         core.export(poblado, "@prueba", "xml")
 
 
-def test_tras_bloqueo_de_api_el_resto_va_directo_a_ytdlp(tmp_path: Path):
+def test_con_metadatos_basta_una_peticion_de_subtitulos(tmp_path: Path):
     st, yt = Store(tmp_path), FakeYT(IDS[:3])
-    yt.plan = {IDS[0]: BlockedError("429")}
     yt.sub_plan = {v: TranscriptResult(core.ST_OK, "es", True, [{"start": 0, "duration": 1, "text": "z"}],
                                        source="yt-dlp") for v in IDS[:3]}
     r = core.harvest(st, "@prueba", **yt.kw())
-    assert r["downloaded"] == 3 and r["sources"] == {"yt-dlp": 3} and r["blocked"] is None
-    assert yt.fetched == [IDS[0]]  # la API solo se intento una vez
+    assert r["downloaded"] == 3 and r["sources"] == {"yt-dlp": 3}
+    assert yt.fetched == []  # la API (2-3 peticiones por video) no hizo falta
+
+
+def test_sin_subtitulos_segun_ytdlp_no_se_pregunta_a_la_api(tmp_path: Path):
+    st, yt = Store(tmp_path), FakeYT(IDS[:1])
+    yt.sub_plan = {IDS[0]: TranscriptResult(core.ST_NONE, error="yt-dlp: el video no tiene subtitulos")}
+    r = core.harvest(st, "@prueba", **yt.kw())
+    assert r["without_transcript"] == 1 and yt.fetched == []
 
 
 # --- idioma original / idioma pedido -------------------------------------------

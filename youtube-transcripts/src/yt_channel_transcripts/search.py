@@ -60,6 +60,7 @@ def search_url(query: str, **kw: Any) -> str:
             f"&sp={quote(build_sp(**kw), safe='')}")
 
 
+@core._net("page")
 def ytdlp_search(url: str, limit: int) -> list[dict[str, Any]]:
     """Primeras `limit` entradas de una pagina de resultados (sin descargar nada)."""
     import yt_dlp

@@ -154,3 +154,16 @@ def test_fetch_missing_solo_con_query_no_descarga(tmp_path: Path):
     yt.fetched.clear()
     r = document.export_videos(s, query="financiera", fetch_missing_videos=True, net=yt.kw())
     assert yt.fetched == [] and "query" in r["fetched"]["note"] and r["videos"] == 1
+
+
+def test_pdf_partido_igual_que_el_md_sin_cortar_videos(st: Store, tmp_path: Path):
+    r = document.export_videos(st, channel="@prueba", format="both", max_chars_per_file=600,
+                               out_dir=tmp_path / "o", filename="x")
+    mds = [f for f in r["files"] if f["format"] == "md"]
+    pdfs = [f for f in r["files"] if f["format"] == "pdf"]
+    assert len(pdfs) == len(mds) > 1 and Path(pdfs[0]["path"]).name == "x-parte1.pdf"
+    assert sum(f["videos"] for f in pdfs) == r["videos"]
+    assert all(Path(f["path"]).read_bytes().startswith(b"%PDF-") for f in pdfs)
+    assert b"Videos relevantes no incluidos" not in Path(pdfs[0]["path"]).read_bytes()
+    assert document.group_by_size([5, 5, 20, 1], 10) == [[0, 1], [2], [3]]
+    assert document.group_by_size([5, 5], 0) == [[0, 1]]

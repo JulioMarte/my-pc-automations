@@ -229,6 +229,21 @@ def _record(store: core.Store, vid: str, language: str | None) -> dict[str, Any]
 # Markdown
 # ---------------------------------------------------------------------------
 
+def group_by_size(sizes: list[int], max_size: int) -> list[list[int]]:
+    """Agrupa indices consecutivos sin pasar `max_size` por grupo; un elemento nunca se
+    parte (si uno solo supera el limite, va solo)."""
+    if max_size <= 0:
+        return [list(range(len(sizes)))]
+    groups: list[list[int]] = [[]]
+    size = 0
+    for i, n in enumerate(sizes):
+        if groups[-1] and size + n > max_size:
+            groups.append([])
+            size = 0
+        groups[-1].append(i)
+        size += n
+    return groups
+
 def _secs(ts: str) -> int:
     n = 0
     for part in ts.split(":"):
@@ -305,14 +320,7 @@ def render_markdown(records: list[dict[str, Any]], *, doc_title: str, criteria: 
     tail = ("\n---\n\n" + _missing_md(missing, missing_total or len(missing))) if missing else ""
     if max_chars_per_file <= 0:
         return [_header_md(doc_title, records, criteria) + "\n---\n\n" + "\n---\n\n".join(bodies) + tail]
-    groups: list[list[int]] = [[]]
-    size = 0
-    for i, b in enumerate(bodies):
-        if groups[-1] and size + len(b) > max_chars_per_file:
-            groups.append([])
-            size = 0
-        groups[-1].append(i)
-        size += len(b)
+    groups = group_by_size([len(b) for b in bodies], max_chars_per_file)
     docs = []
     for g, idxs in enumerate(groups, 1):
         part = f" (parte {g} de {len(groups)})" if len(groups) > 1 else ""
@@ -362,7 +370,7 @@ def _pdf_text(s: str, unicode_font: bool) -> str:
 def render_pdf(records: list[dict[str, Any]], path: Path, *, doc_title: str, criteria: str,
                include_description: bool = True, include_chapters: bool = True,
                query: str | None = None, missing: list[dict[str, Any]] | None = None,
-               missing_total: int = 0) -> Path:
+               missing_total: int = 0, first_number: int = 1) -> Path:
     from fpdf import FPDF
 
     logging.getLogger("fontTools").setLevel(logging.ERROR)
@@ -400,10 +408,10 @@ def render_pdf(records: list[dict[str, Any]], path: Path, *, doc_title: str, cri
          "enlace a ese punto. Las transcripciones automáticas pueden tener errores.", 9, 4.5)
     pdf.ln(4)
     heading("Índice", 13)
-    for i, r in enumerate(records, 1):
+    for i, r in enumerate(records, first_number):
         para(f"{i}. {r['title']} ({r.get('channel') or '?'}, {r.get('date') or '?'}, {_dur(r.get('duration'))})", 10)
 
-    for i, r in enumerate(records, 1):
+    for i, r in enumerate(records, first_number):
         pdf.add_page()
         pdf.start_section(tx(f"{i}. {r['title']}")[:120])
         heading(f"{i}. {r['title']}", 14)
@@ -543,10 +551,20 @@ def export_videos(store: core.Store, *, video_ids: list[str] | None = None, chan
             p.write_text(d, encoding="utf-8")
             files.append({"path": str(p), "format": "md", "chars": len(d), "approx_tokens": len(d) // CHARS_PER_TOKEN})
     if format in ("pdf", "both"):
-        p = render_pdf(records, out_dir / f"{stem}.pdf", doc_title=doc_title, criteria=crit,
-                       include_description=include_description, include_chapters=include_chapters, query=query,
-                       missing=missing, missing_total=len(miss_ids))
-        files.append({"path": str(p), "format": "pdf", "bytes": p.stat().st_size})
+        # Mismos cortes que el Markdown: cada PDF ~max_chars_per_file (≈ tokens * 4), sin cortar videos.
+        sizes = [len(_video_md(i, r, include_description=include_description, include_chapters=include_chapters,
+                               query=query)) for i, r in enumerate(records, 1)]
+        groups = group_by_size(sizes, max_chars_per_file)
+        for g, idxs in enumerate(groups, 1):
+            part = f" (parte {g} de {len(groups)})" if len(groups) > 1 else ""
+            name = f"{stem}.pdf" if len(groups) == 1 else f"{stem}-parte{g}.pdf"
+            last = g == len(groups)
+            p = render_pdf([records[i] for i in idxs], out_dir / name, doc_title=doc_title + part, criteria=crit,
+                           include_description=include_description, include_chapters=include_chapters, query=query,
+                           missing=missing if last else None, missing_total=len(miss_ids) if last else 0,
+                           first_number=idxs[0] + 1)
+            files.append({"path": str(p), "format": "pdf", "bytes": p.stat().st_size, "videos": len(idxs),
+                          "approx_tokens": sum(sizes[i] for i in idxs) // CHARS_PER_TOKEN})
     total_chars = sum(len(d) for d in md_docs)
     out: dict[str, Any] = {
         "title": doc_title, "videos": len(records), "files": files,
