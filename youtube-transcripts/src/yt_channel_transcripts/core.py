@@ -1,15 +1,18 @@
-"""Logica central: listar videos de un canal, bajar transcripciones y guardarlas.
+"""Logica central: listar videos de un canal, bajar metadatos y transcripciones,
+guardarlos en disco e indexarlos.
 
-No reinventa nada de YouTube: el listado del canal lo hace `yt-dlp` y las
-transcripciones `youtube-transcript-api`. Este modulo solo anade:
+No reinventa nada de YouTube: el listado y los metadatos los da `yt-dlp` y las
+transcripciones `youtube-transcript-api` (con `yt-dlp` como respaldo). Este
+modulo solo anade:
 
 - normalizacion de la entrada (@handle, URL, ID de canal),
+- listado incremental (deja de paginar al llegar a videos ya conocidos),
 - seleccion de idioma (manual antes que automatica, en el orden pedido),
-- cache en disco incremental y reanudable,
-- busqueda y exportacion sobre la cache.
+- cache en disco incremental y reanudable + indice SQLite FTS5 derivado,
+- filtrado por titulo/descripcion, busqueda y exportacion.
 
-Las dependencias de red se inyectan (`lister`, `fetcher`) para poder probar
-toda la logica sin tocar YouTube.
+Las dependencias de red se inyectan (`lister`, `fetcher`, `enricher`,
+`sub_fetcher`) para poder probar toda la logica sin tocar YouTube.
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ import io
 import json
 import os
 import re
+import sqlite3
 import time
 import unicodedata
 from dataclasses import dataclass, field
@@ -26,10 +30,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+from . import text as T
+from .index import Index
+
 DEFAULT_LANGS = ("es", "en")
 VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 CHANNEL_ID_RE = re.compile(r"^UC[A-Za-z0-9_-]{22}$")
 TABS = ("videos", "streams", "shorts")
+STOP_AFTER_KNOWN = 10  # videos conocidos seguidos que cortan el listado incremental
+LOOSE = "_videos"  # carpeta para videos sueltos (sin canal descargado)
 
 # Estados de transcripcion guardados por video.
 ST_OK = "ok"
@@ -37,9 +46,11 @@ ST_NONE = "sin_transcripcion"  # permanente: desactivada, inexistente o video no
 ST_ERROR = "error"  # transitorio: se reintenta con retry_errors
 ST_PENDING = "pendiente"
 
+fmt_ts = T.fmt_ts
+
 
 class BlockedError(RuntimeError):
-    """YouTube bloqueo las peticiones desde esta IP; hay que parar y esperar."""
+    """YouTube bloqueo o limito (429) las peticiones desde esta IP; hay que parar."""
 
 
 # ---------------------------------------------------------------------------
@@ -97,59 +108,83 @@ def watch_url(vid: str, seconds: float | None = None) -> str:
 
 
 def fold(text: str) -> str:
-    """Minusculas y sin acentos, para buscar sin importar tildes."""
+    """Minusculas y sin acentos, para comparar sin importar tildes."""
     norm = unicodedata.normalize("NFKD", text.lower())
     return "".join(ch for ch in norm if not unicodedata.combining(ch))
 
 
-def fmt_ts(seconds: float) -> str:
-    s = int(seconds)
-    h, rem = divmod(s, 3600)
-    m, s = divmod(rem, 60)
-    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+def _is_rate_limit(exc: BaseException) -> bool:
+    s = str(exc)
+    return "429" in s or "Too Many Requests" in s or "Sign in to confirm" in s
 
 
 # ---------------------------------------------------------------------------
-# Adaptadores de red (yt-dlp y youtube-transcript-api)
+# Adaptadores de red: yt-dlp
 # ---------------------------------------------------------------------------
 
-def ytdlp_lister(url: str, limit: int | None) -> dict[str, Any]:
-    """Lista videos de un canal/playlist sin descargar nada (modo plano)."""
+def _ydl_opts(**extra: Any) -> dict[str, Any]:
+    opts: dict[str, Any] = {
+        "quiet": True, "no_warnings": True, "skip_download": True,
+        # node o deno (si estan instalados) mejoran la extraccion; sin ellos funciona igual.
+        "js_runtimes": {"deno": {}, "node": {}},
+    }
+    opts.update(extra)
+    return opts
+
+
+def ytdlp_lister(url: str, limit: int | None, known: set[str] | None = None) -> dict[str, Any]:
+    """Lista videos de un canal/playlist sin descargar nada, paginando de forma
+    perezosa. Con `known`, deja de paginar tras STOP_AFTER_KNOWN videos conocidos
+    seguidos (los nuevos siempre salen primero)."""
     import yt_dlp
 
-    opts: dict[str, Any] = {
-        "extract_flat": "in_playlist",
-        "quiet": True,
-        "no_warnings": True,
-        "skip_download": True,
-        "extractor_args": {"youtubetab": {"approximate_date": [""]}},
-    }
-    if limit:
-        opts["playlistend"] = limit
+    opts = _ydl_opts(extract_flat="in_playlist", lazy_playlist=True,
+                     extractor_args={"youtubetab": {"approximate_date": [""]}})
     with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url, download=False)
-    videos = []
-    for e in info.get("entries") or []:
-        if not e or not e.get("id") or not VIDEO_ID_RE.match(str(e["id"])):
-            continue
-        ts = e.get("timestamp") or e.get("release_timestamp")
-        date = (datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d") if ts
-                else _fmt_upload_date(e.get("upload_date")))
-        videos.append({
-            "id": e["id"],
-            "title": e.get("title") or "",
-            "url": watch_url(e["id"]),
-            "duration": e.get("duration"),
-            "date": date,
-            "views": e.get("view_count"),
-        })
+        try:
+            info = ydl.extract_info(url, download=False, process=False)
+        except Exception as exc:
+            if _is_rate_limit(exc):
+                raise BlockedError(str(exc)[:200]) from exc
+            raise
+        entries = info.get("entries") or []
+        videos: list[dict[str, Any]] = []
+        streak = 0
+        exhausted = True
+        stopped_known = False
+        it = iter(entries)
+        while True:
+            if limit and len(videos) >= limit:
+                exhausted = next(it, None) is None
+                break
+            e = next(it, None)
+            if e is None:
+                break
+            if not e or not e.get("id") or not VIDEO_ID_RE.match(str(e["id"])):
+                continue
+            videos.append(_flat_entry(e))
+            if known is not None:
+                streak = streak + 1 if e["id"] in known else 0
+                if streak >= STOP_AFTER_KNOWN:
+                    stopped_known, exhausted = True, False
+                    break
     return {
         "channel_id": info.get("channel_id") or info.get("id"),
         "channel": info.get("channel") or info.get("uploader") or info.get("title"),
         "handle": info.get("uploader_id"),
         "channel_url": info.get("channel_url") or info.get("webpage_url"),
         "videos": videos,
+        "exhausted": exhausted,  # se recorrio el canal hasta el final
+        "stopped_at_known": stopped_known,
     }
+
+
+def _flat_entry(e: dict[str, Any]) -> dict[str, Any]:
+    ts = e.get("timestamp") or e.get("release_timestamp")
+    date = (datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d") if ts
+            else _fmt_upload_date(e.get("upload_date")))
+    return {"id": e["id"], "title": e.get("title") or "", "url": watch_url(e["id"]),
+            "duration": e.get("duration"), "date": date, "views": e.get("view_count")}
 
 
 def _fmt_upload_date(d: str | None) -> str | None:
@@ -158,6 +193,95 @@ def _fmt_upload_date(d: str | None) -> str | None:
     return None
 
 
+def ytdlp_video_info(vid: str) -> dict[str, Any]:
+    """Metadatos completos de un video (una peticion). Incluye las URLs de subtitulos."""
+    import yt_dlp
+
+    with yt_dlp.YoutubeDL(_ydl_opts()) as ydl:
+        try:
+            info = ydl.extract_info(watch_url(vid), download=False)
+        except Exception as exc:
+            if _is_rate_limit(exc):
+                raise BlockedError(str(exc)[:200]) from exc
+            raise
+        info = ydl.sanitize_info(info)
+    return info
+
+
+def metadata_from_info(info: dict[str, Any]) -> dict[str, Any]:
+    chapters = [{"start_time": c.get("start_time"), "end_time": c.get("end_time"), "title": c.get("title")}
+                for c in info.get("chapters") or []]
+    return {k: v for k, v in {
+        "title": info.get("title"),
+        "description": info.get("description") or "",
+        "tags": info.get("tags") or [],
+        "categories": info.get("categories") or [],
+        "chapters": chapters,
+        "date": _fmt_upload_date(info.get("upload_date")),
+        "duration": info.get("duration"),
+        "views": info.get("view_count"),
+        "likes": info.get("like_count"),
+        "language": info.get("language"),
+        "channel": info.get("channel"),
+        "channel_id": info.get("channel_id"),
+    }.items() if v is not None}
+
+
+def _urlopen_json(url: str) -> Any:
+    import yt_dlp
+
+    with yt_dlp.YoutubeDL(_ydl_opts()) as ydl:
+        return json.loads(ydl.urlopen(url).read().decode("utf-8"))
+
+
+def subtitles_from_info(info: dict[str, Any], languages: list[str],
+                        get_json: Callable[[str], Any] = _urlopen_json) -> "TranscriptResult":
+    """Respaldo: subtitulos via yt-dlp (formato json3). Mismo criterio de idioma:
+    manual en idioma pedido > automatica original en idioma pedido > automatica
+    original en cualquier idioma > cualquier manual."""
+    manual = info.get("subtitles") or {}
+    auto = info.get("automatic_captions") or {}
+    langs = [x.lower() for x in languages]
+
+    def base(code: str) -> str:
+        return code.lower().replace("-orig", "").split("-")[0]
+
+    origs = [k for k in auto if k.endswith("-orig")] or ([info["language"]] if info.get("language") in auto else [])
+    candidates: list[tuple[str, str, bool]] = []
+    for lang in langs:
+        candidates += [(k, "manual", False) for k in manual if base(k) == lang and k != "live_chat"]
+    for lang in langs:
+        candidates += [(k, "auto", True) for k in origs if base(k) == lang]
+    candidates += [(k, "auto", True) for k in origs]
+    candidates += [(k, "manual", False) for k in manual if k != "live_chat"]
+    if not candidates:
+        return TranscriptResult(ST_NONE, error="yt-dlp: el video no tiene subtitulos")
+    key, kind, generated = candidates[0]
+    tracks = (manual if kind == "manual" else auto)[key]
+    fmt = next((f for f in tracks if f.get("ext") == "json3"), None)
+    if not fmt:
+        return TranscriptResult(ST_ERROR, error=f"yt-dlp: sin formato json3 para {key}")
+    try:
+        data = get_json(fmt["url"])
+    except Exception as exc:
+        if _is_rate_limit(exc):
+            raise BlockedError(str(exc)[:200]) from exc
+        return TranscriptResult(ST_ERROR, error=f"yt-dlp: {type(exc).__name__}: {str(exc)[:150]}")
+    segs = []
+    for ev in data.get("events") or []:
+        txt = "".join(s.get("utf8", "") for s in ev.get("segs") or []).strip()
+        if txt:
+            segs.append({"start": round(ev.get("tStartMs", 0) / 1000, 2),
+                         "duration": round(ev.get("dDurationMs", 0) / 1000, 2), "text": txt})
+    if not segs:
+        return TranscriptResult(ST_NONE, error="yt-dlp: subtitulos vacios")
+    return TranscriptResult(ST_OK, key.replace("-orig", ""), generated, segs, source="yt-dlp")
+
+
+# ---------------------------------------------------------------------------
+# Adaptador de red: youtube-transcript-api
+# ---------------------------------------------------------------------------
+
 @dataclass
 class TranscriptResult:
     status: str
@@ -165,6 +289,7 @@ class TranscriptResult:
     is_generated: bool | None = None
     segments: list[dict[str, Any]] = field(default_factory=list)
     error: str | None = None
+    source: str = "youtube-transcript-api"
 
 
 def pick_transcript(transcripts: Iterable[Any], languages: list[str]) -> Any | None:
@@ -203,7 +328,8 @@ def api_fetcher(vid: str, languages: list[str]) -> TranscriptResult:
                 for s in fetched.snippets]
         return TranscriptResult(ST_OK, chosen.language_code, chosen.is_generated, segs)
     except (E.IpBlocked, E.RequestBlocked) as exc:
-        raise BlockedError(str(exc).strip().splitlines()[0] if str(exc).strip() else "IP bloqueada") from exc
+        first = str(exc).strip().splitlines()[0] if str(exc).strip() else ""
+        raise BlockedError(first or type(exc).__name__) from exc
     except (E.TranscriptsDisabled, E.NoTranscriptFound, E.VideoUnavailable,
             E.InvalidVideoId, E.AgeRestricted, E.VideoUnplayable) as exc:
         return TranscriptResult(ST_NONE, error=type(exc).__name__)
@@ -222,7 +348,7 @@ def _proxy_config() -> Any:
 
 
 # ---------------------------------------------------------------------------
-# Almacen en disco
+# Almacen en disco (fuente de verdad) + indice derivado
 # ---------------------------------------------------------------------------
 
 def _now() -> str:
@@ -244,27 +370,48 @@ def _read_json(path: Path, default: Any) -> Any:
 
 
 class Store:
-    """Estructura:  <root>/<channel_id>/channel.json
-                                     /videos.json          (indice, mas reciente primero)
+    """Estructura:  <root>/index.sqlite                 (indice FTS5 derivado)
+                    <root>/<channel_id>/channel.json
+                                     /videos.json          (indice ligero, mas reciente primero)
+                                     /meta/<id>.json       (descripcion, capitulos, tags, fecha exacta)
                                      /transcripts/<id>.json
-       Videos sueltos (sin canal conocido) van en <root>/_videos/."""
+       Videos sueltos (sin canal descargado) van en <root>/_videos/."""
 
     def __init__(self, root: Path | None = None) -> None:
         self.root = Path(root) if root else default_data_dir()
+        self._index: Index | None = None
+
+    @property
+    def index(self) -> Index:
+        if self._index is None:
+            self._index = Index(self.root / "index.sqlite")
+            if self._index.needs_rebuild:
+                rebuild_index(self, self._index)
+        return self._index
+
+    def close(self) -> None:
+        if self._index is not None:
+            self._index.close()
+            self._index = None
 
     # --- canales -----------------------------------------------------------
+    def channel_dirs(self) -> list[Path]:
+        if not self.root.exists():
+            return []
+        return [d for d in sorted(self.root.iterdir()) if d.is_dir() and (d / "channel.json").exists()]
+
+    def channel_meta(self, cid: str) -> dict[str, Any]:
+        return _read_json(self.root / cid / "channel.json", {})
+
     def channels(self) -> list[dict[str, Any]]:
         out = []
-        if not self.root.exists():
-            return out
-        for d in sorted(self.root.iterdir()):
-            meta = _read_json(d / "channel.json", None) if d.is_dir() else None
-            if meta:
-                vids = self.videos(d.name)
-                meta = dict(meta)
-                meta["videos"] = len(vids)
-                meta["with_transcript"] = sum(v.get("status") == ST_OK for v in vids)
-                out.append(meta)
+        for d in self.channel_dirs():
+            meta = dict(self.channel_meta(d.name))
+            vids = self.videos(d.name)
+            meta["videos"] = len(vids)
+            meta["with_transcript"] = sum(v.get("status") == ST_OK for v in vids)
+            meta["with_metadata"] = sum(bool(v.get("has_metadata")) for v in vids)
+            out.append(meta)
         return out
 
     def resolve(self, channel: str) -> str:
@@ -275,7 +422,8 @@ class Store:
             keys |= {fold(channel_url(c, t)) for t in TABS}
         except ValueError:
             pass
-        for meta in self.channels():
+        for d in self.channel_dirs():
+            meta = self.channel_meta(d.name)
             cands = [meta.get("channel_id"), meta.get("handle"), meta.get("channel"),
                      meta.get("channel_url"), meta.get("source")]
             if any(cand and fold(str(cand).lstrip("@").rstrip("/")) in keys for cand in cands):
@@ -291,99 +439,239 @@ class Store:
     def save_videos(self, cid: str, videos: list[dict[str, Any]]) -> None:
         _write_json(self.root / cid / "videos.json", videos)
 
-    # --- transcripciones ----------------------------------------------------
+    # --- por video ------------------------------------------------------------
     def transcript_path(self, cid: str, vid: str) -> Path:
         return self.root / cid / "transcripts" / f"{vid}.json"
+
+    def meta_path(self, cid: str, vid: str) -> Path:
+        return self.root / cid / "meta" / f"{vid}.json"
+
+    def save_meta(self, cid: str, vid: str, meta: dict[str, Any]) -> None:
+        _write_json(self.meta_path(cid, vid), {"id": vid, "fetched_at": _now(), **meta})
 
     def save_transcript(self, cid: str, video: dict[str, Any], res: TranscriptResult) -> None:
         _write_json(self.transcript_path(cid, video["id"]), {
             "id": video["id"], "title": video.get("title"), "url": video.get("url"),
-            "date": video.get("date"), "language": res.language,
-            "is_generated": res.is_generated, "fetched_at": _now(), "segments": res.segments,
+            "date": video.get("date"), "language": res.language, "is_generated": res.is_generated,
+            "source": res.source, "fetched_at": _now(), "segments": res.segments,
         })
 
-    def load_transcript(self, vid: str) -> dict[str, Any] | None:
+    def find_file(self, kind: str, vid: str) -> tuple[str, dict[str, Any]] | None:
+        """Busca transcripts/ o meta/ de un video en cualquier canal (incluye _videos)."""
         if not self.root.exists():
             return None
         for d in self.root.iterdir():
-            p = d / "transcripts" / f"{vid}.json"
+            p = d / kind / f"{vid}.json"
             if p.exists():
-                return _read_json(p, None)
+                return d.name, _read_json(p, {})
         return None
 
+    def load_transcript(self, vid: str) -> dict[str, Any] | None:
+        hit = self.find_file("transcripts", vid)
+        return hit[1] if hit else None
 
-def transcript_text(doc: dict[str, Any], timestamps: bool = False) -> str:
-    segs = doc.get("segments") or []
-    if timestamps:
-        return "\n".join(f"[{fmt_ts(s['start'])}] {s['text']}" for s in segs)
-    return " ".join(s["text"].replace("\n", " ") for s in segs)
+    def load_meta(self, vid: str) -> dict[str, Any] | None:
+        hit = self.find_file("meta", vid)
+        return hit[1] if hit else None
+
+
+def rebuild_index(store: Store, idx: Index | None = None) -> dict[str, Any]:
+    """Reconstruye el indice FTS5 desde los JSON (fuente de verdad)."""
+    idx = idx or store.index
+    idx.clear()
+    nv = nc = 0
+    for d in store.channel_dirs():
+        cid = d.name
+        cname = store.channel_meta(cid).get("channel")
+        for v in store.videos(cid):
+            meta = _read_json(store.meta_path(cid, v["id"]), None)
+            idx.upsert_video(cid, cname, v, meta)
+            nv += 1
+            if v.get("status") == ST_OK:
+                doc = _read_json(store.transcript_path(cid, v["id"]), None)
+                if doc:
+                    idx.set_chunks(v["id"], T.paragraphs(doc["segments"], (meta or {}).get("chapters")))
+                    nc += 1
+    loose = store.root / LOOSE / "transcripts"
+    if loose.exists():
+        for p in loose.glob("*.json"):
+            doc = _read_json(p, None)
+            if doc:
+                meta = _read_json(store.meta_path(LOOSE, doc["id"]), None)
+                v = {"id": doc["id"], "title": doc.get("title") or (meta or {}).get("title"),
+                     "url": doc.get("url"), "status": ST_OK, "language": doc.get("language")}
+                idx.upsert_video(LOOSE, (meta or {}).get("channel"), v, meta)
+                idx.set_chunks(doc["id"], T.paragraphs(doc["segments"], (meta or {}).get("chapters")))
+                nv += 1
+                nc += 1
+    return {"videos": nv, "transcripts": nc, "path": str(idx.path)}
 
 
 # ---------------------------------------------------------------------------
 # Operaciones de alto nivel
 # ---------------------------------------------------------------------------
 
-Lister = Callable[[str, "int | None"], dict[str, Any]]
+Lister = Callable[..., dict[str, Any]]
 Fetcher = Callable[[str, list[str]], TranscriptResult]
+Enricher = Callable[[str], dict[str, Any]]
+SubFetcher = Callable[[dict[str, Any], list[str]], TranscriptResult]
 Progress = Callable[[int, int, str], None]
+
+
+def _refresh_listing(store: Store, channel: str, tab: str, list_limit: int | None,
+                     lister: Lister) -> tuple[str, dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
+    """Lista el canal (incremental si ya se recorrio completo antes), fusiona con lo
+    conocido y actualiza indice y JSON. Devuelve (cid, channel_meta, merged, info)."""
+    source = channel_url(channel, tab)
+    prev_cid = None
+    try:
+        prev_cid = store.resolve(channel)
+    except KeyError:
+        pass
+    prev_meta = store.channel_meta(prev_cid) if prev_cid else {}
+    known_list = store.videos(prev_cid) if prev_cid else []
+    known = {v["id"]: v for v in known_list}
+    incremental = bool(prev_meta.get("listing_complete")) and prev_meta.get("source") == source
+    listing = lister(source, list_limit, set(known) if incremental else None)
+    cid = listing.get("channel_id")
+    if not cid:
+        raise RuntimeError(f"yt-dlp no devolvio un ID de canal para {source}")
+    complete = bool(prev_meta.get("listing_complete")) or (bool(listing.get("exhausted")) and not list_limit)
+    if listing.get("exhausted") and not list_limit:
+        complete = True
+    cmeta = {"channel_id": cid, "channel": listing.get("channel"), "handle": listing.get("handle"),
+             "channel_url": listing.get("channel_url"), "source": source, "updated_at": _now(),
+             "listing_complete": complete}
+    store.save_channel(cmeta)
+
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    changed: list[dict[str, Any]] = []
+    for v in listing["videos"]:
+        old = known.get(v["id"])
+        item = {**(old or {}), **{k: val for k, val in v.items() if val is not None}}
+        if old and old.get("has_metadata"):  # los metadatos exactos ganan al listado aproximado
+            for k in ("date", "duration"):
+                if old.get(k) is not None:
+                    item[k] = old[k]
+        item.setdefault("status", ST_PENDING)
+        merged.append(item)
+        seen.add(v["id"])
+        if old is None or old.get("title") != item.get("title"):
+            changed.append(item)
+    merged += [v for v in known_list if v["id"] not in seen]
+    store.save_videos(cid, merged)
+    for item in changed:
+        store.index.upsert_video(cid, cmeta["channel"], item)
+    info = {"listed": len(listing["videos"]), "new_videos": sum(1 for v in listing["videos"] if v["id"] not in known),
+            "listing": "incremental" if incremental else ("parcial" if list_limit else "completo"),
+            "listing_complete": complete}
+    return cid, cmeta, merged, info
+
+
+def _select(store: Store, cid: str, merged: list[dict[str, Any]], states: set[str],
+            title_filter: str | None, video_ids: list[str] | None, need: Callable[[dict], bool]) -> list[dict]:
+    allowed: set[str] | None = None
+    if video_ids:
+        allowed = {video_id(v) for v in video_ids}
+    if title_filter:
+        found = store.index.find_videos(channel_id=cid, title=title_filter, limit=100000)
+        ids = {v["id"] for v in found["videos"]}
+        allowed = ids if allowed is None else allowed & ids
+    return [v for v in merged if (allowed is None or v["id"] in allowed) and need(v)
+            and (v.get("status") in states)]
+
+
+def _apply_meta(store: Store, cid: str, cname: str | None, v: dict[str, Any], info: dict[str, Any]) -> dict:
+    meta = metadata_from_info(info)
+    store.save_meta(cid, v["id"], meta)
+    v["has_metadata"] = True
+    if meta.get("date"):
+        v["date"] = meta["date"]
+    if meta.get("duration"):
+        v["duration"] = meta["duration"]
+    if not v.get("title") and meta.get("title"):
+        v["title"] = meta["title"]
+    store.index.upsert_video(cid, cname, v, meta)
+    return meta
 
 
 def harvest(
     store: Store,
     channel: str,
     *,
-    max_videos: int = 25,
+    max_videos: int = 20,
     list_limit: int | None = None,
     languages: list[str] | None = None,
     tab: str = "videos",
     retry_errors: bool = False,
     delay: float = 1.0,
+    metadata: bool = True,
+    title_filter: str | None = None,
+    video_ids: list[str] | None = None,
     lister: Lister = ytdlp_lister,
     fetcher: Fetcher = api_fetcher,
+    enricher: Enricher = ytdlp_video_info,
+    sub_fetcher: SubFetcher = subtitles_from_info,
     progress: Progress | None = None,
     sleep: Callable[[float], None] = time.sleep,
 ) -> dict[str, Any]:
-    """Actualiza el indice del canal y baja hasta `max_videos` transcripciones
-    pendientes (de la mas reciente a la mas antigua). Reanudable: lo ya bajado
-    no se vuelve a pedir. `list_limit` = cuantos videos recientes listar
-    (None = todo el canal)."""
+    """Actualiza el listado del canal y procesa hasta `max_videos` videos pendientes
+    (de mas reciente a mas antiguo): metadatos (descripcion, capitulos, fecha exacta)
+    si `metadata`, y transcripcion (youtube-transcript-api; si falla, subtitulos via
+    yt-dlp). Reanudable. `title_filter` (sintaxis de busqueda) o `video_ids` limitan
+    que videos se procesan."""
     langs = languages or default_languages()
-    source = channel_url(channel, tab)
-    listing = lister(source, list_limit)
-    cid = listing.get("channel_id")
-    if not cid:
-        raise RuntimeError(f"yt-dlp no devolvio un ID de canal para {source}")
-
-    store.save_channel({
-        "channel_id": cid, "channel": listing.get("channel"), "handle": listing.get("handle"),
-        "channel_url": listing.get("channel_url"), "source": source, "updated_at": _now(),
-    })
-
-    # Fusionar: conservar estado de lo conocido, anadir lo nuevo arriba.
-    known = {v["id"]: v for v in store.videos(cid)}
-    merged: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for v in listing["videos"]:
-        old = known.get(v["id"], {})
-        item = {**old, **{k: val for k, val in v.items() if val is not None}}
-        item.setdefault("status", ST_PENDING)
-        merged.append(item)
-        seen.add(v["id"])
-    merged += [v for vid, v in known.items() if vid not in seen]  # lo que ya no se listo
-    new_count = sum(1 for v in listing["videos"] if v["id"] not in known)
-
-    todo_states = {ST_PENDING} | ({ST_ERROR} if retry_errors else set())
-    todo = [v for v in merged if v.get("status") in todo_states][: max(0, max_videos)]
+    cid, cmeta, merged, linfo = _refresh_listing(store, channel, tab, list_limit, lister)
+    cname = cmeta.get("channel")
+    states = {ST_PENDING} | ({ST_ERROR} if retry_errors else set())
+    todo = _select(store, cid, merged, states, title_filter, video_ids, lambda v: True)[: max(0, max_videos)]
 
     stats = {ST_OK: 0, ST_NONE: 0, ST_ERROR: 0}
+    sources: dict[str, int] = {}
+    meta_count = 0
     blocked: str | None = None
+    api_down: BlockedError | None = None  # tras un bloqueo de la API, el resto va directo a yt-dlp
     for i, v in enumerate(todo):
         if progress:
             progress(i, len(todo), v.get("title") or v["id"])
+        info: dict[str, Any] | None = None
+        meta: dict[str, Any] | None = None
         try:
-            res = fetcher(v["id"], langs)
+            if metadata and not v.get("has_metadata"):
+                try:
+                    info = enricher(v["id"])
+                    meta = _apply_meta(store, cid, cname, v, info)
+                    meta_count += 1
+                except BlockedError:
+                    raise
+                except Exception as exc:  # metadatos opcionales: no frenan la transcripcion
+                    v["meta_error"] = f"{type(exc).__name__}: {str(exc)[:150]}"
+            api_blocked: BlockedError | None = api_down
+            try:
+                if api_down is not None:
+                    raise api_down
+                res = fetcher(v["id"], langs)
+            except BlockedError as exc:
+                res = TranscriptResult(ST_ERROR, error=f"bloqueado: {exc}")
+                api_blocked = api_down = exc
+            if res.status != ST_OK:  # respaldo con yt-dlp
+                if info is None:
+                    try:
+                        info = enricher(v["id"])
+                    except BlockedError:
+                        raise
+                    except Exception:
+                        info = None
+                if info is not None:
+                    alt = sub_fetcher(info, langs)
+                    if alt.status == ST_OK:  # un error transitorio no se degrada a "sin transcripcion"
+                        res = alt
+            if api_blocked is not None and res.status != ST_OK:
+                raise api_blocked  # el respaldo tampoco sirvio: la IP sigue limitada
         except BlockedError as exc:
-            blocked = str(exc)
+            blocked = str(exc) or "bloqueado"
+            store.save_videos(cid, merged)
             break
         v["status"] = res.status
         v["error"] = res.error
@@ -391,7 +679,13 @@ def harvest(
             v["language"] = res.language
             v["is_generated"] = res.is_generated
             v["words"] = sum(len(s["text"].split()) for s in res.segments)
+            v["source"] = res.source
+            sources[res.source] = sources.get(res.source, 0) + 1
             store.save_transcript(cid, v, res)
+            if meta is None:
+                meta = _read_json(store.meta_path(cid, v["id"]), None)
+            store.index.set_chunks(v["id"], T.paragraphs(res.segments, (meta or {}).get("chapters")))
+        store.index.upsert_video(cid, cname, v, meta)
         stats[res.status] = stats.get(res.status, 0) + 1
         store.save_videos(cid, merged)  # guardar tras cada video: reanudable
         if delay and i < len(todo) - 1:
@@ -400,160 +694,193 @@ def harvest(
     if progress:
         progress(len(todo), len(todo), "listo")
 
-    pending = sum(1 for v in merged if v.get("status") in todo_states)
+    pending = len(_select(store, cid, merged, states, title_filter, video_ids, lambda v: True))
     return {
-        "channel_id": cid,
-        "channel": listing.get("channel"),
-        "data_dir": str(store.root / cid),
-        "listed": len(listing["videos"]),
-        "new_videos": new_count,
-        "attempted": sum(stats.values()),
-        "downloaded": stats[ST_OK],
-        "without_transcript": stats[ST_NONE],
-        "errors": stats[ST_ERROR],
-        "pending": pending,
+        "channel_id": cid, "channel": cname, "data_dir": str(store.root / cid), **linfo,
+        "attempted": sum(stats.values()), "downloaded": stats[ST_OK],
+        "without_transcript": stats[ST_NONE], "errors": stats[ST_ERROR],
+        "metadata_fetched": meta_count, "sources": sources, "pending": pending,
         "total_with_transcript": sum(1 for v in merged if v.get("status") == ST_OK),
-        "blocked": blocked,
-        "hint": _harvest_hint(pending, blocked),
+        "blocked": blocked, "hint": _harvest_hint(pending, blocked),
     }
+
+
+def fetch_metadata(store: Store, channel: str, *, max_videos: int = 50, title_filter: str | None = None,
+                   video_ids: list[str] | None = None, tab: str = "videos", list_limit: int | None = None,
+                   refresh_list: bool = False, delay: float = 1.0, lister: Lister = ytdlp_lister,
+                   enricher: Enricher = ytdlp_video_info, progress: Progress | None = None,
+                   sleep: Callable[[float], None] = time.sleep) -> dict[str, Any]:
+    """Solo metadatos (descripcion, capitulos, tags, fecha exacta), sin transcripcion.
+    Sirve para filtrar por descripcion antes de decidir que transcribir."""
+    try:
+        cid = store.resolve(channel)
+        cname = store.channel_meta(cid).get("channel")
+        merged = store.videos(cid)
+        linfo: dict[str, Any] = {}
+    except KeyError:
+        refresh_list = True
+    if refresh_list:
+        cid, cmeta, merged, linfo = _refresh_listing(store, channel, tab, list_limit, lister)
+        cname = cmeta.get("channel")
+    all_states = {ST_PENDING, ST_OK, ST_NONE, ST_ERROR}
+    need = lambda v: not v.get("has_metadata")  # noqa: E731
+    todo = _select(store, cid, merged, all_states, title_filter, video_ids, need)[: max(0, max_videos)]
+    done = errors = 0
+    blocked = None
+    for i, v in enumerate(todo):
+        if progress:
+            progress(i, len(todo), v.get("title") or v["id"])
+        try:
+            _apply_meta(store, cid, cname, v, enricher(v["id"]))
+            v.pop("meta_error", None)
+            done += 1
+        except BlockedError as exc:
+            blocked = str(exc) or "bloqueado"
+            break
+        except Exception as exc:
+            v["meta_error"] = f"{type(exc).__name__}: {str(exc)[:150]}"
+            errors += 1
+        store.save_videos(cid, merged)
+        if delay and i < len(todo) - 1:
+            sleep(delay)
+    store.save_videos(cid, merged)
+    pending = len(_select(store, cid, merged, all_states, title_filter, video_ids, need))
+    return {"channel_id": cid, "channel": cname, **linfo, "fetched": done, "errors": errors,
+            "pending": pending, "blocked": blocked, "hint": _harvest_hint(pending, blocked)}
 
 
 def _harvest_hint(pending: int, blocked: str | None) -> str:
     if blocked:
-        return ("YouTube bloqueo esta IP. Espera (minutos u horas), baja el ritmo con un delay mayor "
+        return ("YouTube limito o bloqueo esta IP. Espera (minutos u horas), sube el delay "
                 "o configura YT_PROXY_HTTP/YT_PROXY_HTTPS. Lo ya bajado queda guardado.")
     if pending:
-        return f"Quedan {pending} pendientes: vuelve a ejecutar la descarga para continuar."
+        return f"Quedan {pending} pendientes: vuelve a ejecutar para continuar."
     return "Completo."
 
 
-def list_videos(store: Store, channel: str, *, only_with_transcript: bool = False,
-                limit: int = 100, offset: int = 0) -> dict[str, Any]:
-    cid = store.resolve(channel)
-    vids = store.videos(cid)
-    if only_with_transcript:
-        vids = [v for v in vids if v.get("status") == ST_OK]
-    page = vids[offset: offset + limit]
-    keys = ("id", "title", "url", "date", "duration", "status", "language", "words")
-    return {
-        "channel_id": cid, "total": len(vids), "offset": offset,
-        "next_offset": offset + limit if offset + limit < len(vids) else None,
-        "videos": [{k: v.get(k) for k in keys if v.get(k) is not None} for v in page],
-    }
+def find_videos(store: Store, channel: str | None = None, **filters: Any) -> dict[str, Any]:
+    """Filtra videos en cache por titulo, descripcion, texto (titulo+descripcion+tags),
+    fechas, duracion y estado. Ver Index.find_videos."""
+    cid = store.resolve(channel) if channel else None
+    ids = filters.pop("video_ids", None)
+    try:
+        return store.index.find_videos(channel_id=cid, video_ids=[video_id(v) for v in ids] if ids else None,
+                                       **filters)
+    except sqlite3.OperationalError as exc:  # sintaxis FTS5 invalida en un filtro
+        raise ValueError(f"Filtro de busqueda invalido ({exc}). Usa palabras sueltas, "
+                         '"frase exacta", prefijo*, OR, NOT.') from exc
 
 
-def get_transcript(store: Store, video: str, *, timestamps: bool = False, max_chars: int = 20000,
-                   offset: int = 0, languages: list[str] | None = None,
-                   fetcher: Fetcher = api_fetcher) -> dict[str, Any]:
-    """Devuelve la transcripcion (de la cache o, si no esta, la baja y la guarda
-    en `_videos`). Paginada por caracteres para no saturar el contexto."""
+def get_transcript(store: Store, video: str, *, format: str = "paragraphs", clean: bool = True,
+                   max_chars: int = 20000, offset: int = 0, languages: list[str] | None = None,
+                   fetcher: Fetcher = api_fetcher, enricher: Enricher = ytdlp_video_info,
+                   sub_fetcher: SubFetcher = subtitles_from_info) -> dict[str, Any]:
+    """Transcripcion (de la cache o, si no esta, la baja y la guarda en `_videos`).
+    Paginada por caracteres para no saturar el contexto."""
     vid = video_id(video)
     doc = store.load_transcript(vid)
     if doc is None:
-        res = fetcher(vid, languages or default_languages())
+        langs = languages or default_languages()
+        res = fetcher(vid, langs)
+        info = None
+        if res.status != ST_OK:
+            try:
+                info = enricher(vid)
+                alt = sub_fetcher(info, langs)
+                res = alt if alt.status == ST_OK else res
+            except BlockedError:
+                raise
+            except Exception:
+                pass
         if res.status != ST_OK:
             return {"id": vid, "url": watch_url(vid), "status": res.status, "error": res.error}
-        meta = {"id": vid, "url": watch_url(vid), "title": None, "date": None}
-        store.save_transcript("_videos", meta, res)
+        meta = metadata_from_info(info) if info else {}
+        if meta:
+            store.save_meta(LOOSE, vid, meta)
+        v = {"id": vid, "url": watch_url(vid), "title": meta.get("title"), "date": meta.get("date"),
+             "status": ST_OK, "language": res.language}
+        store.save_transcript(LOOSE, v, res)
+        store.index.upsert_video(LOOSE, meta.get("channel"), v, meta or None)
+        store.index.set_chunks(vid, T.paragraphs(res.segments, meta.get("chapters")))
         doc = store.load_transcript(vid)
         assert doc is not None
-    text = transcript_text(doc, timestamps)
-    chunk = text[offset: offset + max_chars] if max_chars > 0 else text[offset:]
+    meta = store.load_meta(vid) or {}
+    body = T.render(doc.get("segments") or [], format, meta.get("chapters"), clean)
+    chunk = body[offset: offset + max_chars] if max_chars > 0 else body[offset:]
     end = offset + len(chunk)
     return {
-        "id": vid, "title": doc.get("title"), "url": doc.get("url") or watch_url(vid),
-        "date": doc.get("date"), "language": doc.get("language"),
-        "is_generated": doc.get("is_generated"), "total_chars": len(text),
-        "offset": offset, "next_offset": end if end < len(text) else None,
+        "id": vid, "title": doc.get("title") or meta.get("title"), "url": doc.get("url") or watch_url(vid),
+        "date": meta.get("date") or doc.get("date"), "language": doc.get("language"),
+        "is_generated": doc.get("is_generated"), "source": doc.get("source"),
+        "total_chars": len(body), "offset": offset, "next_offset": end if end < len(body) else None,
         "transcript": chunk,
     }
 
 
+def get_video_info(store: Store, video: str, *, enricher: Enricher = ytdlp_video_info) -> dict[str, Any]:
+    """Metadatos de un video: descripcion completa, capitulos, tags, fecha exacta y
+    estado de la transcripcion. Si no estan en cache, los pide a YouTube."""
+    vid = video_id(video)
+    meta = store.load_meta(vid)
+    if meta is None:
+        meta = metadata_from_info(enricher(vid))
+        hit = store.find_file("transcripts", vid)
+        store.save_meta(hit[0] if hit else LOOSE, vid, meta)
+    doc = store.load_transcript(vid)
+    out = {"id": vid, "url": watch_url(vid), **{k: v for k, v in meta.items() if k not in ("id", "fetched_at")}}
+    out["transcript"] = ({"available": True, "language": doc.get("language"), "is_generated": doc.get("is_generated"),
+                          "words": sum(len(s["text"].split()) for s in doc.get("segments") or [])}
+                         if doc else {"available": False})
+    return out
+
+
 def search(store: Store, query: str, *, channel: str | None = None, max_results: int = 20,
-           context_chars: int = 160) -> dict[str, Any]:
-    """Busqueda literal (sin tildes ni mayusculas) en las transcripciones guardadas.
-    Cada resultado trae enlace al segundo exacto."""
-    q = fold(query.strip())
-    if not q:
-        raise ValueError("consulta vacia")
-    cids = [store.resolve(channel)] if channel else [c["channel_id"] for c in store.channels()]
-    results: list[dict[str, Any]] = []
-    total = 0
-    for cid in cids:
-        for v in store.videos(cid):
-            if v.get("status") != ST_OK:
-                continue
-            doc = _read_json(store.transcript_path(cid, v["id"]), None)
-            if not doc:
-                continue
-            segs = doc["segments"]
-            # Texto plano con mapa de offsets -> segmento, para encontrar frases que cruzan segmentos.
-            # `flat` (plegado) se usa para buscar; `shown` (original) para el fragmento.
-            # Plegar casi siempre conserva la longitud; si no, ese segmento se muestra plegado.
-            parts, shown_parts, starts, pos = [], [], [], 0
-            for s in segs:
-                orig = s["text"].replace("\n", " ") + " "
-                t = fold(orig)
-                starts.append(pos)
-                parts.append(t)
-                shown_parts.append(orig if len(orig) == len(t) else t)
-                pos += len(t)
-            flat, shown = "".join(parts), "".join(shown_parts)
-            for m in re.finditer(re.escape(q), flat):
-                total += 1
-                if len(results) >= max_results:
-                    continue
-                idx = _bisect(starts, m.start())
-                a, b = max(0, m.start() - context_chars), min(len(flat), m.end() + context_chars)
-                results.append({
-                    "title": v.get("title"), "video_url": v.get("url"),
-                    "at": fmt_ts(segs[idx]["start"]), "link": watch_url(v["id"], segs[idx]["start"]),
-                    "snippet": ("..." if a else "") + shown[a:b].strip() + ("..." if b < len(flat) else ""),
-                })
-    return {"query": query, "total_matches": total, "returned": len(results), "results": results}
-
-
-def _bisect(starts: list[int], pos: int) -> int:
-    lo, hi = 0, len(starts) - 1
-    while lo < hi:
-        mid = (lo + hi + 1) // 2
-        if starts[mid] <= pos:
-            lo = mid
-        else:
-            hi = mid - 1
-    return lo
+           per_video: int = 3, **filters: Any) -> dict[str, Any]:
+    """Busqueda por relevancia (BM25) en las transcripciones indexadas, con filtros
+    opcionales de titulo, descripcion, fechas, duracion e IDs."""
+    cid = store.resolve(channel) if channel else None
+    ids = filters.pop("video_ids", None)
+    return store.index.search_chunks(query, channel_id=cid, max_results=max_results, per_video=per_video,
+                                     video_ids=[video_id(v) for v in ids] if ids else None, **filters)
 
 
 def export(store: Store, channel: str, fmt: str = "jsonl", out: Path | None = None,
-           timestamps: bool = False) -> dict[str, Any]:
-    """Exporta titulo, enlace, fecha y transcripcion de todos los videos con
-    transcripcion. Formatos: jsonl, csv, md."""
+           format: str = "paragraphs", title_filter: str | None = None) -> dict[str, Any]:
+    """Exporta titulo, enlace, fecha, idioma, descripcion y transcripcion de los videos
+    con transcripcion (opcionalmente filtrados por titulo). Formatos: jsonl, csv, md."""
     if fmt not in ("jsonl", "csv", "md"):
         raise ValueError("fmt debe ser jsonl, csv o md")
     cid = store.resolve(channel)
-    meta = _read_json(store.root / cid / "channel.json", {})
+    cmeta = store.channel_meta(cid)
+    allowed = None
+    if title_filter:
+        allowed = {v["id"] for v in store.index.find_videos(channel_id=cid, title=title_filter, limit=100000)["videos"]}
     rows = []
     for v in store.videos(cid):
-        if v.get("status") != ST_OK:
+        if v.get("status") != ST_OK or (allowed is not None and v["id"] not in allowed):
             continue
         doc = _read_json(store.transcript_path(cid, v["id"]), None)
-        if doc:
-            rows.append({"title": v.get("title"), "url": v.get("url"), "date": v.get("date"),
-                         "language": doc.get("language"), "transcript": transcript_text(doc, timestamps)})
+        if not doc:
+            continue
+        meta = _read_json(store.meta_path(cid, v["id"]), {}) or {}
+        rows.append({"title": v.get("title"), "url": v.get("url"), "date": v.get("date"),
+                     "language": doc.get("language"), "description": meta.get("description", ""),
+                     "transcript": T.render(doc["segments"], format, meta.get("chapters"))})
     path = Path(out) if out else store.root / cid / f"export.{fmt}"
     path.parent.mkdir(parents=True, exist_ok=True)
     if fmt == "jsonl":
         path.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8")
     elif fmt == "csv":
         buf = io.StringIO()
-        w = csv.DictWriter(buf, fieldnames=["title", "url", "date", "language", "transcript"])
+        w = csv.DictWriter(buf, fieldnames=["title", "url", "date", "language", "description", "transcript"])
         w.writeheader()
         w.writerows(rows)
         path.write_text(buf.getvalue(), encoding="utf-8-sig")  # BOM: Excel abre bien los acentos
     else:
-        lines = [f"# {meta.get('channel') or cid}\n"]
+        lines = [f"# {cmeta.get('channel') or cid}\n"]
         for r in rows:
+            desc = f"\n**Descripcion:**\n\n{r['description'].strip()}\n" if r["description"].strip() else ""
             lines.append(f"\n## {r['title']}\n\n- Enlace: {r['url']}\n- Fecha: {r['date'] or 'desconocida'}\n"
-                         f"- Idioma: {r['language']}\n\n{r['transcript']}\n")
+                         f"- Idioma: {r['language']}\n{desc}\n{r['transcript']}\n")
         path.write_text("".join(lines), encoding="utf-8")
     return {"channel_id": cid, "format": fmt, "videos": len(rows), "path": str(path)}
