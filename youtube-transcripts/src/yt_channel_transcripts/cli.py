@@ -52,7 +52,7 @@ def main(argv: list[str] | None = None) -> int:
     h.add_argument("--ids", nargs="*", help="procesar solo estos IDs/URLs")
     h.add_argument("--list-limit", type=int, default=None, help="videos recientes a listar (1a pasada)")
     h.add_argument("--all", action="store_true", help="seguir en tandas hasta terminar")
-    h.add_argument("--lang", default=None, help="idiomas preferidos, p. ej. es,en")
+    h.add_argument("--lang", default=None, help="idiomas preferidos: original (defecto), en, es,en...")
     h.add_argument("--no-metadata", action="store_true", help="no bajar descripcion/capitulos")
     h.add_argument("--tab", default="videos", choices=core.TABS)
     h.add_argument("--retry-errors", action="store_true")
@@ -77,6 +77,7 @@ def main(argv: list[str] | None = None) -> int:
     f.add_argument("--min-minutes", type=float)
     f.add_argument("--max-minutes", type=float)
     f.add_argument("--with-transcript", action="store_true")
+    f.add_argument("--language", help="idioma de la transcripcion guardada (en, es...)")
     f.add_argument("--sort", default="date_desc")
     f.add_argument("--limit", type=int, default=50)
 
@@ -147,6 +148,7 @@ def main(argv: list[str] | None = None) -> int:
             _print(core.find_videos(store, a.channel, title=a.title, description=a.description, text=a.text,
                                     date_from=a.date_from, date_to=a.date_to, min_minutes=a.min_minutes,
                                     max_minutes=a.max_minutes, has_transcript=True if a.with_transcript else None,
+                                    language=a.language,
                                     sort=a.sort, limit=a.limit))
         elif a.cmd == "get":
             r = core.get_transcript(store, a.video, format=a.format, clean=not a.raw, max_chars=0, languages=langs)

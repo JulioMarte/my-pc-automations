@@ -64,7 +64,7 @@ def ytdlp_search(url: str, limit: int) -> list[dict[str, Any]]:
     """Primeras `limit` entradas de una pagina de resultados (sin descargar nada)."""
     import yt_dlp
 
-    lang = (os.environ.get("YT_LANGS") or "es").split(",")[0].strip() or "es"
+    lang = (os.environ.get("YT_SEARCH_LANG") or "es").strip() or "es"  # idioma de la interfaz
     opts = core._ydl_opts(extract_flat="in_playlist", lazy_playlist=True,
                           extractor_args={"youtube": {"lang": [lang]}})
     with yt_dlp.YoutubeDL(opts) as ydl:
