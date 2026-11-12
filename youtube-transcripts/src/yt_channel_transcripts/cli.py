@@ -1,5 +1,7 @@
 """CLI equivalente a las herramientas MCP, para usarlo sin un cliente MCP.
 
+    yt-transcripts youtube "consulta" [--kind video|channel|playlist] [--sort date] [--upload-date week]
+    yt-transcripts channel-search @canal "consulta"
     yt-transcripts harvest @canal --max 50 [--all] [--title "inflacion OR precios"]
     yt-transcripts metadata @canal --max 100
     yt-transcripts channels
@@ -20,6 +22,7 @@ import sys
 from pathlib import Path
 
 from . import core
+from . import search as yts
 
 
 def _print(data: object) -> None:
@@ -100,6 +103,19 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("--title")
     e.add_argument("--out")
 
+    y = sub.add_parser("youtube", help="buscar videos, canales o playlists en YouTube (en vivo)")
+    y.add_argument("query")
+    y.add_argument("--kind", default="video", choices=list(yts.KINDS))
+    y.add_argument("--sort", default="relevance", choices=list(yts.SORTS))
+    y.add_argument("--upload-date", choices=list(yts.UPLOAD_DATES))
+    y.add_argument("--duration", choices=list(yts.DURATIONS))
+    y.add_argument("--limit", type=int, default=10)
+
+    cs = sub.add_parser("channel-search", help="buscador propio de un canal (en vivo)")
+    cs.add_argument("channel")
+    cs.add_argument("query")
+    cs.add_argument("--limit", type=int, default=20)
+
     sub.add_parser("reindex", help="reconstruir el indice de busqueda")
     sub.add_parser("serve", help="servidor MCP por stdio")
 
@@ -147,6 +163,11 @@ def main(argv: list[str] | None = None) -> int:
         elif a.cmd == "export":
             _print(core.export(store, a.channel, a.format, Path(a.out) if a.out else None,
                                format=a.text_format, title_filter=a.title))
+        elif a.cmd == "youtube":
+            _print(yts.search_youtube(a.query, kind=a.kind, limit=a.limit, sort=a.sort,
+                                      upload_date=a.upload_date, duration=a.duration))
+        elif a.cmd == "channel-search":
+            _print(yts.search_in_channel(a.channel, a.query, limit=a.limit))
         elif a.cmd == "reindex":
             _print(core.rebuild_index(store))
     except (KeyError, ValueError) as exc:

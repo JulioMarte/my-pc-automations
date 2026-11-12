@@ -16,12 +16,16 @@ import anyio
 from mcp.server.mcpserver import Context, MCPServer
 
 from . import core
+from . import search as yts
 
 INSTRUCTIONS = """\
-Herramientas para procesar videos y transcripciones de canales de YouTube (cache local).
-Flujo recomendado:
+Herramientas para buscar en YouTube y procesar videos y transcripciones de canales (sin API key).
+Descubrir (en vivo, sin descargar): search_youtube busca videos, canales o playlists en todo
+YouTube (orden, fecha de subida, duracion); search_channel_videos usa el buscador propio de un canal.
+Flujo recomendado para trabajar con un canal:
 1. harvest_channel: lista el canal y descarga metadatos (descripcion, capitulos) + transcripciones.
    Es incremental; si 'pending' > 0, vuelve a llamarla. Puedes limitarla con title_filter o video_ids.
+   Con max_videos=0 solo lista el canal (titulos de todos los videos) sin descargar nada mas.
    Para filtrar por descripcion ANTES de transcribir: fetch_metadata y luego find_videos.
 2. find_videos: filtra por title, description, text (titulo+descripcion+tags), fechas, duracion y
    has_transcript. Sintaxis de filtros: palabras (todas deben aparecer), "frase exacta", prefijo*,
@@ -105,6 +109,50 @@ async def fetch_metadata(
     return await anyio.to_thread.run_sync(lambda: core.fetch_metadata(
         st, channel, max_videos=max_videos, title_filter=title_filter, video_ids=video_ids,
         refresh_list=refresh_list, delay=delay_seconds, progress=_progress_cb(ctx)))
+
+
+def _annotate(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Marca que videos/canales ya estan en la cache local."""
+    st = _store()
+    ids = [i["id"] for i in items if i.get("type") == "video" and i.get("id")]
+    status: dict[str, str] = {}
+    if ids:
+        found = st.index.find_videos(video_ids=ids, limit=len(ids))
+        status = {v["id"]: v.get("status") or "listado" for v in found["videos"]}
+    cached_channels = {c["channel_id"] for c in st.channels()}
+    for i in items:
+        if i.get("type") == "video" and i.get("id") in status:
+            i["cache_status"] = status[i["id"]]
+        if i.get("type") == "channel":
+            i["in_cache"] = i.get("channel_id") in cached_channels
+    return items
+
+
+@mcp.tool()
+async def search_youtube(query: str, kind: str = "video", limit: int = 10, sort: str = "relevance",
+                         upload_date: str | None = None, duration: str | None = None) -> dict[str, Any]:
+    """Busca en todo YouTube (en vivo, sin API key).
+
+    kind: video | channel | playlist.
+    sort: relevance | date | views | rating.
+    upload_date: hour | today | week | month | year (solo lo subido en ese periodo).
+    duration: short (<4 min) | medium (4-20) | long (>20); solo para videos.
+    Devuelve titulo, enlace, canal (@handle e ID), duracion, vistas y fragmento de descripcion;
+    para canales, suscriptores y descripcion. Usa el channel_id o @handle con harvest_channel."""
+    r = await anyio.to_thread.run_sync(lambda: yts.search_youtube(
+        query, kind=kind, limit=limit, sort=sort, upload_date=upload_date, duration=duration))
+    r["results"] = _annotate(r["results"])
+    return r
+
+
+@mcp.tool()
+async def search_channel_videos(channel: str, query: str, limit: int = 20) -> dict[str, Any]:
+    """Busca dentro de un canal con el buscador propio de YouTube (titulos y descripciones de
+    TODO el canal, en vivo, sin haberlo descargado). Util para elegir que videos procesar con
+    harvest_channel(video_ids=[...])."""
+    r = await anyio.to_thread.run_sync(lambda: yts.search_in_channel(channel, query, limit=limit))
+    r["results"] = _annotate(r["results"])
+    return r
 
 
 @mcp.tool()
@@ -230,6 +278,7 @@ def investigar_tema(channel: str, tema: str) -> str:
     """Investiga que dice un canal sobre un tema, citando videos y minutos."""
     return (f"Investiga que dice el canal {channel} sobre: {tema}.\n"
             "1. Si el canal no esta en cache (list_channels), usa harvest_channel.\n"
+            "   Si no sabes el canal exacto, buscalo con search_youtube(kind='channel').\n"
             f"2. Usa find_videos con text='{tema}' para candidatos por titulo/descripcion, y "
             f"search_transcripts con query='{tema}' para lo hablado.\n"
             "3. Lee con get_transcript solo los fragmentos necesarios.\n"

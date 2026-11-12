@@ -13,7 +13,10 @@ politica del repositorio; solo anade reglas locales.
   seleccion de idioma, busqueda, exportacion y la capa MCP/CLI.
 - **Logica en `core.py`, sin red en los tests** (CONTROLLED): la red entra por los
   parametros inyectables `lister`, `fetcher`, `enricher` y `sub_fetcher`. `server.py`
-  y `cli.py` son capas finas sobre `core`; `text.py` limpia y arma parrafos.
+  y `cli.py` son capas finas sobre `core`; `text.py` limpia y arma parrafos;
+  `search.py` busca en YouTube (inyectable `searcher`).
+- **Sin API key ni credenciales** (HARD): no usar la YouTube Data API ni cuentas de
+  Google; todo va por paginas publicas via `yt-dlp`/`youtube-transcript-api`.
 - **JSON = verdad, SQLite = indice** (HARD): `index.py` (FTS5, biblioteca estandar)
   es derivado y reconstruible con `rebuild_index`; nunca guardar datos solo en el indice.
 - **Respuestas MCP acotadas** (CONTROLLED): las herramientas devuelven resumenes y

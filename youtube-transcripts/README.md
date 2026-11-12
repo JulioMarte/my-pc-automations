@@ -1,8 +1,11 @@
 # youtube-transcripts
 
-Servidor MCP y CLI para obtener **titulo, enlace, descripcion y transcripcion** de los
-videos de un canal de YouTube, guardarlos en una cache local, **filtrarlos por titulo y
-descripcion**, buscar dentro de lo hablado y exportarlos.
+Servidor MCP y CLI para **buscar canales y videos en YouTube**, obtener **titulo, enlace,
+descripcion y transcripcion** de los videos de un canal, guardarlos en una cache local,
+**filtrarlos por titulo y descripcion**, buscar dentro de lo hablado y exportarlos.
+
+**No necesita API key de YouTube ni cuenta de Google**: usa las mismas paginas publicas
+que la web, a traves de `yt-dlp` y `youtube-transcript-api`.
 
 ## Por que existe (y que NO reinventa)
 
@@ -80,7 +83,10 @@ Otros clientes (Claude Desktop, Cursor, etc.), en su `mcpServers`:
 
 | Herramienta | Uso |
 |---|---|
+| `search_youtube(query, kind=video\|channel\|playlist, limit=10, sort=relevance\|date\|views\|rating, upload_date=hour\|today\|week\|month\|year, duration=short\|medium\|long)` | **Busca en todo YouTube**, en vivo. Videos: titulo, enlace, canal (@handle, ID), duracion, vistas, descripcion. Canales: ID, @handle, suscriptores, descripcion. Marca lo que ya esta en cache |
+| `search_channel_videos(channel, query, limit=20)` | Buscador propio del canal en YouTube: titulos y descripciones de **todo** el canal sin haberlo descargado |
 | `harvest_channel(channel, max_videos=20, title_filter, video_ids, list_limit, languages, metadata=True, tab, retry_errors, delay_seconds)` | Lista el canal y procesa hasta `max_videos` videos pendientes: metadatos + transcripcion. `title_filter`/`video_ids` limitan cuales. Si `pending > 0`, volver a llamarla |
+| `harvest_channel(channel, max_videos=0)` | Solo lista el canal (titulos de todos los videos) sin bajar nada mas |
 | `fetch_metadata(channel, max_videos=50, title_filter, video_ids)` | Solo descripcion, capitulos, tags y fecha exacta (sin transcribir), para filtrar por descripcion antes de decidir |
 | `find_videos(channel, title, description, text, date_from, date_to, min_minutes, max_minutes, has_transcript, video_ids, sort, limit, offset)` | **Filtra** videos: titulo, enlace, fecha, duracion, estado y fragmento de la descripcion |
 | `search_transcripts(query, channel, title, description, date_from, date_to, video_ids, max_results, per_video)` | Busca en lo hablado por relevancia; enlace `&t=` al segundo, capitulo y fragmento resaltado |
@@ -113,6 +119,12 @@ todos los videos listados.
 
 ### Flujos tipicos para un modelo
 
+- *"Busca canales de finanzas personales en espanol"*: `search_youtube(query="finanzas personales", kind="channel")`
+  -> `harvest_channel` con el `channel_id` elegido.
+- *"Videos de esta semana sobre la Fed"*: `search_youtube(query="Reserva Federal", upload_date="week", sort="date")`
+  -> `get_transcript` de los que interesen.
+- *"Del canal X, los videos sobre neutrinos"*: `search_channel_videos(channel="@X", query="neutrinos")`
+  -> `harvest_channel(video_ids=[...])`.
 - *"Que dice el canal X sobre inflacion"*: `harvest_channel` -> `search_transcripts(query="inflacion")`
   -> `get_transcript` de los videos relevantes.
 - *"Transcribe solo los videos de recetas"*: `fetch_metadata` -> `find_videos(text="receta*")`
@@ -122,6 +134,10 @@ todos los videos listados.
 ## CLI
 
 ```bash
+uv run yt-transcripts youtube "QuantumFracture" --kind channel       # buscar canales
+uv run yt-transcripts youtube "neutrinos" --sort views --duration medium
+uv run yt-transcripts youtube "Reserva Federal" --upload-date week --sort date
+uv run yt-transcripts channel-search @QuantumFracture "agujero negro"
 uv run yt-transcripts harvest @QuantumFracture --max 50              # 50 videos mas recientes
 uv run yt-transcripts harvest @QuantumFracture --all --delay 2       # todo el canal, en tandas
 uv run yt-transcripts harvest @QuantumFracture --title "nobel OR neutrino*"
@@ -196,5 +212,9 @@ uv run pytest -q -m network --network      # prueba real contra YouTube
 - **Videos sin subtitulos** (muchos Shorts, directos recientes, videos con subtitulos
   desactivados) quedan como `sin_transcripcion`; esta herramienta no transcribe audio.
 - **Busqueda por palabras** (FTS5 con BM25), no semantica: "coche" no encuentra "automovil".
+- **Busqueda en YouTube** (`search_youtube`, `search_channel_videos`): depende del orden y
+  la personalizacion de YouTube; los titulos pueden venir traducidos automaticamente segun
+  el idioma (`YT_LANGS`, primer idioma). No hay filtro por rango de fechas exacto, solo los
+  periodos de la web (hora, hoy, semana, mes, ano).
 - Los terminos de servicio de YouTube restringen el acceso automatizado; usalo para
   investigacion o uso personal y con ritmo moderado.
