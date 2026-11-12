@@ -205,7 +205,15 @@ def process_selection(store: core.Store, name: str, *, format: str = "pdf", fetc
     core._write_json(_path(store, name), sel)
     r["selection"] = sel["name"]
     if r.get("coverage", {}).get("without_transcript"):
-        when = "despues de la pausa" if (r.get("fetched") or {}).get("blocked") else "mas tarde"
-        r["hint"] = (r.get("hint", "") + f" Vuelve a llamar process_selection {when} para completar; "
-                     "el documento se regenera con todo lo descargado.").strip()
+        st = {v["id"]: v.get("status") for d in store.channel_dirs() for v in store.videos(d.name)}
+        missing = [i for i in sel["video_ids"] if st.get(i) != core.ST_OK]
+        permanent = [i for i in missing if st.get(i) == core.ST_NONE]
+        if len(permanent) == len(missing):
+            r["hint"] = (f"{len(permanent)} videos no tienen subtitulos en YouTube (permanente); estan listados "
+                         "en el apendice del documento. No hace falta reintentar.")
+        else:
+            when = "despues de la pausa" if (r.get("fetched") or {}).get("blocked") else "mas tarde"
+            r["hint"] = (f"{len(missing) - len(permanent)} videos siguen pendientes y {len(permanent)} no tienen "
+                         f"subtitulos. Vuelve a llamar process_selection {when} para completar; el documento "
+                         "se regenera con todo lo descargado.")
     return r
