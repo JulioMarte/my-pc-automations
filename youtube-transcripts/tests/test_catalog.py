@@ -121,3 +121,9 @@ def test_quita_texto_repetido_del_canal(tmp_path: Path):
     r = catalog.catalog(st, "@prueba")
     assert r["videos"][0].endswith(f"| {DESCS[IDS[0]]}")  # sin el pie comun ni la URL
     assert catalog.clean_description("Hola\nhttps://x.y/z\nvisita www.ej.com hoy", set()) == "Hola visita www.ej.com hoy"
+
+
+def test_cli_acepta_ids_que_empiezan_por_guion(st: Store, capsys):
+    from yt_channel_transcripts import cli
+    rc = cli.main(["--data-dir", str(st.root), "select", "x", "--channel", "@prueba", "--add", "-VCdtSAtSUU", IDS[0]])
+    assert rc == 0 and catalog.selection_show(st, "x")["total"] == 2

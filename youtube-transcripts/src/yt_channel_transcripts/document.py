@@ -525,6 +525,9 @@ def export_videos(store: core.Store, *, video_ids: list[str] | None = None, chan
                "hint": "Ningun video seleccionado tiene transcripcion. Usa fetch_missing_videos=true o harvest_channel."}
         if fetched is not None:
             out["fetched"] = fetched
+            if fetched.get("blocked"):
+                out["hint"] = (f"No se genero documento: {fetched['blocked']} Vuelve a intentarlo despues "
+                               "de esa hora; lo ya descargado queda guardado.")
         return out
     crit = _criteria(video_ids=video_ids, channel=channel, title=title, description=description, text=text,
                      query=query, date_from=date_from, date_to=date_to, language=language)
