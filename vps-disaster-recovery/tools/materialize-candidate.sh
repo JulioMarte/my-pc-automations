@@ -5,6 +5,8 @@ OUT=${1:-"$ROOT/build/vps-backup-v1.4.3.sh"}
 EXPECTED_V142=5e94be6c3790bccb28dc071665b7c8c17921624eb6d3cc5f5d656ba03b8aa232
 EXPECTED_SAME_OS_MODULE_GIT_BLOB=d6c42366d3b9ca22de7e981e8394eb880e37835d
 MODULE="$ROOT/modules/same-os-recovery.sh"
+RESTIC_MODULE="$ROOT/modules/restic-install.sh"
+EXPECTED_RESTIC_MODULE_GIT_BLOB=763d181f9c6e26023e805a1374a1ac3e4f69431d
 TMP_OUT=$(mktemp)
 trap 'rm -f "$TMP_OUT"' EXIT
 
@@ -73,6 +75,27 @@ awk -v q="'" '
   END { if (count < 1) exit 53 }
 ' "$OUT" > "$TMP_OUT"
 mv "$TMP_OUT" "$OUT"
+# Overlay de instalacion de Restic (modules/restic-install.sh): el base creaba
+# el temporal en $TMP_DIR antes de que ensure_directories lo creara (install
+# fallaba en un host limpio sin Restic) y fijaba una version de Restic. Se
+# eliminan las dos funciones del base y se inyecta el modulo, verificado por blob.
+[[ -r "$RESTIC_MODULE" ]] || { echo 'restic install module missing' >&2; exit 1; }
+[[ "$(git -C "$ROOT" hash-object "$RESTIC_MODULE")" == "$EXPECTED_RESTIC_MODULE_GIT_BLOB" ]] || { echo 'restic install module blob mismatch' >&2; exit 1; }
+bash -n "$RESTIC_MODULE"
+awk -v module="$RESTIC_MODULE" '
+  /^(install_official_restic|ensure_restic_min_version)\(\) \{/ { skip=1; removed++; next }
+  skip { if ($0 == "}") skip=0; next }
+  /^show_help\(\) \{/ && !inserted {
+    while ((getline line < module) > 0) print line
+    close(module)
+    print ""
+    inserted=1
+  }
+  { print }
+  END { if (removed != 2 || !inserted) exit 54 }
+' "$OUT" > "$TMP_OUT"
+mv "$TMP_OUT" "$OUT"
+TMP_OUT=$(mktemp)
 chmod 0755 "$OUT"
 
 # Release invariants for the new recovery path. Final SHA is pinned only after
@@ -84,6 +107,10 @@ grep -Fq 'Same-OS portable recovery completado' "$OUT" || { echo 'same-OS recove
 ! grep -Fq "grep -q -- '--read-data" "$OUT" || { echo 'restic probe still uses grep -q (pipefail SIGPIPE flake)' >&2; exit 1; }
 grep -Fq "grep -c -- '--read-data-subset' >/dev/null" "$OUT" || { echo 'restic probe patch missing (subset)' >&2; exit 1; }
 grep -Fq "grep -c -- '--read-data' >/dev/null" "$OUT" || { echo 'restic probe patch missing (read-data)' >&2; exit 1; }
+grep -Fq 'install -d -m 0700 -o root -g root "$TMP_DIR"' "$OUT" || { echo 'restic install tmpdir fix missing' >&2; exit 1; }
+grep -Fq 'releases/latest' "$OUT" || { echo 'restic latest-version resolver missing' >&2; exit 1; }
+[[ "$(grep -c '^install_official_restic() {' "$OUT")" == 1 ]] || { echo 'install_official_restic defined more than once' >&2; exit 1; }
+[[ "$(grep -c '^ensure_restic_min_version() {' "$OUT")" == 1 ]] || { echo 'ensure_restic_min_version defined more than once' >&2; exit 1; }
 actual=$(sha256sum "$OUT" | awk '{print $1}')
 echo "v1.4.3 candidate SHA256: $actual" >&2
 printf '%s\n' "$OUT"
