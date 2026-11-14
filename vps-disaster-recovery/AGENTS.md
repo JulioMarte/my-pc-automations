@@ -33,3 +33,9 @@ politica del repositorio; solo anade reglas locales mas estrictas.
   ultima version publicada de Restic, con fallback a `RESTIC_BOOTSTRAP_VERSION`
   y verificacion SHA256SUMS. `RESTIC_VERSION=X.Y.Z` fija una version. Su blob
   Git esta fijado en `tools/materialize-candidate.sh`.
+- **Borrador del instalador**: `modules/install-checkpoint.sh` +
+  `tools/install-checkpoint.awk` guardan las respuestas de `configure_interactive`
+  por secciones en `/etc/vps-backup/install-draft.{conf,cred}` (0600) para
+  reanudar tras una interrupcion, y muestran la contrasena Restic generada en
+  una corrida cortada. Las anclas del awk se validan (una vez cada una) contra el
+  v1.4.3 real; si cambia el texto del base, el materializador falla.
