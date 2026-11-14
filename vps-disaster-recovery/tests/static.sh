@@ -19,6 +19,7 @@ if command -v shellcheck >/dev/null 2>&1; then
   shellcheck -S error -s bash -e SC1090,SC1091 "$ROOT/modules/ops-integrations.sh"
   shellcheck -S error -s bash -e SC1090,SC1091 "$ROOT/modules/ops-contabo-safety.sh"
   shellcheck -S error -s bash -e SC1090,SC1091 "$ROOT/modules/same-os-recovery.sh"
+  shellcheck -S error -s bash -e SC1090,SC1091 "$ROOT/modules/restic-install.sh"
 else
   echo 'shellcheck unavailable; skipping'
 fi
@@ -41,6 +42,26 @@ validate_hhmm '23:59'
 version_ge '0.19.1' '0.19.1'
 version_ge '0.20.0' '0.19.1'
 ! version_ge '0.18.9' '0.19.1'
+
+echo '== restic version resolver =='
+# Sin red: curl se sustituye por stubs. Ultima version valida -> se usa.
+curl() { printf '{"tag_name":"v0.20.5"}
+'; }
+[[ "$(RESTIC_VERSION='' resolve_restic_version)" == '0.20.5' ]]
+# GitHub caido -> fallback a la version fija del candidato.
+curl() { return 22; }
+[[ "$(RESTIC_VERSION='' resolve_restic_version 2>/dev/null)" == "$RESTIC_BOOTSTRAP_VERSION" ]]
+# Etiqueta basura o por debajo del minimo -> fallback.
+curl() { printf '{"tag_name":"latest; rm -rf /"}
+'; }
+[[ "$(RESTIC_VERSION='' resolve_restic_version 2>/dev/null)" == "$RESTIC_BOOTSTRAP_VERSION" ]]
+curl() { printf '{"tag_name":"v0.9.0"}
+'; }
+[[ "$(RESTIC_VERSION='' resolve_restic_version 2>/dev/null)" == "$RESTIC_BOOTSTRAP_VERSION" ]]
+# Version fijada por el operador.
+[[ "$(RESTIC_VERSION='v0.19.1' resolve_restic_version)" == '0.19.1' ]]
+! (RESTIC_VERSION='0.19' resolve_restic_version >/dev/null 2>&1)
+unset -f curl
 
 echo '== backup profiles =='
 apply_backup_profile economy

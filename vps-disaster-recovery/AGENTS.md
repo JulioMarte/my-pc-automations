@@ -27,3 +27,9 @@ politica del repositorio; solo anade reglas locales mas estrictas.
 - **No reintroducir el flake de pipefail**: el probe de capacidades de Restic
   debe consumir toda la salida (`grep -c ... >/dev/null`), nunca
   `restic check --help | grep -q ...`.
+- **Instalacion de Restic**: `modules/restic-install.sh` reemplaza
+  `install_official_restic`/`ensure_restic_min_version` del base. Crea `$TMP_DIR`
+  antes del `mktemp` (install corre antes de `ensure_directories`) e instala la
+  ultima version publicada de Restic, con fallback a `RESTIC_BOOTSTRAP_VERSION`
+  y verificacion SHA256SUMS. `RESTIC_VERSION=X.Y.Z` fija una version. Su blob
+  Git esta fijado en `tools/materialize-candidate.sh`.
