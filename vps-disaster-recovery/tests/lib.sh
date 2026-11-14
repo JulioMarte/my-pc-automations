@@ -6,7 +6,20 @@ MINIO_ENDPOINT=${MINIO_ENDPOINT:-http://127.0.0.1:9000}
 MINIO_USER=${MINIO_USER:-ciadmin}
 MINIO_PASSWORD=${MINIO_PASSWORD:-ci-minio-password-123456}
 TEST_BUCKET=${TEST_BUCKET:-vps-dr-ci}
-MINIO_IMAGE=${MINIO_IMAGE:-quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z}
+MINIO_RELEASE="RELEASE.2025-09-07T16-13-09Z"
+MINIO_ASSET="minio.linux-amd64.${MINIO_RELEASE}"
+MINIO_DOWNLOAD_URL="https://github.com/minio/minio/releases/download/${MINIO_RELEASE}/${MINIO_ASSET}"
+MINIO_SHA256="7c5bd8512c6e966455b1d198209358b2d191c77a83ab377c4073281065fb855f"
+MC_RELEASE="RELEASE.2025-08-13T08-35-41Z"
+MC_ASSET="mc.linux-amd64.${MC_RELEASE}"
+MC_DOWNLOAD_URL="https://github.com/minio/mc/releases/download/${MC_RELEASE}/${MC_ASSET}"
+MC_SHA256="01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891"
+MINIO_FIXTURE_DIR="/tmp/vps-dr-minio-fixture"
+MINIO_BIN="${MINIO_FIXTURE_DIR}/minio"
+MC_BIN="${MINIO_FIXTURE_DIR}/mc"
+MINIO_PID_FILE="${MINIO_FIXTURE_DIR}/minio.pid"
+MINIO_DATA_DIR="${MINIO_FIXTURE_DIR}/data"
+MINIO_LOG="${MINIO_FIXTURE_DIR}/minio.log"
 
 source_candidate_once() {
   declare -F load_config >/dev/null 2>&1 || source "$SCRIPT"
@@ -51,20 +64,75 @@ wait_container_ready() {
   return 1
 }
 
-start_minio() {
-  docker rm -f vps-dr-minio >/dev/null 2>&1 || true
-  docker pull "$MINIO_IMAGE" >/dev/null
-  docker run -d --name vps-dr-minio -p 9000:9000 \
-    --tmpfs /data:rw,nosuid,nodev,size=768m \
-    -e MINIO_ROOT_USER="$MINIO_USER" \
-    -e MINIO_ROOT_PASSWORD="$MINIO_PASSWORD" \
-    "$MINIO_IMAGE" server /data --console-address ':9001' >/dev/null
-  wait_http "$MINIO_ENDPOINT/minio/health/live"
-  docker exec vps-dr-minio sh -c \
-    "mc alias set ci 'http://127.0.0.1:9000' '$MINIO_USER' '$MINIO_PASSWORD' >/dev/null && mc mb --ignore-existing ci/$TEST_BUCKET >/dev/null"
+verify_fixture_binary() {
+  local file=$1 expected=$2
+  [[ -f "$file" ]] || return 1
+  printf '%s  %s\n' "$expected" "$file" | sha256sum -c - >/dev/null 2>&1
 }
 
-stop_minio() { docker rm -f vps-dr-minio >/dev/null 2>&1 || true; }
+download_fixture_binary() {
+  local url=$1 expected=$2 target=$3
+  if verify_fixture_binary "$target" "$expected"; then
+    return 0
+  fi
+  rm -f "$target"
+  curl -fL --retry 3 --retry-all-errors --connect-timeout 20 --max-time 180 \
+    "$url" -o "$target"
+  verify_fixture_binary "$target" "$expected" || {
+    echo "ERROR: checksum inválido para fixture $(basename "$target")" >&2
+    rm -f "$target"
+    return 1
+  }
+  chmod 0755 "$target"
+}
+
+install_minio_fixture() {
+  case "$(uname -m)" in
+    x86_64|amd64) ;;
+    *) echo "ERROR: fixture MinIO pinneado solo para amd64 en este CI" >&2; return 1 ;;
+  esac
+  install -d -m 0700 "$MINIO_FIXTURE_DIR"
+  download_fixture_binary "$MINIO_DOWNLOAD_URL" "$MINIO_SHA256" "$MINIO_BIN"
+  download_fixture_binary "$MC_DOWNLOAD_URL" "$MC_SHA256" "$MC_BIN"
+}
+
+start_minio() {
+  stop_minio
+  install_minio_fixture
+  install -d -m 0700 "$MINIO_DATA_DIR"
+
+  MINIO_ROOT_USER="$MINIO_USER" MINIO_ROOT_PASSWORD="$MINIO_PASSWORD" \
+    "$MINIO_BIN" server "$MINIO_DATA_DIR" \
+      --address 127.0.0.1:9000 --console-address 127.0.0.1:9001 \
+      >"$MINIO_LOG" 2>&1 &
+  local pid=$!
+  printf '%s\n' "$pid" > "$MINIO_PID_FILE"
+
+  if ! wait_http "$MINIO_ENDPOINT/minio/health/live"; then
+    echo 'ERROR: MinIO fixture no quedó healthy' >&2
+    tail -n 100 "$MINIO_LOG" >&2 2>/dev/null || true
+    return 1
+  fi
+  "$MC_BIN" alias set ci "$MINIO_ENDPOINT" "$MINIO_USER" "$MINIO_PASSWORD" >/dev/null
+  "$MC_BIN" mb --ignore-existing "ci/$TEST_BUCKET" >/dev/null
+}
+
+stop_minio() {
+  local pid=''
+  if [[ -r "$MINIO_PID_FILE" ]]; then
+    pid=$(cat "$MINIO_PID_FILE" 2>/dev/null || true)
+  fi
+  if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" >/dev/null 2>&1; then
+    kill "$pid" >/dev/null 2>&1 || true
+    for _ in $(seq 1 20); do
+      kill -0 "$pid" >/dev/null 2>&1 || break
+      sleep 0.25
+    done
+    kill -0 "$pid" >/dev/null 2>&1 && kill -KILL "$pid" >/dev/null 2>&1 || true
+    wait "$pid" 2>/dev/null || true
+  fi
+  rm -rf "$MINIO_FIXTURE_DIR"
+}
 
 write_failure_context() {
   local out=${1:-/tmp/vps-dr-failure-context.txt}

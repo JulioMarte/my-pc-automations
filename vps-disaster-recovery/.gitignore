@@ -1,3 +1,4 @@
 # Artefactos generados por los tests/materializador (no versionar).
 build/
 results/
+dist/
