@@ -119,6 +119,11 @@ awk -v module="$CHECKPOINT_MODULE" '
 ' "$OUT" > "$TMP_OUT"
 mv "$TMP_OUT" "$OUT"
 TMP_OUT=$(mktemp)
+# Prompts de politica Docker: los bucles leian la lista por stdin y los
+# prompts consumian esa lista en vez del teclado (tools/workload-policy-stdin.awk).
+awk -f "$ROOT/tools/workload-policy-stdin.awk" "$OUT" > "$TMP_OUT"
+mv "$TMP_OUT" "$OUT"
+TMP_OUT=$(mktemp)
 chmod 0755 "$OUT"
 
 # Release invariants for the new recovery path. Final SHA is pinned only after
@@ -137,6 +142,8 @@ grep -Fq 'releases/latest' "$OUT" || { echo 'restic latest-version resolver miss
 [[ "$(grep -c '^  install_checkpoint$' "$OUT")" == 5 ]] || { echo 'install checkpoints missing' >&2; exit 1; }
 grep -qx '  install_draft_load' "$OUT" || { echo 'install draft load missing' >&2; exit 1; }
 grep -qx '  install_draft_clear' "$OUT" || { echo 'install draft clear missing' >&2; exit 1; }
+grep -Fqx '  done 3< <(docker_db_containers)' "$OUT" || { echo 'workload policy DB loop still reads list from stdin' >&2; exit 1; }
+grep -Fqx '  done 4< <(docker volume ls -q 2>/dev/null)' "$OUT" || { echo 'workload policy volume loop still reads list from stdin' >&2; exit 1; }
 actual=$(sha256sum "$OUT" | awk '{print $1}')
 echo "v1.4.3 candidate SHA256: $actual" >&2
 printf '%s\n' "$OUT"
