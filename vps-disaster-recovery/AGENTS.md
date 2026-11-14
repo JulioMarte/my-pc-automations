@@ -39,3 +39,7 @@ politica del repositorio; solo anade reglas locales mas estrictas.
   reanudar tras una interrupcion, y muestran la contrasena Restic generada en
   una corrida cortada. Las anclas del awk se validan (una vez cada una) contra el
   v1.4.3 real; si cambia el texto del base, el materializador falla.
+- **Prompts dentro de bucles**: un `while read ...; done < <(lista)` redirige
+  tambien la stdin de los prompts del cuerpo. `tools/workload-policy-stdin.awk`
+  hace que `configure_workload_policy` lea sus listas por los fd 3 y 4. No
+  anadir prompts dentro de bucles que leen de stdin.
