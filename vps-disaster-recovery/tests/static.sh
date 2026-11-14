@@ -20,6 +20,7 @@ if command -v shellcheck >/dev/null 2>&1; then
   shellcheck -S error -s bash -e SC1090,SC1091 "$ROOT/modules/ops-contabo-safety.sh"
   shellcheck -S error -s bash -e SC1090,SC1091 "$ROOT/modules/same-os-recovery.sh"
   shellcheck -S error -s bash -e SC1090,SC1091 "$ROOT/modules/restic-install.sh"
+  shellcheck -S error -s bash -e SC1090,SC1091 "$ROOT/modules/install-checkpoint.sh"
 else
   echo 'shellcheck unavailable; skipping'
 fi
@@ -62,6 +63,11 @@ curl() { printf '{"tag_name":"v0.9.0"}
 [[ "$(RESTIC_VERSION='v0.19.1' resolve_restic_version)" == '0.19.1' ]]
 ! (RESTIC_VERSION='0.19' resolve_restic_version >/dev/null 2>&1)
 unset -f curl
+
+echo '== install draft (resume) =='
+declare -F install_checkpoint install_draft_load install_draft_clear install_restic_password_to_show >/dev/null
+[[ "$(install_restic_password_to_show 'recien-generada')" == 'recien-generada' ]]
+[[ -z "$(RESTIC_PASSWORD_UNSHOWN=false install_restic_password_to_show '')" ]]
 
 echo '== backup profiles =='
 apply_backup_profile economy

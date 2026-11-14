@@ -7,6 +7,8 @@ EXPECTED_SAME_OS_MODULE_GIT_BLOB=d6c42366d3b9ca22de7e981e8394eb880e37835d
 MODULE="$ROOT/modules/same-os-recovery.sh"
 RESTIC_MODULE="$ROOT/modules/restic-install.sh"
 EXPECTED_RESTIC_MODULE_GIT_BLOB=763d181f9c6e26023e805a1374a1ac3e4f69431d
+CHECKPOINT_MODULE="$ROOT/modules/install-checkpoint.sh"
+EXPECTED_CHECKPOINT_MODULE_GIT_BLOB=0dec1eef272b32d465ac4abe1ddf9f153631772e
 TMP_OUT=$(mktemp)
 trap 'rm -f "$TMP_OUT"' EXIT
 
@@ -96,6 +98,27 @@ awk -v module="$RESTIC_MODULE" '
 ' "$OUT" > "$TMP_OUT"
 mv "$TMP_OUT" "$OUT"
 TMP_OUT=$(mktemp)
+# Overlay de borrador del instalador (modules/install-checkpoint.sh): guarda
+# las respuestas por secciones para reanudar tras una interrupcion y muestra la
+# contrasena Restic generada aunque la corrida anterior se cortara.
+[[ -r "$CHECKPOINT_MODULE" ]] || { echo 'install checkpoint module missing' >&2; exit 1; }
+[[ "$(git -C "$ROOT" hash-object "$CHECKPOINT_MODULE")" == "$EXPECTED_CHECKPOINT_MODULE_GIT_BLOB" ]] || { echo 'install checkpoint module blob mismatch' >&2; exit 1; }
+bash -n "$CHECKPOINT_MODULE"
+awk -f "$ROOT/tools/install-checkpoint.awk" "$OUT" > "$TMP_OUT"
+mv "$TMP_OUT" "$OUT"
+TMP_OUT=$(mktemp)
+awk -v module="$CHECKPOINT_MODULE" '
+  /^show_help\(\) \{/ && !inserted {
+    while ((getline line < module) > 0) print line
+    close(module)
+    print ""
+    inserted=1
+  }
+  { print }
+  END { if (!inserted) exit 56 }
+' "$OUT" > "$TMP_OUT"
+mv "$TMP_OUT" "$OUT"
+TMP_OUT=$(mktemp)
 chmod 0755 "$OUT"
 
 # Release invariants for the new recovery path. Final SHA is pinned only after
@@ -111,6 +134,9 @@ grep -Fq 'install -d -m 0700 -o root -g root "$TMP_DIR"' "$OUT" || { echo 'resti
 grep -Fq 'releases/latest' "$OUT" || { echo 'restic latest-version resolver missing' >&2; exit 1; }
 [[ "$(grep -c '^install_official_restic() {' "$OUT")" == 1 ]] || { echo 'install_official_restic defined more than once' >&2; exit 1; }
 [[ "$(grep -c '^ensure_restic_min_version() {' "$OUT")" == 1 ]] || { echo 'ensure_restic_min_version defined more than once' >&2; exit 1; }
+[[ "$(grep -c '^  install_checkpoint$' "$OUT")" == 5 ]] || { echo 'install checkpoints missing' >&2; exit 1; }
+grep -qx '  install_draft_load' "$OUT" || { echo 'install draft load missing' >&2; exit 1; }
+grep -qx '  install_draft_clear' "$OUT" || { echo 'install draft clear missing' >&2; exit 1; }
 actual=$(sha256sum "$OUT" | awk '{print $1}')
 echo "v1.4.3 candidate SHA256: $actual" >&2
 printf '%s\n' "$OUT"
