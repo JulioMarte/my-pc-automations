@@ -22,6 +22,7 @@ if command -v shellcheck >/dev/null 2>&1; then
   shellcheck -S error -s bash -e SC1090,SC1091 "$ROOT/modules/same-os-recovery.sh"
   shellcheck -S error -s bash -e SC1090,SC1091 "$ROOT/modules/restic-install.sh"
   shellcheck -S error -s bash -e SC1090,SC1091 "$ROOT/modules/install-checkpoint.sh"
+  shellcheck -S error -s bash -e SC1090,SC1091 "$ROOT/modules/auto-install.sh"
 else
   echo 'shellcheck unavailable; skipping'
 fi
@@ -69,6 +70,37 @@ echo '== install draft (resume) =='
 declare -F install_checkpoint install_draft_load install_draft_clear install_restic_password_to_show >/dev/null
 [[ "$(install_restic_password_to_show 'recien-generada')" == 'recien-generada' ]]
 [[ -z "$(RESTIC_PASSWORD_UNSHOWN=false install_restic_password_to_show '')" ]]
+
+echo '== auto install =='
+install_parse_flags --auto --endpoint https://acct.r2.cloudflarestorage.com --bucket b1 --region auto
+[[ "$VPS_BACKUP_AUTO" == true && "$AUTO_FLAG_BUCKET" == b1 ]]
+! install_parse_flags --bogus 2>/dev/null
+! install_parse_flags --provider gcs 2>/dev/null
+STORAGE_PROVIDER=backblaze; install_apply_flags
+[[ "$STORAGE_PROVIDER" == s3 && "$S3_ENDPOINT" == https://acct.r2.cloudflarestorage.com && "$S3_REGION" == auto ]]
+[[ "$(prompt_default 'Modo' '1' 2>/dev/null)" == 1 ]]
+! (prompt_default 'Endpoint' '' >/dev/null 2>&1)
+confirm 'x' yes 2>/dev/null
+! confirm 'x' no 2>/dev/null
+[[ -z "$(prompt_secret 'Contraseña de cifrado Restic (Enter = generar una fuerte)' 2>/dev/null </dev/null)" ]]
+! (prompt_secret 'S3 Access Key ID / B2 Application Key ID' >/dev/null 2>&1 </dev/null)
+[[ "$(auto_sql_db_default 2)" == 1 && "$(auto_nonsql_db_default mongo 2>/dev/null)" == 2 ]]
+VPS_BACKUP_AUTO=false
+[[ "$(auto_sql_db_default 2)" == 2 && "$(auto_nonsql_db_default mongo)" == 1 ]]
+# Token de Coolify: se extrae del ruido de tinker; sin linea TOKEN= falla.
+docker() {
+  case "$1" in
+    inspect) return 0 ;;
+    exec) case "$*" in
+            *API_ENABLED*) printf 'API_ENABLED=1\n' ;;
+            *createToken*) printf 'PHP Warning: algo\nTOKEN=7|AbC123xyz_-9\n' ;;
+          esac ;;
+  esac
+}
+[[ "$(coolify_provision_api_token 2>/dev/null)" == '7|AbC123xyz_-9' ]]
+docker() { case "$1" in inspect) return 0 ;; exec) case "$*" in *API_ENABLED*) printf 'API_ENABLED=1\n' ;; *) printf 'TOKEN_ERR=no-root-user\n' ;; esac ;; esac; }
+! (coolify_provision_api_token >/dev/null 2>&1)
+unset -f docker
 
 echo '== backup profiles =='
 apply_backup_profile economy

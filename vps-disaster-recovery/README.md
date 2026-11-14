@@ -29,7 +29,26 @@ This keeps the exact tested candidate reproducible and auditable.
 
 Pinned v1.4.3 SHA-256:
 
-`bd6a72e968b63d5194ba56bfdb18a2dcd5cc984cdd053641a69b27201251d98f`
+`4d783ea442db8dcb426d0c28ff0b3b73fa19485010b069e590462e0e05c93dfb`
+
+## Instalacion automatica
+
+`install --auto` responde cada pregunta con la opcion recomendada (se muestra como
+`[AUTO] pregunta -> respuesta`) y crea el token de API de Coolify por si mismo:
+
+```bash
+sudo ./vps-backup-v1.4.3.sh install --auto   --endpoint https://<ACCOUNT_ID>.r2.cloudflarestorage.com --bucket vps-backups --region auto
+```
+
+- Solo pide por teclado las claves S3 si no estan ya guardadas (config previa o
+  borrador de una instalacion interrumpida). Las claves nunca van como opcion.
+- DB Docker postgres/mysql/mariadb -> `builtin`; otros motores (mongo...) -> `ignore`
+  con aviso; volumenes -> `restic-live`; perfil `balanced`; modulo Coolify DR activo.
+- Token Coolify: `vps-backup-dr` del usuario root, equipo raiz, permisos
+  read/write/deploy, creado con `User::createToken` via `artisan tinker`. Reinstalar
+  revoca el anterior con ese nombre y crea uno nuevo. En modo interactivo, Enter en
+  la pregunta del token hace lo mismo.
+- Si se interrumpe, relanzar reutiliza lo ya contestado.
 
 ## Local commands
 

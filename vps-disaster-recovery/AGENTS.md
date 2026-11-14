@@ -43,3 +43,7 @@ politica del repositorio; solo anade reglas locales mas estrictas.
   tambien la stdin de los prompts del cuerpo. `tools/workload-policy-stdin.awk`
   hace que `configure_workload_policy` lea sus listas por los fd 3 y 4. No
   anadir prompts dentro de bucles que leen de stdin.
+- **Instalacion automatica**: `modules/auto-install.sh` + `tools/auto-install.awk`
+  anaden `install --auto` (defaults recomendados, builtin para DB SQL, ignore con
+  aviso para motores sin dump) y crean el token de Coolify con `artisan tinker`.
+  Las claves S3 nunca se aceptan como opcion de linea de comandos.

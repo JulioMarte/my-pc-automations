@@ -8,6 +8,8 @@ MODULE="$ROOT/modules/same-os-recovery.sh"
 RESTIC_MODULE="$ROOT/modules/restic-install.sh"
 EXPECTED_RESTIC_MODULE_GIT_BLOB=763d181f9c6e26023e805a1374a1ac3e4f69431d
 CHECKPOINT_MODULE="$ROOT/modules/install-checkpoint.sh"
+AUTO_MODULE="$ROOT/modules/auto-install.sh"
+EXPECTED_AUTO_MODULE_GIT_BLOB=edc1dd2552e0a0cd0f0b01bf1b64efcdf7c4b7c5
 EXPECTED_CHECKPOINT_MODULE_GIT_BLOB=0dec1eef272b32d465ac4abe1ddf9f153631772e
 TMP_OUT=$(mktemp)
 trap 'rm -f "$TMP_OUT"' EXIT
@@ -124,6 +126,26 @@ TMP_OUT=$(mktemp)
 awk -f "$ROOT/tools/workload-policy-stdin.awk" "$OUT" > "$TMP_OUT"
 mv "$TMP_OUT" "$OUT"
 TMP_OUT=$(mktemp)
+# Instalacion automatica y token de Coolify automatico (modules/auto-install.sh).
+# Debe ir despues del overlay del borrador: engancha la linea install_draft_load.
+[[ -r "$AUTO_MODULE" ]] || { echo 'auto install module missing' >&2; exit 1; }
+[[ "$(git -C "$ROOT" hash-object "$AUTO_MODULE")" == "$EXPECTED_AUTO_MODULE_GIT_BLOB" ]] || { echo 'auto install module blob mismatch' >&2; exit 1; }
+bash -n "$AUTO_MODULE"
+awk -f "$ROOT/tools/auto-install.awk" "$OUT" > "$TMP_OUT"
+mv "$TMP_OUT" "$OUT"
+TMP_OUT=$(mktemp)
+awk -v module="$AUTO_MODULE" '
+  /^show_help\(\) \{/ && !inserted {
+    while ((getline line < module) > 0) print line
+    close(module)
+    print ""
+    inserted=1
+  }
+  { print }
+  END { if (!inserted) exit 59 }
+' "$OUT" > "$TMP_OUT"
+mv "$TMP_OUT" "$OUT"
+TMP_OUT=$(mktemp)
 chmod 0755 "$OUT"
 
 # Release invariants for the new recovery path. Final SHA is pinned only after
@@ -144,6 +166,8 @@ grep -qx '  install_draft_load' "$OUT" || { echo 'install draft load missing' >&
 grep -qx '  install_draft_clear' "$OUT" || { echo 'install draft clear missing' >&2; exit 1; }
 grep -Fqx '  done 3< <(docker_db_containers)' "$OUT" || { echo 'workload policy DB loop still reads list from stdin' >&2; exit 1; }
 grep -Fqx '  done 4< <(docker volume ls -q 2>/dev/null)' "$OUT" || { echo 'workload policy volume loop still reads list from stdin' >&2; exit 1; }
+grep -Fq 'install_parse_flags "$@" || exit 2; cmd_install' "$OUT" || { echo 'install flags hook missing' >&2; exit 1; }
+grep -Fq 'coolify_provision_api_token || true' "$OUT" || { echo 'coolify token auto-provision hook missing' >&2; exit 1; }
 actual=$(sha256sum "$OUT" | awk '{print $1}')
 echo "v1.4.3 candidate SHA256: $actual" >&2
 printf '%s\n' "$OUT"
