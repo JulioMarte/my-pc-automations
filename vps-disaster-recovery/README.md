@@ -29,7 +29,7 @@ This keeps the exact tested candidate reproducible and auditable.
 
 Pinned v1.4.3 SHA-256:
 
-`4d783ea442db8dcb426d0c28ff0b3b73fa19485010b069e590462e0e05c93dfb`
+`7f11f3161b4a91edd894cb591f53db77a235316e83a1ec5ecc0d5f29aa569e86`
 
 ## Instalacion automatica
 
@@ -49,6 +49,22 @@ sudo ./vps-backup-v1.4.3.sh install --auto   --endpoint https://<ACCOUNT_ID>.r2.
   revoca el anterior con ese nombre y crea uno nuevo. En modo interactivo, Enter en
   la pregunta del token hace lo mismo.
 - Si se interrumpe, relanzar reutiliza lo ya contestado.
+- Repositorio: si la ruta del bucket esta vacia, se inicializa (en auto y por defecto
+  en interactivo). Si ya hay un repositorio y la contrasena local no lo abre, nunca se
+  inicializa. Credenciales rechazadas, bucket inexistente o red se reportan con la
+  causa y el error real de Restic.
+
+## Log y trazas de instalacion
+
+`install` y `reconfigure` guardan toda la salida (sin colores) en
+`/var/log/vps-backup/install-<UTC>-<pid>.log` (0600, root); `install-last.log` apunta a la
+ultima. Un fallo imprime lineas `[TRACE]` con el codigo de salida, el comando y la pila
+de funciones con numero de linea. La contrasena Restic generada se muestra solo en la
+terminal, no en el log. Para reportar un fallo:
+
+```bash
+sudo cat /var/log/vps-backup/install-last.log
+```
 
 ## Local commands
 

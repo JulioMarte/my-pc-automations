@@ -11,6 +11,8 @@ CHECKPOINT_MODULE="$ROOT/modules/install-checkpoint.sh"
 AUTO_MODULE="$ROOT/modules/auto-install.sh"
 EXPECTED_AUTO_MODULE_GIT_BLOB=edc1dd2552e0a0cd0f0b01bf1b64efcdf7c4b7c5
 EXPECTED_CHECKPOINT_MODULE_GIT_BLOB=0dec1eef272b32d465ac4abe1ddf9f153631772e
+DIAG_MODULE="$ROOT/modules/install-diagnostics.sh"
+EXPECTED_DIAG_MODULE_GIT_BLOB=f994f4d3e56740c8708ef80d759c5434d415614d
 TMP_OUT=$(mktemp)
 trap 'rm -f "$TMP_OUT"' EXIT
 
@@ -146,6 +148,26 @@ awk -v module="$AUTO_MODULE" '
 ' "$OUT" > "$TMP_OUT"
 mv "$TMP_OUT" "$OUT"
 TMP_OUT=$(mktemp)
+# Log de instalacion, trazas de fallo y diagnostico del repositorio
+# (modules/install-diagnostics.sh). Va despues de auto-install: reescribe su linea de main.
+[[ -r "$DIAG_MODULE" ]] || { echo 'install diagnostics module missing' >&2; exit 1; }
+[[ "$(git -C "$ROOT" hash-object "$DIAG_MODULE")" == "$EXPECTED_DIAG_MODULE_GIT_BLOB" ]] || { echo 'install diagnostics module blob mismatch' >&2; exit 1; }
+bash -n "$DIAG_MODULE"
+awk -f "$ROOT/tools/install-diagnostics.awk" "$OUT" > "$TMP_OUT"
+mv "$TMP_OUT" "$OUT"
+TMP_OUT=$(mktemp)
+awk -v module="$DIAG_MODULE" '
+  /^show_help\(\) \{/ && !inserted {
+    while ((getline line < module) > 0) print line
+    close(module)
+    print ""
+    inserted=1
+  }
+  { print }
+  END { if (!inserted) exit 61 }
+' "$OUT" > "$TMP_OUT"
+mv "$TMP_OUT" "$OUT"
+TMP_OUT=$(mktemp)
 chmod 0755 "$OUT"
 
 # Release invariants for the new recovery path. Final SHA is pinned only after
@@ -166,8 +188,11 @@ grep -qx '  install_draft_load' "$OUT" || { echo 'install draft load missing' >&
 grep -qx '  install_draft_clear' "$OUT" || { echo 'install draft clear missing' >&2; exit 1; }
 grep -Fqx '  done 3< <(docker_db_containers)' "$OUT" || { echo 'workload policy DB loop still reads list from stdin' >&2; exit 1; }
 grep -Fqx '  done 4< <(docker volume ls -q 2>/dev/null)' "$OUT" || { echo 'workload policy volume loop still reads list from stdin' >&2; exit 1; }
-grep -Fq 'install_parse_flags "$@" || exit 2; cmd_install' "$OUT" || { echo 'install flags hook missing' >&2; exit 1; }
+grep -Fq 'install_parse_flags "$@" || exit 2; install_trace_begin' "$OUT" || { echo 'install flags hook missing' >&2; exit 1; }
 grep -Fq 'coolify_provision_api_token || true' "$OUT" || { echo 'coolify token auto-provision hook missing' >&2; exit 1; }
+[[ "$(grep -c '^initialize_repository_interactive() {' "$OUT")" == 1 ]] || { echo 'initialize_repository_interactive defined more than once' >&2; exit 1; }
+grep -Fq 'install_trace_begin install "$@"; cmd_install; install_trace_end' "$OUT" || { echo 'install trace hook missing' >&2; exit 1; }
+grep -Fq '"$restic_password" "$C_RESET" >&"$INSTALL_TTY_FD"' "$OUT" || { echo 'restic password may leak into install log' >&2; exit 1; }
 actual=$(sha256sum "$OUT" | awk '{print $1}')
 echo "v1.4.3 candidate SHA256: $actual" >&2
 printf '%s\n' "$OUT"
