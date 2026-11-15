@@ -23,6 +23,7 @@ if command -v shellcheck >/dev/null 2>&1; then
   shellcheck -S error -s bash -e SC1090,SC1091 "$ROOT/modules/restic-install.sh"
   shellcheck -S error -s bash -e SC1090,SC1091 "$ROOT/modules/install-checkpoint.sh"
   shellcheck -S error -s bash -e SC1090,SC1091 "$ROOT/modules/auto-install.sh"
+  shellcheck -S error -s bash -e SC1090,SC1091 "$ROOT/modules/install-diagnostics.sh"
 else
   echo 'shellcheck unavailable; skipping'
 fi
@@ -101,6 +102,33 @@ docker() {
 docker() { case "$1" in inspect) return 0 ;; exec) case "$*" in *API_ENABLED*) printf 'API_ENABLED=1\n' ;; *) printf 'TOKEN_ERR=no-root-user\n' ;; esac ;; esac; }
 ! (coolify_provision_api_token >/dev/null 2>&1)
 unset -f docker
+
+echo '== repo diagnostics =='
+[[ "$(repo_probe_classify 0 '')" == ok ]]
+[[ "$(repo_probe_classify 10 'Fatal: repository does not exist: unable to open config file: Stat: The specified key does not exist.')" == missing ]]
+[[ "$(repo_probe_classify 12 'Fatal: wrong password or no key found')" == wrong-password ]]
+[[ "$(repo_probe_classify 1 'Fatal: wrong password or no key found')" == wrong-password ]]
+[[ "$(repo_probe_classify 1 'Stat: Access Denied. (AccessDenied)')" == auth ]]
+[[ "$(repo_probe_classify 1 'The request signature we calculated does not match (SignatureDoesNotMatch)')" == auth ]]
+[[ "$(repo_probe_classify 10 'The specified bucket does not exist (NoSuchBucket)')" == no-bucket ]]
+[[ "$(repo_probe_classify 1 'dial tcp: lookup x.example: no such host')" == network ]]
+[[ "$(repo_probe_classify 1 'algo raro')" == unknown ]]
+# Auto: ruta vacia -> init; contrasena erronea -> nunca init.
+load_config() { :; }
+run_logged() { "$@"; }
+log_line() { :; }
+VPS_BACKUP_AUTO=true
+restic_cmd() { case "$1" in cat) echo 'Fatal: repository does not exist' >&2; return 10 ;; init) echo INIT_CALLED; return 0 ;; check) return 0 ;; esac; }
+initialize_repository_interactive 2>/dev/null | grep -q INIT_CALLED
+restic_cmd() { case "$1" in cat) echo 'Fatal: wrong password or no key found' >&2; return 12 ;; init) echo INIT_CALLED; return 0 ;; esac; }
+out=$( (initialize_repository_interactive) 2>/dev/null || true)
+! grep -q INIT_CALLED <<<"$out"
+! (initialize_repository_interactive >/dev/null 2>&1)
+restic_cmd() { case "$1" in cat) echo 'algo raro' >&2; return 1 ;; init) echo INIT_CALLED; return 0 ;; esac; }
+out=$( (initialize_repository_interactive) 2>/dev/null || true)
+! grep -q INIT_CALLED <<<"$out"
+VPS_BACKUP_AUTO=false
+unset -f load_config run_logged log_line restic_cmd
 
 echo '== backup profiles =='
 apply_backup_profile economy

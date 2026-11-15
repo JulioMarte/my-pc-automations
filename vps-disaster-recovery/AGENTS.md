@@ -47,3 +47,10 @@ politica del repositorio; solo anade reglas locales mas estrictas.
   anaden `install --auto` (defaults recomendados, builtin para DB SQL, ignore con
   aviso para motores sin dump) y crean el token de Coolify con `artisan tinker`.
   Las claves S3 nunca se aceptan como opcion de linea de comandos.
+- **Diagnostico e instalacion trazable**: `modules/install-diagnostics.sh` +
+  `tools/install-diagnostics.awk` reemplazan `initialize_repository_interactive`
+  (clasifica el fallo de `restic cat config` por codigo de salida y texto; nunca
+  inicializa ante contrasena erronea o error desconocido en auto) y registran
+  `install`/`reconfigure` en `/var/log/vps-backup/install-*.log` con trazas
+  `[TRACE]`. Nada secreto debe imprimirse por stdout/stderr durante install: lo
+  que deba verlo solo el operador va a `>&"$INSTALL_TTY_FD"`.
