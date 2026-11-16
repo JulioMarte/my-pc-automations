@@ -1,0 +1,24 @@
+# Dependencias y artefactos (se regeneran dentro de la imagen).
+node_modules
+dist
+
+# Control de versiones y CI.
+.git
+.github
+
+# Secretos y datos locales: NUNCA dentro de la imagen.
+.env
+.env.*
+exits.json
+stats.jsonl
+
+# Logs locales.
+logs
+*.log
+
+# Tests y documentacion.
+test
+*.md
+
+# Politica de Tailscale (se aplica fuera del contenedor).
+tailscale

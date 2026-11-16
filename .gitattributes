@@ -1,2 +1,4 @@
 # Los scripts de shell DEBEN usar LF (un shebang con CRLF rompe en Linux).
 *.sh text eol=lf
+# Los programas awk que inyecta el materializador tambien van en LF.
+*.awk text eol=lf
