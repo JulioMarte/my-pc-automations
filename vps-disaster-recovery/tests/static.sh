@@ -24,6 +24,7 @@ if command -v shellcheck >/dev/null 2>&1; then
   shellcheck -S error -s bash -e SC1090,SC1091 "$ROOT/modules/install-checkpoint.sh"
   shellcheck -S error -s bash -e SC1090,SC1091 "$ROOT/modules/auto-install.sh"
   shellcheck -S error -s bash -e SC1090,SC1091 "$ROOT/modules/install-diagnostics.sh"
+  shellcheck -S error -s bash -e SC1090,SC1091 "$ROOT/modules/bind-coverage.sh"
 else
   echo 'shellcheck unavailable; skipping'
 fi
@@ -129,6 +130,25 @@ out=$( (initialize_repository_interactive) 2>/dev/null || true)
 ! grep -q INIT_CALLED <<<"$out"
 VPS_BACKUP_AUTO=false
 unset -f load_config run_logged log_line restic_cmd
+
+echo '== docker bind coverage (runtime) =='
+bt=$(mktemp -d); python3 -c "import socket,sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])" "$bt/d.sock" 2>/dev/null || true
+if [[ -S "$bt/d.sock" ]]; then docker_bind_is_runtime "$bt/d.sock"; fi
+docker_bind_is_runtime /dev/null
+docker_bind_is_runtime /run
+! docker_bind_is_runtime /etc
+! docker_bind_is_runtime "$bt"
+# Solo el socket queda fuera; un bind de datos sin cubrir sigue fallando.
+detect_docker() { return 0; }
+docker_bind_mount_paths() { printf '%s
+' /dev/null "$bt"; }
+path_is_covered_by_backup_sources() { return 1; }
+! validate_docker_bind_coverage 2>/dev/null
+docker_bind_mount_paths() { printf '%s
+' /dev/null /run; }
+validate_docker_bind_coverage
+unset -f detect_docker docker_bind_mount_paths path_is_covered_by_backup_sources
+rm -rf "$bt"
 
 echo '== backup profiles =='
 apply_backup_profile economy
