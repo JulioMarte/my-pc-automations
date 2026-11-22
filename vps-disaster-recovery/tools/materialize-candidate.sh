@@ -12,6 +12,8 @@ AUTO_MODULE="$ROOT/modules/auto-install.sh"
 EXPECTED_AUTO_MODULE_GIT_BLOB=edc1dd2552e0a0cd0f0b01bf1b64efcdf7c4b7c5
 EXPECTED_CHECKPOINT_MODULE_GIT_BLOB=0dec1eef272b32d465ac4abe1ddf9f153631772e
 DIAG_MODULE="$ROOT/modules/install-diagnostics.sh"
+BIND_MODULE="$ROOT/modules/bind-coverage.sh"
+EXPECTED_BIND_MODULE_GIT_BLOB=cac621dcaf1025e8871bc39700f0f81b97c1b443
 EXPECTED_DIAG_MODULE_GIT_BLOB=f994f4d3e56740c8708ef80d759c5434d415614d
 TMP_OUT=$(mktemp)
 trap 'rm -f "$TMP_OUT"' EXIT
@@ -168,6 +170,32 @@ awk -v module="$DIAG_MODULE" '
 ' "$OUT" > "$TMP_OUT"
 mv "$TMP_OUT" "$OUT"
 TMP_OUT=$(mktemp)
+# Cobertura de bind mounts (modules/bind-coverage.sh): sockets, dispositivos y
+# rutas de runtime (/run, /var/run, ...) no cuentan como bind mount sin cubrir.
+[[ -r "$BIND_MODULE" ]] || { echo 'bind coverage module missing' >&2; exit 1; }
+[[ "$(git -C "$ROOT" hash-object "$BIND_MODULE")" == "$EXPECTED_BIND_MODULE_GIT_BLOB" ]] || { echo 'bind coverage module blob mismatch' >&2; exit 1; }
+bash -n "$BIND_MODULE"
+awk '
+  $0 == "validate_docker_bind_coverage() {" { inside=1 }
+  { print }
+  inside && $0 == "    [[ -n \"$p\" && -e \"$p\" ]] || continue" { print "    docker_bind_is_runtime \"$p\" && continue"; hooked++ }
+  inside && $0 == "}" { inside=0 }
+  END { if (hooked != 1) exit 62 }
+' "$OUT" > "$TMP_OUT"
+mv "$TMP_OUT" "$OUT"
+TMP_OUT=$(mktemp)
+awk -v module="$BIND_MODULE" '
+  /^show_help\(\) \{/ && !inserted {
+    while ((getline line < module) > 0) print line
+    close(module)
+    print ""
+    inserted=1
+  }
+  { print }
+  END { if (!inserted) exit 63 }
+' "$OUT" > "$TMP_OUT"
+mv "$TMP_OUT" "$OUT"
+TMP_OUT=$(mktemp)
 chmod 0755 "$OUT"
 
 # Release invariants for the new recovery path. Final SHA is pinned only after
@@ -192,6 +220,7 @@ grep -Fq 'install_parse_flags "$@" || exit 2; install_trace_begin' "$OUT" || { e
 grep -Fq 'coolify_provision_api_token || true' "$OUT" || { echo 'coolify token auto-provision hook missing' >&2; exit 1; }
 [[ "$(grep -c '^initialize_repository_interactive() {' "$OUT")" == 1 ]] || { echo 'initialize_repository_interactive defined more than once' >&2; exit 1; }
 grep -Fq 'install_trace_begin install "$@"; cmd_install; install_trace_end' "$OUT" || { echo 'install trace hook missing' >&2; exit 1; }
+grep -Fqx '    docker_bind_is_runtime "$p" && continue' "$OUT" || { echo 'bind coverage runtime skip missing' >&2; exit 1; }
 grep -Fq '"$restic_password" "$C_RESET" >&"$INSTALL_TTY_FD"' "$OUT" || { echo 'restic password may leak into install log' >&2; exit 1; }
 actual=$(sha256sum "$OUT" | awk '{print $1}')
 echo "v1.4.3 candidate SHA256: $actual" >&2
