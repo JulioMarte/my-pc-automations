@@ -54,3 +54,7 @@ politica del repositorio; solo anade reglas locales mas estrictas.
   `install`/`reconfigure` en `/var/log/vps-backup/install-*.log` con trazas
   `[TRACE]`. Nada secreto debe imprimirse por stdout/stderr durante install: lo
   que deba verlo solo el operador va a `>&"$INSTALL_TTY_FD"`.
+- **Cobertura de bind mounts**: `modules/bind-coverage.sh` hace que
+  `validate_docker_bind_coverage` ignore sockets, dispositivos y rutas de runtime
+  (`/run`, `/var/run`, `/proc`, `/sys`, `/dev`); p. ej. `/var/run/docker.sock` de
+  coolify-proxy bloqueaba doctor y cada backup. El resto sigue fail-closed.
