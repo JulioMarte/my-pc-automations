@@ -309,6 +309,59 @@ grep -Fq "C ($C): exited:unhealthy" "$vr/err"
 ! grep -Fq "B ($B)" "$vr/err"
 unset -f docker coolify_wait_deployments_idle coolify_cli
 rm -rf "$vr"
+# Rutas del host montadas por Coolify: se restauran desde el snapshot de sistema las
+# que Coolify no regenera; volumenes Docker, /dev y el plano de control se excluyen,
+# el contenedor que usa la ruta se para durante la copia y el directorio vacio que
+# Docker crea en un bind de fichero se sustituye por el fichero.
+bs=$(mktemp -d -p /var/tmp); H="$bs/host"
+mkdir -p "$H/vw" "$H/key.pem" "$H/old"; echo nuevo > "$H/vw/rsa_key.pem"
+_coolify_db_psql() {
+  cat >/dev/null
+  printf '%s\n' "$H/vw/" "$H/key.pem" "$H/missing" /dev/urandom /var/lib/docker/volumes/x/_data \
+    /data/coolify/proxy relativo "$H/vw" /data/../etc
+}
+[[ "$(coolify_bind_sources)" == "$H/key.pem"$'\n'"$H/missing"$'\n'"$H/vw" ]]
+restic_cmd() {
+  local t="" prev="" a
+  for a in "$@"; do [[ "$prev" == --target ]] && t="$a"; prev="$a"; done
+  printf '%s ' "$@" > "$bs/restic.args"
+  mkdir -p "$t$H/vw"; echo datos > "$t$H/vw/db.sqlite3"; echo clave > "$t$H/key.pem"
+}
+docker() {
+  case "$1" in
+    ps) printf 'c1\n' ;;
+    inspect) if [[ "$3" == *State.Running* ]]; then printf 'true\n'; else printf '/vaultwarden|%s\n' "$H/vw"; fi ;;
+    stop|start) printf '%s %s\n' "$1" "$2" >> "$bs/docker.log" ;;
+  esac
+  return 0
+}
+rsync() {
+  local src="${*: -2:1}" dst="${*: -1}"
+  printf 'rsync %s\n' "$dst" >> "$bs/docker.log"
+  if [[ "$src" == */ ]]; then
+    [[ " $(printf '%s ' "$@")" == *" --delete "* ]] && find "$dst" -mindepth 1 -delete
+    cp -a "$src." "$dst"
+  else
+    cp -a "$src" "$dst"
+  fi
+}
+MODULE_COOLIFY=true BACKUP_ID=vmi1 coolify_restore_bind_sources snap1 "$bs/dr" >/dev/null 2>"$bs/err"
+grep -Fq "restore snap1 --host vmi1 --tag system --target $bs/dr/binds" "$bs/restic.args"
+grep -Fq -- "--include $H/vw" "$bs/restic.args"
+[[ "$(cat "$H/vw/db.sqlite3")" == datos && ! -e "$H/vw/rsa_key.pem" ]]
+[[ -f "$H/key.pem" && "$(cat "$H/key.pem")" == clave ]]
+[[ "$(cat "$bs/docker.log")" == "rsync $H/key.pem"$'\n'"stop vaultwarden"$'\n'"rsync $H/vw/"$'\n'"start vaultwarden" ]]
+grep -Fq "$H/missing no está en el snapshot" "$bs/err"
+# Un directorio con contenido en la ruta de un fichero no se sustituye: falla.
+rm -f "$H/key.pem"; mkdir -p "$H/key.pem"; echo x > "$H/key.pem/otro"; : > "$bs/docker.log"
+! MODULE_COOLIFY=true BACKUP_ID=vmi1 coolify_restore_bind_sources snap1 "$bs/dr" >/dev/null 2>&1
+[[ -f "$H/key.pem/otro" ]]
+# Sin MODULE_COOLIFY no hace nada.
+rm -f "$bs/restic.args"
+MODULE_COOLIFY=false coolify_restore_bind_sources snap1 "$bs/dr"
+[[ ! -e "$bs/restic.args" ]]
+unset -f _coolify_db_psql restic_cmd docker rsync
+rm -rf "$bs"
 
 echo '== backup profiles =='
 apply_backup_profile economy
