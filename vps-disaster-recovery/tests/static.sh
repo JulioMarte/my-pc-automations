@@ -25,6 +25,7 @@ if command -v shellcheck >/dev/null 2>&1; then
   shellcheck -S error -s bash -e SC1090,SC1091 "$ROOT/modules/auto-install.sh"
   shellcheck -S error -s bash -e SC1090,SC1091 "$ROOT/modules/install-diagnostics.sh"
   shellcheck -S error -s bash -e SC1090,SC1091 "$ROOT/modules/bind-coverage.sh"
+  shellcheck -S error -s bash -e SC1090,SC1091 "$ROOT/modules/coolify-dr-retarget.sh"
 else
   echo 'shellcheck unavailable; skipping'
 fi
@@ -149,6 +150,57 @@ docker_bind_mount_paths() { printf '%s
 validate_docker_bind_coverage
 unset -f detect_docker docker_bind_mount_paths path_is_covered_by_backup_sources
 rm -rf "$bt"
+
+echo '== coolify dr retarget =='
+rt=$(mktemp -d)
+printf '100.112.184.84\t2222\n' > "$rt/server"
+docker() {
+  local sql="" a prev="" vip="" vport=""
+  for a in "$@"; do
+    [[ "$prev" == -c ]] && sql="$a"
+    [[ "$prev" == -v && "$a" == ip=* ]] && vip="${a#ip=}"
+    [[ "$prev" == -v && "$a" == port=* ]] && vport="${a#port=}"
+    prev="$a"
+  done
+  [[ -n "$sql" ]] || sql=$(cat)
+  printf '%s\n' "$sql" >> "$rt/sql.log"
+  case "$sql" in
+    'SELECT ip, port FROM servers WHERE id = 0') cat "$rt/server" ;;
+    UPDATE\ servers*) printf '%s\t%s\n' "$vip" "$vport" > "$rt/server" ;;
+    SELECT\ table_name*) printf '%s\n' applications standalone_postgresqls ;;
+  esac
+  return 0
+}
+sshd() { printf 'port 2222\n'; }
+tailscale() { printf '100.112.250.64\n'; }
+ip() { printf '2: eth0    inet 144.126.139.118/20 brd x\n3: tailscale0    inet 100.112.250.64/32 scope global\n'; }
+# Original en Tailscale -> IP de Tailscale de este host y estados reseteados.
+coolify_retarget_localhost_server 2>/dev/null
+[[ "$(cat "$rt/server")" == $'100.112.250.64\t2222' ]]
+grep -Fq "UPDATE \"applications\" SET status = 'exited'" "$rt/sql.log"
+grep -Fq "UPDATE \"standalone_postgresqls\" SET status = 'exited'" "$rt/sql.log"
+# Una IP forzada que no es de este host no se aplica.
+printf '100.112.184.84\t2222\n' > "$rt/server"; : > "$rt/sql.log"
+! VPS_BACKUP_DR_COOLIFY_LOCALHOST_IP=100.112.184.84 coolify_retarget_localhost_server 2>/dev/null
+! grep -q '^UPDATE' "$rt/sql.log"
+# Original fuera de Tailscale -> host.docker.internal.
+printf '10.20.30.40\t22\n' > "$rt/server"
+coolify_retarget_localhost_server 2>/dev/null
+[[ "$(cat "$rt/server")" == $'host.docker.internal\t2222' ]]
+# start rechazado por "already running" cae a restart; otro error falla.
+coolify_cli() {
+  printf '%s %s %s\n' "$1" "$2" "$3" >> "$rt/cli.log"
+  case "$2" in
+    start) [[ "$3" == ok ]] && return 0; printf 'API error 400: Database is already running.\n' >&2; [[ "$3" == boom ]] && printf 'other\n' >&2; return 1 ;;
+    restart) [[ "$3" == boom ]] && return 1; return 0 ;;
+  esac
+}
+_coolify_start_resource database ok
+_coolify_start_resource database l1 2>/dev/null
+grep -Fqx 'database restart l1' "$rt/cli.log"
+! _coolify_start_resource database boom 2>/dev/null
+unset -f docker sshd tailscale ip coolify_cli
+rm -rf "$rt"
 
 echo '== backup profiles =='
 apply_backup_profile economy

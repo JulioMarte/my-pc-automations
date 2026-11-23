@@ -58,3 +58,12 @@ politica del repositorio; solo anade reglas locales mas estrictas.
   `validate_docker_bind_coverage` ignore sockets, dispositivos y rutas de runtime
   (`/run`, `/var/run`, `/proc`, `/sys`, `/dev`); p. ej. `/var/run/docker.sock` de
   coolify-proxy bloqueaba doctor y cada backup. El resto sigue fail-closed.
+- **DR de Coolify en host nuevo**: `modules/coolify-dr-retarget.sh` reapunta el
+  servidor `localhost` (id 0) de la base de datos de Coolify restaurada a ESTE host
+  (IP de Tailscale propia si la original era de Tailscale; si no
+  `host.docker.internal`; puerto de `sshd -T`) y marca como `exited` los estados
+  heredados, antes de re-ejecutar el instalador. Sin esto, el Coolify restaurado
+  gestionaba por SSH el host ORIGINAL: en una prueba con el original vivo actuaba
+  sobre produccion. `start` de un recurso que la API da por running cae a
+  `restart`. Probar DR con el original vivo exige ademas cortar el trafico del
+  host nuevo hacia el original (IP publica y de Tailscale).

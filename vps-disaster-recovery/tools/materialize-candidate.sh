@@ -13,6 +13,8 @@ EXPECTED_AUTO_MODULE_GIT_BLOB=edc1dd2552e0a0cd0f0b01bf1b64efcdf7c4b7c5
 EXPECTED_CHECKPOINT_MODULE_GIT_BLOB=0dec1eef272b32d465ac4abe1ddf9f153631772e
 DIAG_MODULE="$ROOT/modules/install-diagnostics.sh"
 BIND_MODULE="$ROOT/modules/bind-coverage.sh"
+RETARGET_MODULE="$ROOT/modules/coolify-dr-retarget.sh"
+EXPECTED_RETARGET_MODULE_GIT_BLOB=c946bcaa8ebd0d5ef7c730e5f206cf6b10436adb
 EXPECTED_BIND_MODULE_GIT_BLOB=cac621dcaf1025e8871bc39700f0f81b97c1b443
 EXPECTED_DIAG_MODULE_GIT_BLOB=f994f4d3e56740c8708ef80d759c5434d415614d
 TMP_OUT=$(mktemp)
@@ -196,6 +198,35 @@ awk -v module="$BIND_MODULE" '
 ' "$OUT" > "$TMP_OUT"
 mv "$TMP_OUT" "$OUT"
 TMP_OUT=$(mktemp)
+# DR de Coolify en host nuevo (modules/coolify-dr-retarget.sh): el servidor
+# localhost restaurado deja de apuntar al host original antes de arrancar Coolify.
+[[ -r "$RETARGET_MODULE" ]] || { echo 'coolify retarget module missing' >&2; exit 1; }
+[[ "$(git -C "$ROOT" hash-object "$RETARGET_MODULE")" == "$EXPECTED_RETARGET_MODULE_GIT_BLOB" ]] || { echo 'coolify retarget module blob mismatch' >&2; exit 1; }
+bash -n "$RETARGET_MODULE"
+awk '
+  $0 == "cmd_disaster_recovery() {" { inside=1 }
+  inside && $0 == "  info \"Reejecutando instalador Coolify para arrancar y aplicar migraciones...\"" {
+    print "  coolify_retarget_localhost_server || die \"No pude reapuntar el servidor localhost de Coolify a este host; no arranco Coolify.\""
+    hooked++
+  }
+  { print }
+  inside && $0 == "}" { inside=0 }
+  END { if (hooked != 1) exit 64 }
+' "$OUT" > "$TMP_OUT"
+mv "$TMP_OUT" "$OUT"
+TMP_OUT=$(mktemp)
+awk -v module="$RETARGET_MODULE" '
+  /^show_help\(\) \{/ && !inserted {
+    while ((getline line < module) > 0) print line
+    close(module)
+    print ""
+    inserted=1
+  }
+  { print }
+  END { if (!inserted) exit 65 }
+' "$OUT" > "$TMP_OUT"
+mv "$TMP_OUT" "$OUT"
+TMP_OUT=$(mktemp)
 chmod 0755 "$OUT"
 
 # Release invariants for the new recovery path. Final SHA is pinned only after
@@ -222,6 +253,8 @@ grep -Fq 'coolify_provision_api_token || true' "$OUT" || { echo 'coolify token a
 grep -Fq 'install_trace_begin install "$@"; cmd_install; install_trace_end' "$OUT" || { echo 'install trace hook missing' >&2; exit 1; }
 grep -Fqx '    docker_bind_is_runtime "$p" && continue' "$OUT" || { echo 'bind coverage runtime skip missing' >&2; exit 1; }
 grep -Fq '"$restic_password" "$C_RESET" >&"$INSTALL_TTY_FD"' "$OUT" || { echo 'restic password may leak into install log' >&2; exit 1; }
+grep -Fqx '  coolify_retarget_localhost_server || die "No pude reapuntar el servidor localhost de Coolify a este host; no arranco Coolify."' "$OUT" || { echo 'coolify localhost retarget hook missing' >&2; exit 1; }
+[[ "$(grep -c '^coolify_start_databases_from_inventory() {' "$OUT")" == 2 ]] || { echo 'coolify start override missing' >&2; exit 1; }
 actual=$(sha256sum "$OUT" | awk '{print $1}')
 echo "v1.4.3 candidate SHA256: $actual" >&2
 printf '%s\n' "$OUT"

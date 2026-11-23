@@ -29,7 +29,7 @@ This keeps the exact tested candidate reproducible and auditable.
 
 Pinned v1.4.3 SHA-256:
 
-`f5ed99a060a2a2304dea7367c33f220e94c39fb82749ede5e2b9f4c886613587`
+`d9b02b21eba416ee1e1c3e964daf9f83548bbc2a09b9b550add5b426747996a1`
 
 ## Instalacion automatica
 
@@ -65,6 +65,21 @@ terminal, no en el log. Para reportar un fallo:
 ```bash
 sudo cat /var/log/vps-backup/install-last.log
 ```
+
+## Probar DR de Coolify con el host original vivo
+
+La base de datos de Coolify restaurada apunta su servidor `localhost` al host original.
+`disaster-recovery --execute` la reapunta a este host antes de arrancar Coolify
+(`modules/coolify-dr-retarget.sh`): IP de Tailscale propia si la original era de
+Tailscale (Tailscale debe estar activo en el host nuevo), si no `host.docker.internal`.
+`VPS_BACKUP_DR_COOLIFY_LOCALHOST_IP` fuerza la IP (debe ser de este host). Aun asi, en una
+prueba con el original en produccion:
+
+- corta el trafico del host nuevo hacia el original (IP publica y de Tailscale) antes de
+  `--execute`, y bloquea la salida a internet de los contenedores (`DOCKER-USER`) para que
+  las apps restauradas no envien correo ni ejecuten webhooks por duplicado;
+- al terminar, desactiva los timers de `vps-backup` en el host nuevo: comparte repositorio
+  con el original.
 
 ## Local commands
 
