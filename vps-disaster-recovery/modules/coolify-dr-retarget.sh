@@ -215,3 +215,69 @@ restore_policy_databases() {
   fi
   return 0
 }
+
+# --- volumenes restic-live con contenedores en marcha -----------------------------
+# El base restaura las DB builtin por dump y DESPUES hace rsync --delete de cada
+# volumen restic-live, aunque haya un contenedor usandolo. En el DR de vps-02 eso
+# sobrescribio el directorio de datos de Postgres de n8n (montado por bind desde
+# /var/lib/docker/volumes/n8n_n8n_postgres_data/_data, por eso su politica era
+# restic-live) con el Postgres en marcha: catalogo corrupto ("unexpected data
+# beyond EOF"). Ahora:
+# - un volumen que monta una DB builtin (como volumen o por bind a su _data) no se
+#   sobrescribe: el dump ya restaurado es la fuente de verdad;
+# - el resto de contenedores que usan el volumen se paran durante el rsync y se
+#   vuelven a arrancar despues.
+
+# Contenedores (nombres) que montan el volumen, como named volume o por bind a su _data.
+_volume_users() {
+  local vol="$1" mp id
+  mp=$(docker volume inspect -f '{{.Mountpoint}}' "$vol" 2>/dev/null || true)
+  [[ -n "$mp" ]] || mp="$(docker info -f '{{.DockerRootDir}}' 2>/dev/null || printf '/var/lib/docker')/volumes/${vol}/_data"
+  for id in $(docker ps -aq 2>/dev/null); do
+    docker inspect -f '{{.Name}}{{range .Mounts}}|{{.Name}}|{{.Source}}{{end}}' "$id" 2>/dev/null
+  done | awk -F'|' -v v="$vol" -v mp="$mp" '{
+    n = substr($1, 2)
+    for (i = 2; i <= NF; i++) if ($i == v || ($i != "" && (index($i, mp) == 1 || index(mp, $i "/") == 1))) { print n; break }
+  }' | sort -u
+}
+
+restore_policy_volumes() {
+  local restore_root="$1" volumes_root="$2" policy="" kind vol engine strategy max_age extra src dst users builtin hit u
+  local -a stopped
+  policy="${restore_root}/var/lib/vps-backup/staging/system/workloads.tsv"
+  [[ -r "$policy" ]] || return 0
+  [[ -n "$volumes_root" && -d "$volumes_root" ]] || return 0
+  builtin=$(awk -F '\t' '$1 == "docker-db" && $4 == "builtin" {print $2}' "$policy")
+  while IFS=$'\t' read -r -u 3 kind vol engine strategy max_age extra; do
+    [[ "$kind" == "docker-volume" && ( "$strategy" == "restic-live" || "$strategy" == "restic-quiesced" ) ]] || continue
+    users=$(_volume_users "$vol")
+    hit=""
+    if [[ -n "$users" && -n "$builtin" ]]; then
+      hit=$(grep -Fx -f <(printf '%s\n' "$builtin") <<<"$users" || true)
+    fi
+    if [[ -n "$hit" ]]; then
+      info "Volume $vol son los datos de la DB builtin ${hit//$'\n'/, } (ya restaurada por dump); no se sobrescribe."
+      continue
+    fi
+    docker volume inspect "$vol" >/dev/null 2>&1 || docker volume create "$vol" >/dev/null || return 1
+    dst=$(docker volume inspect -f '{{.Mountpoint}}' "$vol" 2>/dev/null || true)
+    src=$(find "$volumes_root" -type d -path "*/volumes/${vol}/_data" -print -quit 2>/dev/null || true)
+    [[ -d "$src" && -d "$dst" ]] || { err "No pude mapear volume $vol src=$src dst=$dst"; return 1; }
+    stopped=()
+    for u in $users; do
+      if [[ "$(docker inspect -f '{{.State.Running}}' "$u" 2>/dev/null || true)" == true ]]; then
+        docker stop "$u" >/dev/null || { err "No pude parar $u para restaurar $vol"; return 1; }
+        stopped+=("$u")
+      fi
+    done
+    if (( ${#stopped[@]} > 0 )); then
+      info "Restaurando named volume $vol (parados durante la copia: $(printf '%s ' "${stopped[@]}"))"
+    else
+      info "Restaurando named volume $vol"
+    fi
+    rsync -aHAX --numeric-ids --delete "$src/" "$dst/" || return 1
+    for u in "${stopped[@]}"; do
+      docker start "$u" >/dev/null || warn "No pude volver a arrancar $u tras restaurar $vol"
+    done
+  done 3< "$policy"
+}

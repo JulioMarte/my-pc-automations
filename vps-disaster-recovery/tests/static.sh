@@ -237,6 +237,31 @@ grep -Fqx 'restore mysql-gb7p1bz3e57dhqfzc3o0nard' "$rr/log"
 ! grep -Fq 'postgres-sql-postgres-1' "$rr/log"
 unset -f docker _coolify_start_resource restore_builtin_mysql_container restore_builtin_postgres_container
 rm -rf "$rr"
+# Volumen restic-live: el que monta una DB builtin (bind a su _data) no se toca;
+# el de un contenedor en marcha se copia con el contenedor parado.
+rv=$(mktemp -d); mkdir -p "$rv/rr/var/lib/vps-backup/staging/system" "$rv/vols/volumes/n8nvol/_data" "$rv/vols/volumes/vecvol/_data" "$rv/dst/n8nvol" "$rv/dst/vecvol"
+printf 'docker-db\tpostgres-n8n\tpostgres\tbuiltin\t6\tpostgres:16\ndocker-volume\tn8nvol\tvolume\trestic-live\t12\tnone\ndocker-volume\tvecvol\tvolume\trestic-live\t12\tvec\n' > "$rv/rr/var/lib/vps-backup/staging/system/workloads.tsv"
+docker() {
+  case "$1 $2" in
+    'volume inspect') [[ "$3" == -f ]] && printf '%s\n' "$rv/dst/$5"; return 0 ;;
+    'ps -aq') printf '%s\n' c1 c2 ;;
+    'inspect -f')
+      case "$3" in
+        *State.Running*) [[ "$4" == vec ]] && printf 'true\n' || printf 'false\n' ;;
+        *) [[ "$4" == c1 ]] && printf '/postgres-n8n||%s\n' "$rv/dst/n8nvol"
+           [[ "$4" == c2 ]] && printf '/vec|vecvol|%s\n' "$rv/dst/vecvol" ;;
+      esac ;;
+    'stop '*|'start '*) printf '%s %s\n' "$1" "$2" >> "$rv/log" ;;
+  esac
+  return 0
+}
+rsync() { printf 'rsync %s\n' "${*: -1}" >> "$rv/log"; }
+restore_policy_volumes "$rv/rr" "$rv/vols" 2>/dev/null
+! grep -Fq "rsync $rv/dst/n8nvol/" "$rv/log"
+grep -Fqx "rsync $rv/dst/vecvol/" "$rv/log"
+[[ "$(cat "$rv/log")" == "stop vec"$'\n'"rsync $rv/dst/vecvol/"$'\n'"start vec" ]]
+unset -f docker rsync
+rm -rf "$rv"
 
 echo '== backup profiles =='
 apply_backup_profile economy
