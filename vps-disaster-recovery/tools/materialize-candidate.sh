@@ -14,7 +14,7 @@ EXPECTED_CHECKPOINT_MODULE_GIT_BLOB=0dec1eef272b32d465ac4abe1ddf9f153631772e
 DIAG_MODULE="$ROOT/modules/install-diagnostics.sh"
 BIND_MODULE="$ROOT/modules/bind-coverage.sh"
 RETARGET_MODULE="$ROOT/modules/coolify-dr-retarget.sh"
-EXPECTED_RETARGET_MODULE_GIT_BLOB=c946bcaa8ebd0d5ef7c730e5f206cf6b10436adb
+EXPECTED_RETARGET_MODULE_GIT_BLOB=9c25777cec719fbee6b763d3518a90881180fd8e
 EXPECTED_BIND_MODULE_GIT_BLOB=cac621dcaf1025e8871bc39700f0f81b97c1b443
 EXPECTED_DIAG_MODULE_GIT_BLOB=f994f4d3e56740c8708ef80d759c5434d415614d
 TMP_OUT=$(mktemp)
@@ -255,6 +255,7 @@ grep -Fqx '    docker_bind_is_runtime "$p" && continue' "$OUT" || { echo 'bind c
 grep -Fq '"$restic_password" "$C_RESET" >&"$INSTALL_TTY_FD"' "$OUT" || { echo 'restic password may leak into install log' >&2; exit 1; }
 grep -Fqx '  coolify_retarget_localhost_server || die "No pude reapuntar el servidor localhost de Coolify a este host; no arranco Coolify."' "$OUT" || { echo 'coolify localhost retarget hook missing' >&2; exit 1; }
 [[ "$(grep -c '^coolify_start_databases_from_inventory() {' "$OUT")" == 2 ]] || { echo 'coolify start override missing' >&2; exit 1; }
+[[ "$(grep -c '^restore_policy_databases() {' "$OUT")" == 2 ]] || { echo 'builtin DB owner-service override missing' >&2; exit 1; }
 actual=$(sha256sum "$OUT" | awk '{print $1}')
 echo "v1.4.3 candidate SHA256: $actual" >&2
 printf '%s\n' "$OUT"

@@ -133,3 +133,79 @@ coolify_start_apps_services_from_inventory() {
     done < <(json_top_uuids "$adir/applications.json")
   fi
 }
+
+# --- bases de datos builtin dentro de servicios/apps de Coolify ------------------
+# Las DB builtin de un servicio de Coolify (p. ej. mysql-<uuid> de Firefly) solo
+# existen cuando su servicio arranca, y el base las restauraba antes de arrancar
+# servicios ("Container ... no apareció"). Ahora: se arranca el servicio dueño, se
+# espera a que la DB este sana, se para el resto del stack mientras se restaura y
+# el paso normal de arranque lo levanta despues. Una DB que no gestiona Coolify y
+# no existe en este host (p. ej. un stack de Portainer) se salta con aviso: su
+# dump queda en el bundle DR para restaurarla a mano.
+
+# Imprime "service <uuid>" o "app <uuid>" si el contenedor es de un recurso del inventario.
+_coolify_owner_of() {
+  local name="$1" adir="$2" u
+  u="${name##*-}"
+  [[ "$u" =~ ^[a-z0-9]{24}$ ]] || return 1
+  if [[ -s "$adir/services.json" ]] && json_top_uuids "$adir/services.json" | grep -Fxc -- "$u" >/dev/null; then
+    printf 'service %s' "$u"; return 0
+  fi
+  if [[ -s "$adir/applications.json" ]] && json_top_uuids "$adir/applications.json" | grep -Fxc -- "$u" >/dev/null; then
+    printf 'app %s' "$u"; return 0
+  fi
+  return 1
+}
+
+# Espera a que el contenedor este running y, si tiene healthcheck, healthy.
+_wait_container_ready() {
+  local c="$1" timeout="${2:-300}" elapsed=0 st
+  while (( elapsed < timeout )); do
+    st=$(docker inspect -f '{{.State.Status}}/{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$c" 2>/dev/null || true)
+    case "$st" in running/healthy|running/none) return 0 ;; esac
+    sleep 5; elapsed=$((elapsed + 5))
+  done
+  err "El contenedor $c no quedó listo en ${timeout}s (estado: ${st:-inexistente})."
+  return 1
+}
+
+restore_policy_databases() {
+  local restore_root="$1" policy="" kind name engine strategy max_age extra dir adir owner rkind ruuid sib
+  local -a skipped=()
+  policy="${restore_root}/var/lib/vps-backup/staging/system/workloads.tsv"
+  [[ -r "$policy" ]] || return 0
+  adir="${restore_root}/var/lib/vps-backup/staging/coolify"
+  while IFS=$'\t' read -r -u 3 kind name engine strategy max_age extra; do
+    [[ "$kind" == "docker-db" && "$strategy" == "builtin" ]] || continue
+    dir="${restore_root}/var/lib/vps-backup/staging/workloads/docker-db/$(safe_name "$name")"
+    [[ -d "$dir" ]] || { err "Falta staging de DB $name"; return 1; }
+    (cd "$dir" && sha256sum -c SHA256SUMS) >/dev/null || { err "Checksum dump $name falló"; return 1; }
+    if ! docker inspect "$name" >/dev/null 2>&1; then
+      if owner=$(_coolify_owner_of "$name" "$adir"); then
+        IFS=" " read -r rkind ruuid <<<"$owner"
+        info "Coolify: arranco $rkind $ruuid para crear $name antes de restaurar sus datos"
+        _coolify_start_resource "$rkind" "$ruuid" || return 1
+        _wait_container_ready "$name" 600 || return 1
+        while IFS= read -r sib; do
+          [[ -n "$sib" && "$sib" != "$name" ]] || continue
+          docker stop "$sib" >/dev/null 2>&1 || true
+        done < <(docker ps --filter "label=com.docker.compose.project=${ruuid}" --format '{{.Names}}')
+      else
+        warn "$name no lo gestiona Coolify y no existe en este host; NO se restaura. Dump: $dir"
+        skipped+=("$name")
+        continue
+      fi
+    else
+      _wait_container_ready "$name" 300 || return 1
+    fi
+    case "$engine" in
+      postgres) restore_builtin_postgres_container "$name" "$dir" || return $? ;;
+      mysql|mariadb) restore_builtin_mysql_container "$name" "$dir" || return $? ;;
+      *) err "Restore builtin no soporta engine=$engine ($name)"; return 1 ;;
+    esac
+  done 3< "$policy"
+  if (( ${#skipped[@]} > 0 )); then
+    warn "DB builtin sin restaurar (fuera de Coolify; recrearlas y restaurarlas a mano): ${skipped[*]}"
+  fi
+  return 0
+}
