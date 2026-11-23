@@ -201,6 +201,37 @@ grep -Fqx 'database restart l1' "$rt/cli.log"
 ! _coolify_start_resource database boom 2>/dev/null
 unset -f docker sshd tailscale ip coolify_cli
 rm -rf "$rt"
+# DB builtin de un servicio de Coolify: se arranca el servicio, se para el resto
+# del stack y se restaura; una DB fuera de Coolify inexistente se salta.
+rr=$(mktemp -d); st="$rr/var/lib/vps-backup/staging"
+mkdir -p "$st/system" "$st/coolify"
+printf '[{"uuid":"gb7p1bz3e57dhqfzc3o0nard","name":"firefly"}]\n' > "$st/coolify/services.json"
+printf '[]\n' > "$st/coolify/applications.json"
+printf 'docker-db\tmysql-gb7p1bz3e57dhqfzc3o0nard\tmariadb\tbuiltin\t6\tmariadb:11\ndocker-db\tpostgres-sql-postgres-1\tpostgres\tbuiltin\t6\tpostgres:16\ndocker-db\tmongodb-x\tmongo\thook\t6\tmongo:7\n' > "$st/system/workloads.tsv"
+for n in mysql-gb7p1bz3e57dhqfzc3o0nard postgres-sql-postgres-1; do
+  d="$st/workloads/docker-db/$(safe_name "$n")"; mkdir -p "$d"; echo x > "$d/a"; (cd "$d" && sha256sum a > SHA256SUMS)
+done
+[[ "$(_coolify_owner_of mysql-gb7p1bz3e57dhqfzc3o0nard "$st/coolify")" == 'service gb7p1bz3e57dhqfzc3o0nard' ]]
+! _coolify_owner_of postgres-sql-postgres-1 "$st/coolify"
+docker() {
+  case "$1" in
+    inspect) [[ "${*: -1}" == mysql-gb7p1bz3e57dhqfzc3o0nard && -e "$rr/started" ]] || return 1
+             [[ "$2" == -f ]] && printf 'running/healthy\n'; return 0 ;;
+    ps) printf '%s\n' mysql-gb7p1bz3e57dhqfzc3o0nard firefly-gb7p1bz3e57dhqfzc3o0nard ;;
+    stop) printf 'stop %s\n' "$2" >> "$rr/log" ;;
+  esac
+}
+_coolify_start_resource() { printf 'start %s %s\n' "$1" "$2" >> "$rr/log"; touch "$rr/started"; }
+restore_builtin_mysql_container() { printf 'restore %s\n' "$1" >> "$rr/log"; }
+restore_builtin_postgres_container() { printf 'restore %s\n' "$1" >> "$rr/log"; }
+restore_policy_databases "$rr" 2>/dev/null
+grep -Fqx 'start service gb7p1bz3e57dhqfzc3o0nard' "$rr/log"
+grep -Fqx 'stop firefly-gb7p1bz3e57dhqfzc3o0nard' "$rr/log"
+! grep -Fqx 'stop mysql-gb7p1bz3e57dhqfzc3o0nard' "$rr/log"
+grep -Fqx 'restore mysql-gb7p1bz3e57dhqfzc3o0nard' "$rr/log"
+! grep -Fq 'postgres-sql-postgres-1' "$rr/log"
+unset -f docker _coolify_start_resource restore_builtin_mysql_container restore_builtin_postgres_container
+rm -rf "$rr"
 
 echo '== backup profiles =='
 apply_backup_profile economy

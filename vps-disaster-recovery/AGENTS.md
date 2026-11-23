@@ -67,3 +67,8 @@ politica del repositorio; solo anade reglas locales mas estrictas.
   sobre produccion. `start` de un recurso que la API da por running cae a
   `restart`. Probar DR con el original vivo exige ademas cortar el trafico del
   host nuevo hacia el original (IP publica y de Tailscale).
+  Las DB builtin de un servicio de Coolify solo existen cuando arranca el servicio:
+  `restore_policy_databases` arranca el servicio dueno, espera la DB sana, para el
+  resto del stack, restaura y deja que el arranque normal lo levante. Una DB builtin
+  fuera de Coolify que no existe en el host (p. ej. stack de Portainer) se salta con
+  aviso; su dump queda en el bundle DR.
