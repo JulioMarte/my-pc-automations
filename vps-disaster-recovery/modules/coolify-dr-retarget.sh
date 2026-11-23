@@ -549,3 +549,35 @@ coolify_restore_bind_sources() {
   done
   return "$rc"
 }
+
+# --- imagenes fijadas por digest ---------------------------------------------------
+# Coolify referencia imagenes por etiqueta (p. ej. n8nio/n8n:latest) y en el host
+# nuevo esa etiqueta puede ser una version mas nueva que la del origen: en vps-02 n8n
+# arranco con otra version y migro el esquema antes de restaurar. Si el backup trae
+# workloads/images/image-digests.tsv (hook pre-backup.d/45-image-digests), antes de
+# arrancar nada se descarga cada repo@sha256 del origen y se le pone la etiqueta
+# original. Coolify no hace pull al arrancar (solo con "pull latest"), asi que usa esa
+# imagen. Un digest que el registro ya no tiene se avisa y Coolify usara la etiqueta.
+coolify_pin_images_from_inventory() {
+  local target="$1" file ref digest have pinned=0 failed=0
+  local -A done_refs=()
+  file="${target}/var/lib/vps-backup/staging/workloads/images/image-digests.tsv"
+  [[ -s "$file" ]] || { info "El backup no trae digests de imágenes; Coolify usará las etiquetas actuales."; return 0; }
+  while IFS=$'\t' read -r _ ref digest <&3; do
+    [[ -n "$ref" && "$digest" == *@sha256:* ]] || continue
+    [[ -z "${done_refs[$ref]:-}" ]] || continue
+    done_refs["$ref"]=1
+    have=$(docker image inspect -f '{{range .RepoDigests}}{{println .}}{{end}}' "$ref" 2>/dev/null || true)
+    if grep -Fqx -- "$digest" <<<"$have"; then
+      pinned=$((pinned + 1)); continue
+    fi
+    if docker pull -q "$digest" >/dev/null 2>&1 && docker tag "$digest" "$ref" >/dev/null 2>&1; then
+      pinned=$((pinned + 1))
+    else
+      warn "No pude descargar $digest para $ref; Coolify usará la etiqueta actual."
+      failed=$((failed + 1))
+    fi
+  done 3< "$file"
+  ok "Imágenes fijadas al digest del origen: $pinned (sin poder fijar: $failed)."
+  return 0
+}

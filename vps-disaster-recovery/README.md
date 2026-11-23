@@ -29,7 +29,7 @@ This keeps the exact tested candidate reproducible and auditable.
 
 Pinned v1.4.3 SHA-256:
 
-`48330fc486856f97234fe2cb62305b2681fb86f227fc69780ba52b0b3a7bbdd8`
+`78d995562c22206a227c585f360a3c6a26eb262218546cb092a1c7f5f31a087d`
 
 ## Instalacion automatica
 
@@ -83,6 +83,19 @@ prueba con el original en produccion:
 - los recursos que estaban parados en el origen siguen parados tras el DR, y la validacion
   final solo exige los que estaban en marcha; las apps que se construyen desde git fallan
   mientras la salida a internet este bloqueada (hay que redesplegarlas al quitar el bloqueo).
+
+## Hooks recomendados
+
+`hooks/` trae hooks para `/etc/vps-backup/hooks/` (root:root, 0700):
+
+- `pre-backup.d/40-embedded-db-snapshots`: copia consistente de bases SQLite y BoltDB de
+  los contenedores en marcha (pausa breve del contenedor durante la copia).
+- `pre-backup.d/45-image-digests`: registra el digest de cada imagen para que el DR
+  arranque exactamente las mismas versiones.
+- `restore.d/40-embedded-db-restore`: durante el DR sustituye las copias en caliente
+  por las consistentes.
+
+El corte de produccion vps-01 -> vps-02 esta en `docs/corte-vps01-vps02.md`.
 
 ## Local commands
 
