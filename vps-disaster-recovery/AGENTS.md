@@ -72,3 +72,6 @@ politica del repositorio; solo anade reglas locales mas estrictas.
   resto del stack, restaura y deja que el arranque normal lo levante. Una DB builtin
   fuera de Coolify que no existe en el host (p. ej. stack de Portainer) se salta con
   aviso; su dump queda en el bundle DR.
+  `restore_policy_volumes` no sobrescribe un volumen restic-live que monte una DB
+  builtin (como volumen o por bind a su `_data`; el dump es la fuente de verdad) y
+  para los demas contenedores que usen el volumen durante el rsync.
