@@ -15,7 +15,8 @@
 #    VPS_BACKUP_DR_COOLIFY_LOCALHOST_IP fuerza la IP.
 # 2. los estados heredados (running/restarting/starting) pasan a "exited".
 # 3. se avisa de los servidores remotos: no se tocan y Coolify si los gestionara.
-# Ademas "start" de un recurso que la API da por running cae a "restart".
+# Ademas "start" de un recurso que la API da por running cae a "restart", y la red
+# externa de un servicio se crea antes de arrancarlo si falta.
 
 # systemd-run no define HOME: la CLI de Coolify guardaria su contexto en /.config.
 : "${HOME:=/root}"
@@ -96,6 +97,11 @@ coolify_retarget_localhost_server() {
 # start de la CLI; si la API da el recurso por running, restart (despliega en este host).
 _coolify_start_resource() {
   local kind="$1" uuid="$2" out rc=0
+  # Los servicios usan una red externa con su uuid; en el host nuevo puede faltar
+  # ("network <uuid> declared as external, but could not be found").
+  if [[ "$kind" == service ]] && ! docker network inspect "$uuid" >/dev/null 2>&1; then
+    docker network create --attachable "$uuid" >/dev/null 2>&1       || warn "No pude crear la red Docker $uuid del servicio; Coolify lo intentará."
+  fi
   out=$(coolify_cli "$kind" start "$uuid" 2>&1 >/dev/null) || rc=$?
   (( rc == 0 )) && return 0
   if grep -qi 'already running' <<<"$out"; then
