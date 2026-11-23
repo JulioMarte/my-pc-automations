@@ -414,3 +414,87 @@ validate_recovered_runtime() {
   fi
   (( failures == 0 ))
 }
+
+# --- rutas del host montadas por Coolify (binds) -----------------------------------
+# El base solo restaura del snapshot de sistema el bundle DR; las rutas del host que
+# montan los recursos de Coolify (p. ej. /data/compose/5/vw-data de Vaultwarden o
+# /home/<usuario>/Docker-data/portainer) quedaban vacias y los servicios arrancaban
+# con datos nuevos. Tras restaurar la base de datos de Coolify y antes de arrancar
+# nada, se restauran desde el mismo snapshot las rutas que Coolify montara y no puede
+# regenerar: directorios y ficheros sin contenido guardado en su base de datos
+# (local_file_volumes) y host_path de local_persistent_volumes. Los ficheros con
+# contenido los escribe Coolify; los volumenes Docker los restaura
+# restore_policy_volumes; las rutas del plano de control de Coolify no se tocan.
+# Se restauran a un staging y se copian con rsync --delete, con los contenedores que
+# las usen parados durante la copia.
+
+# Rutas candidatas, una por linea, sin duplicados.
+coolify_bind_sources() {
+  local sql
+  sql="SELECT fs_path FROM local_file_volumes WHERE is_directory OR content IS NULL OR content = ''
+UNION SELECT host_path FROM local_persistent_volumes WHERE host_path IS NOT NULL AND host_path <> '';"
+  printf '%s\n' "$sql" | _coolify_db_psql | awk 'NF' | while IFS= read -r p; do
+    case "$p" in
+      /*) ;;
+      *) continue ;;
+    esac
+    case "$p" in
+      /|/dev|/dev/*|/proc|/proc/*|/sys|/sys/*|/run|/run/*|/var/run|/var/run/*|/tmp|/tmp/*) continue ;;
+      /var/lib/docker|/var/lib/docker/*) continue ;;
+      /data/coolify|/data/coolify/source|/data/coolify/source/*|/data/coolify/ssh|/data/coolify/ssh/*|/data/coolify/proxy|/data/coolify/proxy/*) continue ;;
+      *..*) continue ;;
+    esac
+    printf '%s\n' "${p%/}"
+  done | sort -u
+}
+
+# Contenedores que montan una ruta del host (la ruta o algo por debajo).
+_bind_users() {
+  local path="$1" c
+  for c in $(docker ps -aq 2>/dev/null); do
+    docker inspect -f '{{.Name}}{{range .Mounts}}|{{.Source}}{{end}}' "$c" 2>/dev/null
+  done | awk -F'|' -v p="$path" '{n=$1; sub(/^\//, "", n); for (i = 2; i <= NF; i++) if ($i == p || index($i, p "/") == 1) { print n; break } }'
+}
+
+coolify_restore_bind_sources() {
+  local sid="$1" target="$2" stage p src running c rc=0
+  local -a paths=() includes=() stopped=()
+  is_true "${MODULE_COOLIFY:-false}" || return 0
+  mapfile -t paths < <(coolify_bind_sources)
+  (( ${#paths[@]} > 0 )) || { info "Coolify: no hay rutas del host montadas que restaurar."; return 0; }
+  stage="${target}/binds"
+  mkdir -p "$stage"
+  for p in "${paths[@]}"; do includes+=(--include "$p"); done
+  info "Coolify: restaurando ${#paths[@]} rutas del host montadas por recursos desde el snapshot $sid"
+  restic_cmd restore "$sid" --host "$BACKUP_ID" --tag system --target "$stage" "${includes[@]}" >/dev/null || {
+    err "No pude restaurar las rutas del host montadas por Coolify."; return 1; }
+  for p in "${paths[@]}"; do
+    src="${stage}${p}"
+    if [[ ! -e "$src" ]]; then
+      warn "Ruta montada $p no está en el snapshot; queda como la cree Coolify."
+      continue
+    fi
+    stopped=()
+    for c in $(_bind_users "$p"); do
+      running=$(docker inspect -f '{{.State.Running}}' "$c" 2>/dev/null || true)
+      [[ "$running" == true ]] || continue
+      docker stop "$c" >/dev/null 2>&1 && stopped+=("$c")
+    done
+    if [[ -d "$src" ]]; then
+      [[ -e "$p" && ! -d "$p" ]] && rm -f -- "$p"
+      mkdir -p -- "$p"
+      rsync -aHAX --numeric-ids --delete "$src/" "$p/" || { err "Falló la copia de $p"; rc=1; }
+    elif [[ -d "$p" ]] && ! rmdir -- "$p" 2>/dev/null; then
+      # Docker crea un directorio vacio en la ruta de un bind de fichero que falta;
+      # uno con contenido no se sustituye.
+      err "$p es un directorio con contenido; no lo sustituyo por el fichero del snapshot."
+      rc=1
+    else
+      mkdir -p -- "$(dirname -- "$p")"
+      rsync -aHAX --numeric-ids "$src" "$p" || { err "Falló la copia de $p"; rc=1; }
+    fi
+    info "Ruta montada $p restaurada${stopped[*]:+ (parados durante la copia: ${stopped[*]})}"
+    for c in "${stopped[@]}"; do docker start "$c" >/dev/null 2>&1 || warn "No pude rearrancar $c"; done
+  done
+  return "$rc"
+}

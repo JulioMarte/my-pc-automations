@@ -81,3 +81,8 @@ politica del repositorio; solo anade reglas locales mas estrictas.
   espera la cola de deployments, luego cada DB y cada recurso esperado hasta
   `VPS_BACKUP_DR_READY_TIMEOUT` (600 s) porque los arranques de Coolify son
   asincronos; una DB fuera de Coolify ausente es aviso, no fallo.
+  Las rutas del host que montan los recursos de Coolify (binds: `local_file_volumes`
+  sin contenido guardado y `local_persistent_volumes.host_path`) se restauran desde el
+  snapshot de sistema antes de arrancar nada (`coolify_restore_bind_sources`); sin
+  esto Vaultwarden o Portainer arrancaban vacios. Volumenes Docker, `/dev` y el plano
+  de control de Coolify (`/data/coolify/{source,ssh,proxy}`) quedan fuera.

@@ -29,7 +29,7 @@ This keeps the exact tested candidate reproducible and auditable.
 
 Pinned v1.4.3 SHA-256:
 
-`ca4d27af9238e8fa7abe23ee7f2554833840a434a3bc1dad6e1323dd9c19ebc2`
+`8b9580fcc64e88835a121fcb1ecaef8a6df183909dd4500468001d4ad70362a5`
 
 ## Instalacion automatica
 
