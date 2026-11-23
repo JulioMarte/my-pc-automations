@@ -199,6 +199,11 @@ _coolify_start_resource database ok
 _coolify_start_resource database l1 2>/dev/null
 grep -Fqx 'database restart l1' "$rt/cli.log"
 ! _coolify_start_resource database boom 2>/dev/null
+# Un servicio sin su red externa: se crea antes de arrancarlo.
+docker() { [[ "$1 $2" == 'network inspect' ]] && return 1; printf '%s %s %s %s
+' "$1" "$2" "$3" "$4" >> "$rt/net.log"; }
+_coolify_start_resource service ok
+grep -Fqx 'network create --attachable ok' "$rt/net.log"
 unset -f docker sshd tailscale ip coolify_cli
 rm -rf "$rt"
 # DB builtin de un servicio de Coolify: se arranca el servicio, se para el resto
