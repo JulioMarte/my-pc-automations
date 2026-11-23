@@ -122,22 +122,47 @@ coolify_start_databases_from_inventory() {
   done < <(json_top_uuids "$file")
 }
 
+# --- estado de origen de los recursos -----------------------------------------
+# resources.json del inventario guarda el estado de cada recurso en el host de
+# origen al hacer el backup. El DR reproduce ese estado: arranca y exige sanos
+# solo los recursos que estaban en marcha; los parados en origen (p. ej. stacks
+# apagados a proposito) se dejan parados. VPS_BACKUP_DR_START_ALL=true arranca y
+# exige todos, como el base.
+
+# Estado de un recurso en origen ("running:healthy", "exited", ...); vacio si no consta.
+_coolify_source_status() {
+  local adir="$1" uuid="$2"
+  [[ -s "$adir/resources.json" ]] || return 0
+  jq -r --arg u "$uuid" 'if type=="array" then .[] elif (.data? | type)=="array" then .data[] else empty end
+    | select((.uuid? // "") == $u) | (.status? // "") | tostring' "$adir/resources.json" 2>/dev/null | head -1
+}
+
+# 0 si el recurso estaba en marcha en origen, o si no hay dato (conservador).
+_coolify_expected_running() {
+  local adir="$1" uuid="$2" st
+  is_true "${VPS_BACKUP_DR_START_ALL:-false}" && return 0
+  st=$(_coolify_source_status "$adir" "$uuid")
+  [[ -z "$st" || "$st" == running* ]]
+}
+
 coolify_start_apps_services_from_inventory() {
-  local adir="$1" uuid
-  if [[ -s "$adir/services.json" ]]; then
+  local adir="$1" uuid kind label file
+  for kind in service app; do
+    case "$kind" in
+      service) file="$adir/services.json"; label=service ;;
+      app) file="$adir/applications.json"; label=application ;;
+    esac
+    [[ -s "$file" ]] || continue
     while IFS= read -r uuid; do
       [[ -n "$uuid" ]] || continue
-      info "Coolify: start service $uuid"
-      _coolify_start_resource service "$uuid" || return 1
-    done < <(json_top_uuids "$adir/services.json")
-  fi
-  if [[ -s "$adir/applications.json" ]]; then
-    while IFS= read -r uuid; do
-      [[ -n "$uuid" ]] || continue
-      info "Coolify: start application $uuid"
-      _coolify_start_resource app "$uuid" || return 1
-    done < <(json_top_uuids "$adir/applications.json")
-  fi
+      if ! _coolify_expected_running "$adir" "$uuid"; then
+        info "Coolify: $label $uuid estaba parado en origen ($(_coolify_source_status "$adir" "$uuid")); no lo arranco."
+        continue
+      fi
+      info "Coolify: start $label $uuid"
+      _coolify_start_resource "$kind" "$uuid" || return 1
+    done < <(json_top_uuids "$file")
+  done
 }
 
 # --- bases de datos builtin dentro de servicios/apps de Coolify ------------------
@@ -280,4 +305,112 @@ restore_policy_volumes() {
       docker start "$u" >/dev/null || warn "No pude volver a arrancar $u tras restaurar $vol"
     done
   done 3< "$policy"
+}
+
+# --- validacion final del runtime restaurado ---------------------------------------
+# El base comprobaba los contenedores DB justo despues de pedir los arranques
+# (Coolify los hace asincronos: falsos "no running"), exigia sanos todos los
+# recursos aunque estuvieran parados en origen y contaba como fallo una DB fuera de
+# Coolify que restore_policy_databases ya habia saltado con aviso. Ahora:
+# 1. primero control plane y cola de deployments vacia;
+# 2. cada DB de la politica (la del bundle restaurado) se espera hasta VPS_BACKUP_DR_READY_TIMEOUT segundos
+#    (600 por defecto); las de recursos parados en origen no se exigen y las de
+#    fuera de Coolify ausentes quedan como aviso para restaurarlas a mano;
+# 3. los recursos de Coolify que estaban en marcha en origen deben quedar running
+#    (healthy o sin healthcheck) dentro del mismo plazo; se listan los que no;
+# 4. contenedores unhealthy solo cuentan si son de un recurso esperado o no son
+#    de ningun recurso conocido.
+
+# uuid del recurso de Coolify al que pertenece un contenedor (sufijo o prefijo de 24).
+_container_resource_uuid() {
+  local name="$1" adir="$2" u
+  [[ -s "$adir/resources.json" ]] || return 1
+  for u in "${name##*-}" "${name%%-*}"; do
+    [[ "$u" =~ ^[a-z0-9]{24}$ ]] || continue
+    if jq -r 'if type=="array" then .[] elif (.data? | type)=="array" then .data[] else empty end | .uuid? // empty' "$adir/resources.json" 2>/dev/null | grep -Fxc -- "$u" >/dev/null; then
+      printf '%s' "$u"; return 0
+    fi
+  done
+  return 1
+}
+
+coolify_validate_expected_resources() {
+  local servers_file="$1" adir="$2" timeout="$3" uuid json pending elapsed=0 ruuid rname rst
+  uuid=$(coolify_localhost_uuid_from_inventory "$servers_file" || true)
+  [[ -n "$uuid" ]] || { err "No pude resolver localhost UUID para health validation."; return 1; }
+  while :; do
+    pending=""
+    json=$(coolify_cli --format json server get "$uuid" --resources 2>/dev/null || true)
+    if [[ -n "$json" ]] && printf '%s' "$json" | jq -e . >/dev/null 2>&1; then
+      while IFS=$'\t' read -r ruuid rname rst; do
+        [[ -n "$ruuid" ]] || continue
+        _coolify_expected_running "$adir" "$ruuid" || continue
+        case "$rst" in
+          running|running:healthy|running:unknown|running:none) ;;
+          *) pending+="  ${rname} (${ruuid}): ${rst:-sin estado}"$'\n' ;;
+        esac
+      done < <(printf '%s' "$json" | jq -r 'if type=="array" then .[] elif (.data? | type)=="array" then .data[] else empty end
+        | [(.uuid? // ""), (.name? // ""), ((.status? // "") | tostring)] | @tsv' 2>/dev/null)
+    else
+      pending="  no pude consultar los recursos del localhost restaurado"$'\n'
+    fi
+    if [[ -z "$pending" ]]; then
+      ok "Coolify: los recursos que estaban en marcha en origen están running."
+      return 0
+    fi
+    (( elapsed >= timeout )) && break
+    sleep "${VPS_BACKUP_DR_POLL_SECONDS:-15}"
+    elapsed=$((elapsed + ${VPS_BACKUP_DR_POLL_SECONDS:-15}))
+  done
+  err "Recursos en marcha en origen que no quedaron sanos en ${timeout}s:"
+  printf '%s' "$pending" >&2
+  return 1
+}
+
+validate_recovered_runtime() {
+  local servers_file="${1:-}" adir="" failures=0 timeout="${VPS_BACKUP_DR_READY_TIMEOUT:-600}"
+  local kind name engine strategy max_age extra owner rkind ruuid c
+  local policy="$WORKLOAD_POLICY_FILE"
+  local -a manual=()
+  [[ -n "$servers_file" ]] && adir=$(dirname -- "$servers_file")
+  # La politica del bundle restaurado describe el origen; la del host es respaldo.
+  [[ -n "$adir" && -r "$adir/../system/workloads.tsv" ]] && policy="$adir/../system/workloads.tsv"
+  docker info >/dev/null 2>&1 || { err "Docker no operativo"; return 1; }
+  if is_true "${MODULE_COOLIFY:-false}"; then
+    coolify_control_plane_health || failures=$((failures + 1))
+  fi
+  if is_true "${COOLIFY_CLI_ENABLED:-false}"; then
+    coolify_wait_deployments_idle || failures=$((failures + 1))
+  fi
+  if [[ -r "$policy" ]]; then
+    while IFS=$'\t' read -r kind name engine strategy max_age extra <&3; do
+      [[ "$kind" == "docker-db" && "$strategy" != "ignore" ]] || continue
+      owner=$(_coolify_owner_of "$name" "$adir" 2>/dev/null || true)
+      if [[ -z "$owner" ]] && ! docker inspect "$name" >/dev/null 2>&1; then
+        manual+=("$name"); continue
+      fi
+      if [[ -n "$owner" ]]; then
+        IFS=" " read -r rkind ruuid <<<"$owner"
+        if ! _coolify_expected_running "$adir" "$ruuid"; then
+          info "DB $name: su $rkind $ruuid estaba parado en origen; no se exige."
+          continue
+        fi
+      fi
+      _wait_container_ready "$name" "$timeout" || failures=$((failures + 1))
+    done 3< "$policy"
+  fi
+  if is_true "${COOLIFY_CLI_ENABLED:-false}" && [[ -n "$servers_file" ]]; then
+    coolify_validate_expected_resources "$servers_file" "$adir" "$timeout" || failures=$((failures + 1))
+  fi
+  while IFS= read -r c; do
+    [[ -n "$c" ]] || continue
+    ruuid=$(_container_resource_uuid "$c" "$adir" || true)
+    if [[ -n "$ruuid" ]] && ! _coolify_expected_running "$adir" "$ruuid"; then continue; fi
+    err "Contenedor unhealthy tras DR: $c"
+    failures=$((failures + 1))
+  done < <(docker ps --filter health=unhealthy --format '{{.Names}}' 2>/dev/null || true)
+  if (( ${#manual[@]} > 0 )); then
+    warn "DB fuera de Coolify sin restaurar (no cuentan como fallo; recrearlas y restaurarlas a mano): ${manual[*]}"
+  fi
+  (( failures == 0 ))
 }
