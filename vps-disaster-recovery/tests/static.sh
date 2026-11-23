@@ -362,6 +362,43 @@ MODULE_COOLIFY=false coolify_restore_bind_sources snap1 "$bs/dr"
 [[ ! -e "$bs/restic.args" ]]
 unset -f _coolify_db_psql restic_cmd docker rsync
 rm -rf "$bs"
+# DB recien creada por el DR: se vacian sus DB antes de pg_restore (la app pudo
+# migrar el esquema con una imagen mas nueva); "postgres" recrea el esquema public.
+pr=$(mktemp -d); printf 'n8n\npostgres\ntemplate1\nra"ro\n' > "$pr/database-list.txt"
+docker_env_value() { [[ "$2" == POSTGRES_USER ]] && printf 'n8nadmin\n'; [[ "$2" == POSTGRES_PASSWORD ]] && printf 's3cr\n'; return 0; }
+docker() { printf '%s|' "$@" >> "$pr/log"; printf '\n' >> "$pr/log"; }
+_pg_reset_databases pg1 "$pr" >/dev/null
+grep -Fq 'exec|-e|PGPASSWORD=s3cr|pg1|psql|-U|n8nadmin|' "$pr/log"
+grep -Fq -- '-c|DROP DATABASE IF EXISTS "n8n" WITH (FORCE);|' "$pr/log"
+grep -Fq -- '-c|DROP DATABASE IF EXISTS "ra""ro" WITH (FORCE);|' "$pr/log"
+grep -Fq -- '-c|DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;|' "$pr/log"
+! grep -Fq 'template1' "$pr/log"
+[[ "$(wc -l < "$pr/log")" -eq 3 ]]
+unset -f docker_env_value docker
+rm -rf "$pr"
+# Bind que es enlace simbolico (live/ -> archive/ de Let's Encrypt): se restaura el
+# destino y se copia su contenido en la ruta montada.
+bl=$(mktemp -d -p /var/tmp); L="$bl/host"; mkdir -p "$L/le/live/d/privkey.pem"
+_coolify_db_psql() { cat >/dev/null; printf '%s\n' "$L/le/live/d/privkey.pem"; }
+restic_cmd() {
+  local t="" prev="" a inc=""
+  for a in "$@"; do [[ "$prev" == --target ]] && t="$a"; [[ "$prev" == --include ]] && inc="$a"; prev="$a"; done
+  printf '%s\n' "$inc" >> "$bl/includes"
+  if [[ "$inc" == */archive/* ]]; then
+    mkdir -p "$t$L/le/archive/d"; echo clave-real > "$t$L/le/archive/d/privkey3.pem"
+  else
+    mkdir -p "$t$L/le/live/d"; ln -sfn ../../archive/d/privkey3.pem "$t$L/le/live/d/privkey.pem"
+  fi
+}
+docker() { [[ "$1" == ps ]] && return 0; return 0; }
+rsync() { cp -a "${*: -2:1}" "${*: -1}"; }
+MODULE_COOLIFY=true BACKUP_ID=vmi1 coolify_restore_bind_sources snap1 "$bl/dr" >/dev/null 2>"$bl/err"
+grep -Fqx "$L/le/archive/d/privkey3.pem" "$bl/includes"
+[[ -f "$L/le/live/d/privkey.pem" && ! -L "$L/le/live/d/privkey.pem" ]]
+[[ "$(cat "$L/le/live/d/privkey.pem")" == clave-real ]]
+! grep -Fq 'no está en el snapshot' "$bl/err"
+unset -f _coolify_db_psql restic_cmd docker rsync
+rm -rf "$bl"
 
 echo '== backup profiles =='
 apply_backup_profile economy

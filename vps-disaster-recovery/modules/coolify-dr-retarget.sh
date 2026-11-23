@@ -200,8 +200,35 @@ _wait_container_ready() {
   return 1
 }
 
+# Un contenedor DB creado por el DR al arrancar su servicio ya tiene el esquema que
+# la app creo al arrancar, y si la imagen es mas nueva que la del origen incluye
+# tablas con FK que el dump no conoce: pg_restore --clean falla ("cannot drop
+# constraint ... other objects depend on it"). Como esos datos solo son los recien
+# creados, se vacian las DB del dump antes de restaurar: las normales se borran (el
+# base las vuelve a crear) y en "postgres" se recrea el esquema public.
+_pg_reset_databases() {
+  local c="$1" dir="$2" user pass db ident
+  local -a dexec=(docker exec)
+  user=$(docker_env_value "$c" POSTGRES_USER); user="${user:-postgres}"
+  pass=$(docker_env_value "$c" POSTGRES_PASSWORD)
+  [[ -n "$pass" ]] && dexec+=(-e "PGPASSWORD=$pass")
+  while IFS= read -r db; do
+    [[ -n "$db" ]] || continue
+    case "$db" in template0|template1) continue ;; esac
+    ident="\"${db//\"/\"\"}\""
+    if [[ "$db" == postgres ]]; then
+      "${dexec[@]}" "$c" psql -U "$user" -X -q -v ON_ERROR_STOP=1 -d postgres \
+        -c 'DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;' >/dev/null || return 1
+    else
+      "${dexec[@]}" "$c" psql -U "$user" -X -q -v ON_ERROR_STOP=1 -d postgres \
+        -c "DROP DATABASE IF EXISTS ${ident} WITH (FORCE);" >/dev/null || return 1
+    fi
+    info "Vaciada la DB $c/$db (creada por el DR; se restaura del dump)"
+  done < "$dir/database-list.txt"
+}
+
 restore_policy_databases() {
-  local restore_root="$1" policy="" kind name engine strategy max_age extra dir adir owner rkind ruuid sib
+  local restore_root="$1" policy="" kind name engine strategy max_age extra dir adir owner rkind ruuid sib fresh
   local -a skipped=()
   policy="${restore_root}/var/lib/vps-backup/staging/system/workloads.tsv"
   [[ -r "$policy" ]] || return 0
@@ -211,8 +238,10 @@ restore_policy_databases() {
     dir="${restore_root}/var/lib/vps-backup/staging/workloads/docker-db/$(safe_name "$name")"
     [[ -d "$dir" ]] || { err "Falta staging de DB $name"; return 1; }
     (cd "$dir" && sha256sum -c SHA256SUMS) >/dev/null || { err "Checksum dump $name falló"; return 1; }
+    fresh=false
     if ! docker inspect "$name" >/dev/null 2>&1; then
       if owner=$(_coolify_owner_of "$name" "$adir"); then
+        fresh=true
         IFS=" " read -r rkind ruuid <<<"$owner"
         info "Coolify: arranco $rkind $ruuid para crear $name antes de restaurar sus datos"
         _coolify_start_resource "$rkind" "$ruuid" || return 1
@@ -228,6 +257,9 @@ restore_policy_databases() {
       fi
     else
       _wait_container_ready "$name" 300 || return 1
+    fi
+    if [[ "$fresh" == true && "$engine" == postgres ]]; then
+      _pg_reset_databases "$name" "$dir" || return 1
     fi
     case "$engine" in
       postgres) restore_builtin_postgres_container "$name" "$dir" || return $? ;;
@@ -457,7 +489,7 @@ _bind_users() {
 }
 
 coolify_restore_bind_sources() {
-  local sid="$1" target="$2" stage p src running c rc=0
+  local sid="$1" target="$2" stage p src running c link rc=0
   local -a paths=() includes=() stopped=()
   is_true "${MODULE_COOLIFY:-false}" || return 0
   mapfile -t paths < <(coolify_bind_sources)
@@ -468,8 +500,27 @@ coolify_restore_bind_sources() {
   info "Coolify: restaurando ${#paths[@]} rutas del host montadas por recursos desde el snapshot $sid"
   restic_cmd restore "$sid" --host "$BACKUP_ID" --tag system --target "$stage" "${includes[@]}" >/dev/null || {
     err "No pude restaurar las rutas del host montadas por Coolify."; return 1; }
+  # Un bind que es enlace simbolico (p. ej. live/<dominio>/privkey.pem de Let's
+  # Encrypt -> ../../archive/...) necesita tambien su destino; Docker monta el destino.
+  includes=()
+  for p in "${paths[@]}"; do
+    [[ -L "${stage}${p}" ]] || continue
+    link=$(readlink -- "${stage}${p}")
+    [[ "$link" == /* ]] || link="$(dirname -- "$p")/$link"
+    link=$(realpath -m -- "$link")
+    includes+=(--include "$link")
+  done
+  if (( ${#includes[@]} > 0 )); then
+    restic_cmd restore "$sid" --host "$BACKUP_ID" --tag system --target "$stage" "${includes[@]}" >/dev/null || {
+      err "No pude restaurar los destinos de los enlaces montados por Coolify."; return 1; }
+  fi
   for p in "${paths[@]}"; do
     src="${stage}${p}"
+    if [[ -L "$src" ]]; then
+      link=$(readlink -- "$src")
+      [[ "$link" == /* ]] || link="$(dirname -- "$p")/$link"
+      src="${stage}$(realpath -m -- "$link")"
+    fi
     if [[ ! -e "$src" ]]; then
       warn "Ruta montada $p no está en el snapshot; queda como la cree Coolify."
       continue

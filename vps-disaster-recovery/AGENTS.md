@@ -86,3 +86,8 @@ politica del repositorio; solo anade reglas locales mas estrictas.
   snapshot de sistema antes de arrancar nada (`coolify_restore_bind_sources`); sin
   esto Vaultwarden o Portainer arrancaban vacios. Volumenes Docker, `/dev` y el plano
   de control de Coolify (`/data/coolify/{source,ssh,proxy}`) quedan fuera.
+  Un bind que es enlace simbolico (p. ej. `live/` de Let's Encrypt hacia `archive/`)
+  se restaura con su destino y se copia su contenido. Una DB builtin cuyo contenedor
+  crea el propio DR se vacia antes del `pg_restore`: la app pudo migrar el esquema al
+  arrancar (con una imagen mas nueva que la del origen, `--clean` no puede borrar
+  tablas que el dump no conoce).
