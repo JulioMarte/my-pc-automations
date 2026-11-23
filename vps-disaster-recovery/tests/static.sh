@@ -26,6 +26,8 @@ if command -v shellcheck >/dev/null 2>&1; then
   shellcheck -S error -s bash -e SC1090,SC1091 "$ROOT/modules/install-diagnostics.sh"
   shellcheck -S error -s bash -e SC1090,SC1091 "$ROOT/modules/bind-coverage.sh"
   shellcheck -S error -s bash -e SC1090,SC1091 "$ROOT/modules/coolify-dr-retarget.sh"
+  shellcheck -S warning -s bash "$ROOT"/hooks/pre-backup.d/* "$ROOT"/hooks/restore.d/*
+  shellcheck -S warning -s bash -e SC1091 "$ROOT/examples/vps02-cutover.sh"
 else
   echo 'shellcheck unavailable; skipping'
 fi
@@ -399,6 +401,85 @@ grep -Fqx "$L/le/archive/d/privkey3.pem" "$bl/includes"
 ! grep -Fq 'no está en el snapshot' "$bl/err"
 unset -f _coolify_db_psql restic_cmd docker rsync
 rm -rf "$bl"
+# Imagenes fijadas por digest: se descarga repo@sha256 y se etiqueta con la
+# referencia original; la ya presente no se descarga; un fallo de pull es aviso.
+pt=$(mktemp -d); pf="$pt/var/lib/vps-backup/staging/workloads/images/image-digests.tsv"
+mkdir -p "$(dirname "$pf")"
+printf 'a\trepo/a:1\trepo/a@sha256:111\nb\trepo/b:latest\trepo/b@sha256:222\nb2\trepo/b:latest\trepo/b@sha256:222\nc\trepo/c:2\trepo/c@sha256:333\n' > "$pf"
+docker() {
+  printf '%s ' "$@" >> "$pt/log"; printf '\n' >> "$pt/log"
+  case "$1" in
+    image) [[ "${*: -1}" == repo/a:1 ]] && printf 'repo/a@sha256:111\n'; return 0 ;;
+    pull) [[ "${*: -1}" == *333 ]] && return 1; return 0 ;;
+  esac
+  return 0
+}
+coolify_pin_images_from_inventory "$pt" >/dev/null 2>"$pt/err"
+! grep -Fq 'pull -q repo/a@' "$pt/log"
+[[ "$(grep -c 'pull -q repo/b@sha256:222' "$pt/log")" -eq 1 ]]
+grep -Fq 'tag repo/b@sha256:222 repo/b:latest' "$pt/log"
+grep -Fq 'repo/c@sha256:333' "$pt/err"
+rm -f "$pf"; : > "$pt/log"
+coolify_pin_images_from_inventory "$pt" >/dev/null
+[[ ! -s "$pt/log" ]]
+unset -f docker
+rm -rf "$pt"
+
+echo '== hooks embedded-db / image-digests =='
+hk=$(mktemp -d -p /var/tmp); mkdir -p "$hk/bin" "$hk/vol/sub" "$hk/stg"
+printf 'SQLite format 3\000resto' > "$hk/vol/sub/app.sqlite3"; echo wal > "$hk/vol/sub/app.sqlite3-wal"
+{ head -c 16 /dev/zero; printf '\xed\xda\x0c\xed'; head -c 40 /dev/zero; } > "$hk/vol/portainer.db"
+echo texto > "$hk/vol/notes.db"
+cat > "$hk/bin/docker" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$hk/docker.log"
+case "\$1" in
+  ps) echo c1 ;;
+  inspect)
+    case "\$3" in
+      *Mounts*) echo "/app|$hk/vol|/etc/localtime" ;;
+      *Paused*) echo "true false" ;;
+      *Config.Image*) printf 'app\trepo/app:1\tsha256:img1\n' ;;
+    esac ;;
+  image) printf 'otro/espejo@sha256:bbb\nrepo/app@sha256:aaa\n' ;;
+esac
+exit 0
+EOF
+chmod +x "$hk/bin/docker"
+PATH="$hk/bin:$PATH" VPS_BACKUP_STAGING="$hk/stg" bash "$ROOT/hooks/pre-backup.d/40-embedded-db-snapshots" 2>/dev/null
+em="$hk/stg/workloads/embedded-db/manifest.tsv"
+[[ "$(wc -l < "$em")" -eq 2 ]]
+grep -Fq "$hk/vol/sub/app.sqlite3"$'\t'sqlite$'\t' "$em"
+grep -Fq "$hk/vol/portainer.db"$'\t'bolt$'\t' "$em"
+! grep -Fq notes.db "$em"
+eid=$(awk -F'\t' '$3=="sqlite"{print $1}' "$em")
+[[ -f "$hk/stg/workloads/embedded-db/files/$eid/app.sqlite3-wal" ]]
+grep -Fxq 'pause app' "$hk/docker.log"
+grep -Fxq 'unpause app' "$hk/docker.log"
+(cd "$hk/stg/workloads/embedded-db" && sha256sum -c --quiet SHA256SUMS)
+PATH="$hk/bin:$PATH" VPS_BACKUP_STAGING="$hk/stg" bash "$ROOT/hooks/pre-backup.d/45-image-digests" 2>/dev/null
+[[ "$(cat "$hk/stg/workloads/images/image-digests.tsv")" == app$'\t'repo/app:1$'\t'repo/app@sha256:aaa ]]
+# Restore: la copia consistente sustituye a la caliente; el -shm vivo sin pareja se
+# borra; el contenedor se para y se rearranca.
+rd="$hk/rr/var/lib/vps-backup/staging/workloads"; mkdir -p "$rd"
+cp -a "$hk/stg/workloads/embedded-db" "$rd/"
+echo caliente > "$hk/vol/sub/app.sqlite3"; echo walviejo > "$hk/vol/sub/app.sqlite3-wal"; echo shmviejo > "$hk/vol/sub/app.sqlite3-shm"
+: > "$hk/docker.log"
+PATH="$hk/bin:$PATH" VPS_BACKUP_RESTORE_ROOT="$hk/rr" bash "$ROOT/hooks/restore.d/40-embedded-db-restore" 2>/dev/null
+[[ "$(head -c 15 "$hk/vol/sub/app.sqlite3" | tr -d '\0')" == 'SQLite format 3' ]]
+[[ "$(cat "$hk/vol/sub/app.sqlite3-wal")" == wal ]]
+[[ ! -e "$hk/vol/sub/app.sqlite3-shm" ]]
+grep -Fxq 'stop app' "$hk/docker.log"
+grep -Fxq 'start app' "$hk/docker.log"
+# Copia con sha256 distinto: no se aplica y el hook falla.
+printf 'SQLite format 3\000otro' > "$rd/embedded-db/files/$eid/app.sqlite3"
+echo caliente > "$hk/vol/sub/app.sqlite3"
+! PATH="$hk/bin:$PATH" VPS_BACKUP_RESTORE_ROOT="$hk/rr" bash "$ROOT/hooks/restore.d/40-embedded-db-restore" 2>/dev/null
+[[ "$(cat "$hk/vol/sub/app.sqlite3")" == caliente ]]
+# Sin manifiesto: nada que hacer.
+rm -rf "$rd/embedded-db"
+PATH="$hk/bin:$PATH" VPS_BACKUP_RESTORE_ROOT="$hk/rr" bash "$ROOT/hooks/restore.d/40-embedded-db-restore" 2>/dev/null
+rm -rf "$hk"
 
 echo '== backup profiles =='
 apply_backup_profile economy

@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# Registra la imagen exacta (digest) de cada contenedor en marcha.
+# Destino: /etc/vps-backup/hooks/pre-backup.d/ (root, 0700).
+#
+# Problema: Coolify referencia imagenes por etiqueta (p. ej. n8nio/n8n:latest). En un
+# DR el host nuevo descarga lo que esa etiqueta sea HOY, que puede ser una version
+# mas nueva que la del origen: en vps-02 n8n migro el esquema antes de restaurar.
+#
+# Salida: ${VPS_BACKUP_STAGING}/workloads/images/image-digests.tsv (en el bundle DR)
+#   contenedor <TAB> referencia-de-la-imagen <TAB> repo@sha256:digest
+# El DR (coolify_pin_images_from_inventory) descarga cada repo@sha256 y le pone la
+# etiqueta original antes de arrancar nada; Coolify no hace pull al arrancar, asi que
+# usa esa imagen.
+# Se omiten el plano de control de Coolify (lo instala el DR con su version) y las
+# imagenes construidas en el host (sin digest de registro: se reconstruyen).
+set -Eeuo pipefail
+umask 077
+
+STAGING="${VPS_BACKUP_STAGING:?VPS_BACKUP_STAGING no definido}"
+OUT="${STAGING}/workloads/images"
+install -d -m 0700 "$OUT"
+tmp="$OUT/image-digests.tsv.tmp"
+: > "$tmp"
+
+log() { printf '[hook image-digests] %s\n' "$*" >&2; }
+
+# Repositorio de una referencia: sin @digest y sin :etiqueta (la etiqueta va tras la
+# ultima barra; un ":" antes es el puerto del registro).
+ref_repo() {
+  local r="${1%%@*}" last
+  last="${r##*/}"
+  [[ "$last" == *:* ]] && r="${r%:*}"
+  printf '%s' "$r"
+}
+
+n=0; skipped=0
+while IFS=$'\t' read -r name ref image_id; do
+  [[ -n "$name" && -n "$ref" ]] || continue
+  case "$name" in coolify|coolify-*) continue ;; esac
+  [[ "$ref" == sha256:* ]] && { skipped=$((skipped + 1)); continue; }
+  repo=$(ref_repo "$ref")
+  digests=$(docker image inspect -f '{{range .RepoDigests}}{{println .}}{{end}}' "$image_id" 2>/dev/null || true)
+  digest=""
+  while IFS= read -r d; do
+    [[ -n "$d" ]] || continue
+    [[ -z "$digest" ]] && digest="$d"
+    # Preferir el digest del mismo repositorio que la referencia (docker.io implicito).
+    if [[ "${d%%@*}" == "$repo" || "${d%%@*}" == "docker.io/$repo" || "${d%%@*}" == "docker.io/library/$repo" ]]; then digest="$d"; break; fi
+  done <<<"$digests"
+  if [[ -z "$digest" ]]; then
+    skipped=$((skipped + 1)); continue
+  fi
+  printf '%s\t%s\t%s\n' "$name" "$ref" "$digest" >> "$tmp"
+  n=$((n + 1))
+done < <(docker ps --format '{{.Names}}' | while IFS= read -r c; do
+  docker inspect -f '{{.Name}}{{"\t"}}{{.Config.Image}}{{"\t"}}{{.Image}}' "$c" 2>/dev/null | sed 's#^/##'
+done)
+sort -o "$tmp" "$tmp"
+mv -f "$tmp" "$OUT/image-digests.tsv"
+log "imagenes registradas=$n sin digest de registro=$skipped"

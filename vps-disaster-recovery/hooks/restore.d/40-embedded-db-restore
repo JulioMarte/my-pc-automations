@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# Restaura las copias consistentes de bases de datos embebidas que dejo
+# pre-backup.d/40-embedded-db-snapshots. Destino: /etc/vps-backup/hooks/restore.d/
+# (root, 0700).
+#
+# Contrato (vps-backup disaster-recovery --execute): corre DESPUES de restaurar
+# volumenes y rutas montadas por Coolify y ANTES de arrancar apps y servicios.
+# Variables: VPS_BACKUP_RESTORE_ROOT (raiz del bundle DR restaurado).
+#
+# Por cada entrada del manifiesto, si el directorio de la ruta viva existe:
+#   - comprueba el sha256 de la copia;
+#   - para los contenedores en marcha que montan esa ruta;
+#   - sustituye el fichero vivo (copia en caliente del snapshot) por la copia
+#     consistente. El -wal/-shm/-journal vivo se borra si la copia no lo trae: un WAL
+#     de otro momento aplicado sobre la copia la corromperia;
+#   - vuelve a arrancar los contenedores que paro.
+# Una entrada sin directorio vivo (volumen no restaurado) se salta con aviso. Una
+# copia con sha256 distinto no se aplica y hace fallar el hook al final (DR no
+# arranca apps sobre datos dudosos sin que se vea).
+set -Eeuo pipefail
+umask 077
+
+ROOT="${VPS_BACKUP_RESTORE_ROOT:?VPS_BACKUP_RESTORE_ROOT no definido}"
+SRC="${ROOT%/}/var/lib/vps-backup/staging/workloads/embedded-db"
+
+log() { printf '[restore embedded-db] %s\n' "$*" >&2; }
+
+# Contenedores en marcha que montan la ruta (o un directorio que la contiene).
+users_of() {
+  local path="$1" c
+  for c in $(docker ps -q 2>/dev/null); do
+    docker inspect -f '{{.Name}}{{range .Mounts}}|{{.Source}}{{end}}' "$c" 2>/dev/null || true
+  done | awk -F'|' -v p="$path" '{n=$1; sub(/^\//, "", n); for (i = 2; i <= NF; i++) if ($i != "" && ($i == p || index(p, $i "/") == 1)) { print n; break } }'
+}
+
+main() {
+  local id live kind sha copy base dir s c restored=0 skipped=0 bad=0
+  [[ -s "$SRC/manifest.tsv" ]] || { log "sin copias de bases embebidas en el bundle; nada que hacer"; return 0; }
+  while IFS=$'\t' read -r id live kind sha <&3; do
+    [[ -n "$id" && "$live" == /* ]] || continue
+    base=$(basename -- "$live"); dir=$(dirname -- "$live")
+    copy="$SRC/files/$id/$base"
+    if [[ ! -f "$copy" ]] || [[ "$(sha256sum -- "$copy" | cut -d' ' -f1)" != "$sha" ]]; then
+      log "ERROR: copia de $live ausente o con sha256 distinto; no la aplico"
+      bad=$((bad + 1)); continue
+    fi
+    if [[ ! -d "$dir" ]]; then
+      log "AVISO: $dir no existe en este host; salto $live ($kind)"
+      skipped=$((skipped + 1)); continue
+    fi
+    local -a stopped=()
+    for c in $(users_of "$live"); do
+      docker stop "$c" >/dev/null 2>&1 && stopped+=("$c")
+    done
+    cp -a -- "$copy" "$live.dr-tmp" && mv -f -- "$live.dr-tmp" "$live"
+    for s in -wal -shm -journal; do
+      if [[ -e "$SRC/files/$id/$base$s" ]]; then
+        cp -a -- "$SRC/files/$id/$base$s" "$live$s"
+      else
+        rm -f -- "$live$s"
+      fi
+    done
+    log "restaurada copia consistente de $live ($kind)${stopped[*]:+; parados durante la copia: ${stopped[*]}}"
+    restored=$((restored + 1))
+    for c in "${stopped[@]}"; do docker start "$c" >/dev/null 2>&1 || log "AVISO: no pude rearrancar $c"; done
+  done 3< "$SRC/manifest.tsv"
+  log "bases embebidas: restauradas=$restored saltadas=$skipped erroneas=$bad"
+  (( bad == 0 ))
+}
+
+main "$@"

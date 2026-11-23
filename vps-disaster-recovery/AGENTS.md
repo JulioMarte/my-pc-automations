@@ -91,3 +91,12 @@ politica del repositorio; solo anade reglas locales mas estrictas.
   crea el propio DR se vacia antes del `pg_restore`: la app pudo migrar el esquema al
   arrancar (con una imagen mas nueva que la del origen, `--clean` no puede borrar
   tablas que el dump no conoce).
+  `coolify_pin_images_from_inventory` fija cada imagen al digest del origen antes de
+  arrancar nada si el backup trae `workloads/images/image-digests.tsv`.
+- **Hooks versionados** (`hooks/`, se instalan en `/etc/vps-backup/hooks/`, root 0700,
+  en LF por `.gitattributes`): `pre-backup.d/40-embedded-db-snapshots` (copia de
+  SQLite/BoltDB con el contenedor pausado), `pre-backup.d/45-image-digests` y
+  `restore.d/40-embedded-db-restore`. Un fallo de copia no aborta el backup; solo no
+  poder reanudar un contenedor. Tests funcionales en `tests/static.sh`.
+- **Un repositorio por host**: dos hosts con el mismo `BACKUP_ID`/prefijo mezclan
+  snapshots y el `forget` de uno puede borrar los del otro. vps-02 usa `vmi3456423`.
