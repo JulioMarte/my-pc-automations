@@ -29,7 +29,7 @@ This keeps the exact tested candidate reproducible and auditable.
 
 Pinned v1.4.3 SHA-256:
 
-`b43a20ba5aa8a8eea195cd627e7118473169edb289d36013f92c38bfbb6065cf`
+`ca4d27af9238e8fa7abe23ee7f2554833840a434a3bc1dad6e1323dd9c19ebc2`
 
 ## Instalacion automatica
 
@@ -80,6 +80,9 @@ prueba con el original en produccion:
   las apps restauradas no envien correo ni ejecuten webhooks por duplicado;
 - al terminar, desactiva los timers de `vps-backup` en el host nuevo: comparte repositorio
   con el original.
+- los recursos que estaban parados en el origen siguen parados tras el DR, y la validacion
+  final solo exige los que estaban en marcha; las apps que se construyen desde git fallan
+  mientras la salida a internet este bloqueada (hay que redesplegarlas al quitar el bloqueo).
 
 ## Local commands
 

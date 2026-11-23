@@ -262,6 +262,53 @@ grep -Fqx "rsync $rv/dst/vecvol/" "$rv/log"
 [[ "$(cat "$rv/log")" == "stop vec"$'\n'"rsync $rv/dst/vecvol/"$'\n'"start vec" ]]
 unset -f docker rsync
 rm -rf "$rv"
+# Estado de origen: solo se arrancan y se exigen los recursos en marcha en origen;
+# las DB se esperan (arranque asincrono) y una DB fuera de Coolify ausente es aviso.
+vr=$(mktemp -d); vc="$vr/staging/coolify"; mkdir -p "$vc" "$vr/staging/system"
+A=aaaaaaaaaaaaaaaaaaaaaaaa; B=bbbbbbbbbbbbbbbbbbbbbbbb; C=cccccccccccccccccccccccc
+printf '[{"name":"localhost","uuid":"srv"}]\n' > "$vc/servers.json"
+printf '[{"uuid":"%s"},{"uuid":"%s"}]\n' "$A" "$B" > "$vc/services.json"
+printf '[{"uuid":"%s"}]\n' "$C" > "$vc/applications.json"
+printf '[{"uuid":"%s","status":"running:healthy"},{"uuid":"%s","status":"exited"},{"uuid":"%s","status":"running:healthy"}]\n' "$A" "$B" "$C" > "$vc/resources.json"
+printf 'docker-db\tmysql-%s\tmariadb\tbuiltin\t6\tx\ndocker-db\tpostgres-%s\tpostgres\tbuiltin\t6\tx\ndocker-db\tpostgres-sql-postgres-1\tpostgres\tbuiltin\t6\tx\n' "$A" "$B" > "$vr/staging/system/workloads.tsv"
+_coolify_expected_running "$vc" "$A"
+! _coolify_expected_running "$vc" "$B"
+_coolify_expected_running "$vc" dddddddddddddddddddddddd
+VPS_BACKUP_DR_START_ALL=true _coolify_expected_running "$vc" "$B"
+_coolify_start_resource() { printf 'start %s %s\n' "$1" "$2" >> "$vr/start.log"; }
+coolify_start_apps_services_from_inventory "$vc" >/dev/null
+[[ "$(cat "$vr/start.log")" == "start service $A"$'\n'"start app $C" ]]
+unset -f _coolify_start_resource
+[[ "$(_container_resource_uuid "$C-20261123T170952" "$vc")" == "$C" ]]
+[[ "$(_container_resource_uuid "mysql-$A" "$vc")" == "$A" ]]
+! _container_resource_uuid coolify-db "$vc"
+# La DB de A pasa por "starting" antes de quedar healthy: se espera, no falla.
+docker() {
+  case "$1" in
+    info) return 0 ;;
+    inspect)
+      [[ "${*: -1}" == "mysql-$A" ]] || return 1
+      if [[ "$2" == -f ]]; then
+        if [[ -e "$vr/seen" ]]; then printf 'running/healthy\n'; else touch "$vr/seen"; printf 'running/starting\n'; fi
+      fi
+      return 0 ;;
+    ps) printf 'x-%s\n' "$B" ;;
+  esac
+}
+coolify_wait_deployments_idle() { return 0; }
+coolify_cli() { printf '[{"uuid":"%s","name":"A","status":"running:healthy"},{"uuid":"%s","name":"B","status":"exited"},{"uuid":"%s","name":"C","status":"%s"}]\n' "$A" "$B" "$C" "$(cat "$vr/cstate")"; }
+printf 'running:unknown\n' > "$vr/cstate"
+MODULE_COOLIFY=false COOLIFY_CLI_ENABLED=true validate_recovered_runtime "$vc/servers.json" >/dev/null 2>"$vr/err"
+[[ -e "$vr/seen" ]]
+grep -Fq 'postgres-sql-postgres-1' "$vr/err"
+! grep -Fq "x-$B" "$vr/err"
+# Un recurso en marcha en origen que no queda sano hace fallar y se nombra.
+printf 'exited:unhealthy\n' > "$vr/cstate"
+! MODULE_COOLIFY=false COOLIFY_CLI_ENABLED=true VPS_BACKUP_DR_READY_TIMEOUT=0 validate_recovered_runtime "$vc/servers.json" >/dev/null 2>"$vr/err"
+grep -Fq "C ($C): exited:unhealthy" "$vr/err"
+! grep -Fq "B ($B)" "$vr/err"
+unset -f docker coolify_wait_deployments_idle coolify_cli
+rm -rf "$vr"
 
 echo '== backup profiles =='
 apply_backup_profile economy

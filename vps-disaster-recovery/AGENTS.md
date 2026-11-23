@@ -75,3 +75,9 @@ politica del repositorio; solo anade reglas locales mas estrictas.
   `restore_policy_volumes` no sobrescribe un volumen restic-live que monte una DB
   builtin (como volumen o por bind a su `_data`; el dump es la fuente de verdad) y
   para los demas contenedores que usen el volumen durante el rsync.
+  El DR reproduce el estado de origen (`resources.json` del inventario): arranca y
+  exige sanos solo los recursos que estaban en marcha al hacer el backup
+  (`VPS_BACKUP_DR_START_ALL=true` vuelve a arrancar todos). `validate_recovered_runtime`
+  espera la cola de deployments, luego cada DB y cada recurso esperado hasta
+  `VPS_BACKUP_DR_READY_TIMEOUT` (600 s) porque los arranques de Coolify son
+  asincronos; una DB fuera de Coolify ausente es aviso, no fallo.
