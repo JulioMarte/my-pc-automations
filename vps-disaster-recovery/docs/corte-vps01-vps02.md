@@ -27,12 +27,25 @@ con el snapshot `9927e5ad` de vps-01:
 - Datos comprobados: Vaultwarden (10 usuarios, 732 elementos, quick_check ok),
   Firefly (118 transacciones), n8n (70 workflows).
 
+Segundo ensayo, con el snapshot `72c57274` (el primero de vps-01 con hooks):
+
+- DR: 22 min. El reintento de arranque actuo en real (`mysql-gb7p1...` en "created",
+  levanto al segundo intento).
+- Imagenes fijadas al digest del origen: 23 (las 2 restantes no tienen digest de
+  registro; se construyen en el propio host).
+- `40-embedded-db-restore`: 6 bases embebidas restauradas desde sus copias
+  consistentes (Vaultwarden, Mailu x2, the-vocal-room, coolify-sentinel, Portainer),
+  `quick_check` ok.
+- `finish`: politica completada (7 volumenes) y primer backup correcto a la primera.
+- Datos: Vaultwarden 10 usuarios / 732 elementos, Firefly 118 transacciones, n8n 70
+  workflows.
+
 Duracion estimada de la ventana real: unos 45 min hasta servir desde vps-02, mas la
 propagacion de DNS.
 
 ## Antes del dia del corte
 
-1. En vps-01 (lo hace quien tenga sudo alli): instalar los hooks del repo
+1. Hecho el 2026-11-24 (snapshot `72c57274`). En vps-01: instalar los hooks del repo
    `hooks/pre-backup.d/40-embedded-db-snapshots`, `hooks/pre-backup.d/45-image-digests`
    y `hooks/restore.d/40-embedded-db-restore` (root:root 0700), corregir
    `excludes.txt` (`/etc/vps-backup/credentials*`) y borrar
@@ -107,5 +120,7 @@ propagacion de DNS.
   con un volumen vacio, tambien en vps-01; hoy solo tiene datos semilla) y a la cola
   de Postfix de Mailu. Solucion: volumen con nombre en Coolify para esas rutas.
 - Imagenes: el DR fija cada imagen al digest del origen si el backup trae
-  `image-digests.tsv` (hook 45). Sin ese hook en vps-01, Coolify descarga lo que la
-  etiqueta sea ese dia.
+  `image-digests.tsv` (hook 45, instalado en vps-01 desde `72c57274`). Usar ese
+  snapshot o uno posterior; los anteriores no traen digests ni copias consistentes.
+- Las pruebas de restore desde vps-02 contra el repositorio de vps-01 pueden dejar un
+  lock abandonado (paso el 2026-11-23); `restic unlock` desde vps-02 lo quita.
