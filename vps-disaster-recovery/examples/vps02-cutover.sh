@@ -83,6 +83,38 @@ cmd_dr() {
   log "Al terminar (EXIT=0): vps02-cutover.sh finish"
 }
 
+# Tras el DR y los redespliegues hay volumenes anonimos nuevos (VOLUME de las
+# imagenes) que la politica no conoce, y el backup falla cerrado ("NUEVO Docker
+# volume sin politica DR"). reconfigure es interactivo; esto anade solo esos
+# volumenes con el mismo criterio que su opcion por defecto: montado por una DB de la
+# politica -> database-skip, por coolify-db -> control-plane-skip, resto ->
+# restic-live. Una DB nueva sin politica no se decide aqui: sigue fallando.
+# Requiere el script sourced y load_config.
+refresh_volume_policy() {
+  local pol="$WORKLOAD_POLICY_FILE" vol consumers c strategy added=0
+  local -a cs
+  [[ -r "$pol" ]] || die "falta $pol"
+  cp -a "$pol" "$pol.bak-$(date +%Y%m%d-%H%M%S)"
+  while IFS= read -r vol; do
+    [[ -n "$vol" ]] || continue
+    policy_lookup docker-volume "$vol" >/dev/null 2>&1 && continue
+    consumers=$(docker_volume_consumers "$vol" | paste -sd, -)
+    strategy="restic-live"
+    IFS=',' read -r -a cs <<< "$consumers"
+    for c in "${cs[@]}"; do
+      [[ -n "$c" ]] || continue
+      if awk -F '\t' -v n="$c" '$1=="docker-db" && $2==n {f=1} END{exit !f}' "$pol"; then strategy="database-skip"; break; fi
+    done
+    [[ "$strategy" == restic-live && ",${consumers}," == *",${COOLIFY_DB_CONTAINER},"* ]] && strategy="control-plane-skip"
+    printf 'docker-volume\t%s\tvolume\t%s\t%s\t%s\n' "$vol" "$strategy" "${VOLUME_RPO_HOURS:-26}" "${consumers:-none}" >> "$pol"
+    log "politica: volumen $vol -> $strategy (${consumers:-sin consumidores})"
+    added=$((added + 1))
+  done < <(docker volume ls -q 2>/dev/null)
+  chmod 600 "$pol"
+  log "politica de volumenes: $added nuevos"
+  validate_workload_policy_current || die "la politica sigue incompleta (DB nueva?): sudo vps-backup reconfigure"
+}
+
 cmd_finish() {
   local tok C T
   systemctl is-active --quiet vps-dr-cutover.service 2>/dev/null && die "el DR sigue en marcha"
@@ -100,6 +132,7 @@ cmd_finish() {
   load_config
   configure_coolify_cli_context || die "el contexto de la CLI de Coolify no valida"
   log "token de Coolify creado y contexto CLI valido"
+  refresh_volume_policy
   systemctl enable --now "${TIMERS[@]}" >/dev/null
   systemctl reset-failed vps-backup.service 2>/dev/null || true
   systemctl start --no-block vps-backup.service

@@ -239,6 +239,24 @@ grep -Fqx 'restore mysql-gb7p1bz3e57dhqfzc3o0nard' "$rr/log"
 ! grep -Fq 'postgres-sql-postgres-1' "$rr/log"
 unset -f docker _coolify_start_resource restore_builtin_mysql_container restore_builtin_postgres_container
 rm -rf "$rr"
+# Arranque con reintento: el primer start deja la DB en "created" (Coolify borro la
+# red); el segundo la deja sana. Un recurso que nunca levanta falla tras 3 intentos.
+rs=$(mktemp -d)
+docker() {
+  case "$1" in
+    inspect) local n; n=$(cat "$rs/starts" 2>/dev/null || echo 0)
+             if (( n >= 2 )); then printf 'running/healthy\n'; else printf 'created/none\n'; fi ;;
+  esac
+}
+_coolify_start_resource() { local n; n=$(cat "$rs/starts" 2>/dev/null || echo 0); echo $((n + 1)) > "$rs/starts"; }
+DR_START_STUCK_SECS=10 DR_START_POLL=0 DR_START_RETRY_SLEEP=0 _coolify_start_until_ready service gb7p1bz3e57dhqfzc3o0nard mysql-gb7p1bz3e57dhqfzc3o0nard 600 2>/dev/null
+[[ "$(cat "$rs/starts")" == 2 ]]
+echo 0 > "$rs/starts"
+docker() { [[ "$1" == inspect ]] && printf 'created/none\n'; return 0; }
+! DR_START_STUCK_SECS=10 DR_START_POLL=0 DR_START_RETRY_SLEEP=0 _coolify_start_until_ready service gb7p1bz3e57dhqfzc3o0nard mysql-gb7p1bz3e57dhqfzc3o0nard 600 2>/dev/null
+[[ "$(cat "$rs/starts")" == 3 ]]
+unset -f docker _coolify_start_resource
+rm -rf "$rs"
 # Volumen restic-live: el que monta una DB builtin (bind a su _data) no se toca;
 # el de un contenedor en marcha se copia con el contenedor parado.
 rv=$(mktemp -d); mkdir -p "$rv/rr/var/lib/vps-backup/staging/system" "$rv/vols/volumes/n8nvol/_data" "$rv/vols/volumes/vecvol/_data" "$rv/dst/n8nvol" "$rv/dst/vecvol"

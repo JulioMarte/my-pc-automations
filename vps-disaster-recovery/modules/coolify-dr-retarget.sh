@@ -200,6 +200,64 @@ _wait_container_ready() {
   return 1
 }
 
+# Arranca el recurso y espera a que el contenedor c este listo, con hasta 3 intentos.
+# Coolify, recien reinstalado, corre ValidateServer en paralelo y puede borrar la red
+# del servicio entre la creacion y el arranque de sus contenedores, que se quedan en
+# "created" ("network <uuid> not found"; visto en el ensayo del 2026-11-24). Un
+# contenedor que lleva 90 s sin pasar a running (created, exited, inexistente) se da
+# por atascado y se vuelve a arrancar el recurso; uno que arranca lento (running con
+# healthcheck en starting) espera hasta el timeout.
+_coolify_start_until_ready() {
+  local kind="$1" uuid="$2" c="$3" timeout="${4:-600}" attempt elapsed stuck st=""
+  for attempt in 1 2 3; do
+    if (( attempt > 1 )); then
+      warn "Coolify: $kind $uuid no levanto $c (estado: ${st:-inexistente}); reintento $attempt/3"
+    fi
+    if ! _coolify_start_resource "$kind" "$uuid"; then
+      st="start-fallido"; sleep "${DR_START_RETRY_SLEEP:-15}"; continue
+    fi
+    elapsed=0; stuck=0
+    while (( elapsed < timeout )); do
+      st=$(docker inspect -f '{{.State.Status}}/{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$c" 2>/dev/null || true)
+      case "$st" in
+        running/healthy|running/none) return 0 ;;
+        running/*|restarting/*) stuck=0 ;;
+        *) stuck=$((stuck + 5)) ;;
+      esac
+      (( stuck >= ${DR_START_STUCK_SECS:-90} )) && break
+      sleep "${DR_START_POLL:-5}"; elapsed=$((elapsed + 5))
+    done
+  done
+  err "El contenedor $c no quedó listo tras 3 intentos (estado: ${st:-inexistente})."
+  return 1
+}
+
+# Contenedores de recursos que debian quedar en marcha y siguen en "created" mas de
+# 60 s (misma carrera de la red en el arranque asincrono de apps y servicios): se
+# vuelve a arrancar su recurso una vez antes de validar.
+coolify_heal_created_resources() {
+  local adir="$1" name created owner rkind ruuid now
+  local -A seen=()
+  now=$(date +%s)
+  while IFS=$'\t' read -r name created; do
+    [[ -n "$name" ]] || continue
+    owner=$(_coolify_owner_of "$name" "$adir" 2>/dev/null || true)
+    [[ -n "$owner" ]] || continue
+    IFS=" " read -r rkind ruuid <<<"$owner"
+    [[ -z "${seen[$ruuid]:-}" ]] || continue
+    _coolify_expected_running "$adir" "$ruuid" || continue
+    created=$(date -d "$created" +%s 2>/dev/null || echo "$now")
+    (( now - created >= 60 )) || continue
+    seen[$ruuid]=1
+    warn "Coolify: $name sigue en created; vuelvo a arrancar $rkind $ruuid"
+    _coolify_start_resource "$rkind" "$ruuid" || warn "No pude rearrancar $rkind $ruuid"
+  done < <(docker ps -a --filter status=created --format '{{.Names}}' 2>/dev/null \
+    | while IFS= read -r name; do
+        [[ -n "$name" ]] && printf '%s\t%s\n' "$name" "$(docker inspect -f '{{.Created}}' "$name" 2>/dev/null)"
+      done)
+  return 0
+}
+
 # Un contenedor DB creado por el DR al arrancar su servicio ya tiene el esquema que
 # la app creo al arrancar, y si la imagen es mas nueva que la del origen incluye
 # tablas con FK que el dump no conoce: pg_restore --clean falla ("cannot drop
@@ -244,8 +302,7 @@ restore_policy_databases() {
         fresh=true
         IFS=" " read -r rkind ruuid <<<"$owner"
         info "Coolify: arranco $rkind $ruuid para crear $name antes de restaurar sus datos"
-        _coolify_start_resource "$rkind" "$ruuid" || return 1
-        _wait_container_ready "$name" 600 || return 1
+        _coolify_start_until_ready "$rkind" "$ruuid" "$name" 600 || return 1
         while IFS= read -r sib; do
           [[ -n "$sib" && "$sib" != "$name" ]] || continue
           docker stop "$sib" >/dev/null 2>&1 || true
@@ -413,6 +470,7 @@ validate_recovered_runtime() {
   fi
   if is_true "${COOLIFY_CLI_ENABLED:-false}"; then
     coolify_wait_deployments_idle || failures=$((failures + 1))
+    if [[ -n "$adir" ]]; then coolify_heal_created_resources "$adir"; fi
   fi
   if [[ -r "$policy" ]]; then
     while IFS=$'\t' read -r kind name engine strategy max_age extra <&3; do
