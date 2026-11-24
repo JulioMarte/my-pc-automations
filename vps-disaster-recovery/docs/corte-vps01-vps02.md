@@ -48,9 +48,9 @@ Ayudante en vps-02: `examples/vps02-cutover.sh` (instalado en `/root/cutover/`).
    apps que se construyen desde git (`www.quisqueyatech.com`,
    `the-vocal-room-academy`) fallan y la validacion acaba en `EXIT=1` solo por ellas:
    se redespliegan tras el paso 5 (`coolify deploy uuid <uuid>`).
-   `postgres-sql-postgres-1` (fuera de Coolify) se recrea a mano como en la prueba:
-   red `web_network`, volumen `postgres_data`, `postgres:16.4`, `globals.sql` y
-   `restore_builtin_postgres_container` con el dump del bundle.
+   `postgres-sql-postgres-1` (compose fuera de Coolify) lo recrea el propio ayudante
+   al terminar el DR (`PGSQL_EXIT=0` en el log); a mano:
+   `/root/cutover/vps02-cutover.sh postgres-sql`.
 5. **Abrir salida:** `/root/cutover/vps02-cutover.sh go-live`.
 6. **DNS:** apuntar a vps-02 (A 144.126.139.118, AAAA 2605:a140:2345:6423::1) cada
    dominio que sirve Coolify. La lista sale de su base de datos (no se versiona aqui:
@@ -69,9 +69,13 @@ Ayudante en vps-02: `examples/vps02-cutover.sh` (instalado en `/root/cutover/`).
 
 ## Despues
 
-- Reinstalar en vps-02 lo que vive en el host y no restaura el DR: agente de Netdata
-  (y `/usr/local/bin/netdata-aclk-watchdog.sh` en el crontab de root), HetrixTools, y
-  el exit de `local-proxy` (crontab de julio-marte en vps-01).
+- Netdata: `/root/cutover/vps02-cutover.sh netdata` instala el agente con la
+  configuracion y el claim de vps-01 y el watchdog de ACLK. vps-02 entra como nodo
+  propio en el mismo espacio de Netdata Cloud (no se copia la identidad de nodo de
+  vps-01). Puede hacerse antes del corte. Al apagar vps-01, quitar su nodo en Cloud.
+- HetrixTools no se reinstala (decision 2026-11-24).
+- El exit de `local-proxy` (crontab de julio-marte en vps-01) sigue en vps-01 mientras
+  exista; moverlo es una decision aparte.
 - vps-01 pasa a ser el host de backup cuando se decida; su repositorio
   `vmi2741977` conserva el historial anterior al corte.
 
