@@ -14,6 +14,22 @@ Ayudante en vps-02: `examples/vps02-cutover.sh` (instalado en `/root/cutover/`).
   repositorio `vps-backups/vmi3456423` (identidad `vmi3456423`, no toca el de vps-01).
 - vps-01: sigue en produccion con backups en `vps-backups/vmi2741977`.
 
+## Ensayo general (2026-11-24)
+
+Ayudante completo (`dr` + redeploy de las apps de git con ventana de build + `finish`)
+con el snapshot `9927e5ad` de vps-01:
+
+- DR: 18 min. Primer intento fallido por una carrera de Coolify (borro la red de
+  Firefly en pleno arranque); corregido con reintento (`_coolify_start_until_ready`).
+- `postgres-sql` recreado solo (6 bases). Apps de git: redeploy en unos 10 min.
+- `finish`: el primer backup fallo por volumenes anonimos nuevos; `finish` ya completa
+  la politica. Backup `dfab22e8`, `check` OK, `dr-plan` y `doctor` sin fallos ni avisos.
+- Datos comprobados: Vaultwarden (10 usuarios, 732 elementos, quick_check ok),
+  Firefly (118 transacciones), n8n (70 workflows).
+
+Duracion estimada de la ventana real: unos 45 min hasta servir desde vps-02, mas la
+propagacion de DNS.
+
 ## Antes del dia del corte
 
 1. En vps-01 (lo hace quien tenga sudo alli): instalar los hooks del repo
@@ -60,7 +76,8 @@ Ayudante en vps-02: `examples/vps02-cutover.sh` (instalado en `/root/cutover/`).
    vps-01; PTR de 144.126.139.118 -> `mail.quisqueyatech.com` en Contabo. DKIM no
    cambia (la clave viene en el volumen `mailu_mailu_dkim`).
 7. **Backups de vps-02:** `/root/cutover/vps02-cutover.sh finish` (identidad propia,
-   token de Coolify nuevo, timers, backup). Verificar con `vps-backup status` y
+   token de Coolify nuevo, politica completada con los volumenes anonimos que crean el
+   DR y los redespliegues, timers, backup). Verificar con `vps-backup status` y
    `vps-backup check`. Luego desactivar los timers de vps-backup en vps-01.
 8. **Comprobar:** login en Vaultwarden, envio y recepcion de correo, certificado de
    Mailu (`/usr/local/bin/mailu-cert-sync.sh` cuando Traefik tenga el de
