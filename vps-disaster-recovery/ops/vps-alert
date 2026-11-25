@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# vps-alert: envia un aviso corto a ntfy (app movil/web, sin cuenta).
+#
+#   vps-alert <prioridad> <titulo> <mensaje>
+#     prioridad: min|low|default|high|urgent
+#
+# Configuracion en /etc/vps-backup/alert.env (root:root 0600):
+#   NTFY_URL=https://ntfy.sh/<topic-aleatorio>
+#   NTFY_TOKEN=            (opcional, para un servidor ntfy propio con acceso)
+#
+# El topic es el unico secreto: quien lo conozca puede leer y publicar avisos. Los
+# mensajes no llevan logs ni datos, solo host, unidad y estado: ntfy.sh es publico.
+set -Eeuo pipefail
+
+CONF="${VPS_ALERT_CONF:-/etc/vps-backup/alert.env}"
+prio="${1:-default}" title="${2:-aviso}" msg="${3:-}"
+
+[[ -r "$CONF" ]] || { echo "vps-alert: falta $CONF" >&2; exit 2; }
+# shellcheck disable=SC1090
+. "$CONF"
+[[ -n "${NTFY_URL:-}" ]] || { echo "vps-alert: NTFY_URL vacio en $CONF" >&2; exit 2; }
+
+host=$(hostname -s)
+args=(-fsS --max-time 20 --retry 3 --retry-delay 5
+      -H "Title: [$host] $title" -H "Priority: $prio" -H "Tags: $host")
+[[ -n "${NTFY_TOKEN:-}" ]] && args+=(-H "Authorization: Bearer $NTFY_TOKEN")
+
+if curl "${args[@]}" -d "${msg:-$title}" "$NTFY_URL" >/dev/null; then
+  logger -t vps-alert "enviado ($prio): $title"
+else
+  logger -t vps-alert "NO enviado ($prio): $title"
+  exit 1
+fi

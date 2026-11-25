@@ -1,0 +1,8 @@
+[Unit]
+Description=Comprueba que los backups de este host estan al dia en el repositorio
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/vps-backup-freshness

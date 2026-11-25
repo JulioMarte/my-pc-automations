@@ -135,9 +135,8 @@ Lecciones para la proxima vez:
 
 ## Riesgos conocidos
 
-- Sin alertas: ningun host tiene hooks `failure.d` ni healthchecks; un backup que falla
-  no avisa a nadie. Conviene un ping a healthchecks.io (o ntfy) en `post-backup.d` y
-  `failure.d`.
+- Alertas: desde 2026-11-25 vps-02 avisa por ntfy de fallos y de backups caducados
+  (ver `docs/alertas-y-snapshots.md`); un host caido lo avisa Netdata Cloud.
 - Volumenes anonimos (`VOLUME` del Dockerfile): reciben un nombre nuevo en cada
   recreacion, asi que el DR los restaura con el nombre de vps-01 y nadie los monta.
   Afecta a `the-vocal-room-academy` (su SQLite y `receipts/`: cada redeploy empieza
