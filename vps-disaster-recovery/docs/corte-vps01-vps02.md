@@ -97,6 +97,30 @@ propagacion de DNS.
    `mail.quisqueyatech.com`), n8n, Firefly, MeshCentral (los agentes reconectan solos
    al cambiar el DNS de `mesh`).
 
+## Corte realizado (2026-11-24)
+
+Backup final de vps-01 `75b91623` (22:41); DR en vps-02, `go-live`, DNS en Cloudflare
+(8 registros A de las dos zonas + SPF, con el CLI `cf`), PTR en el panel de Contabo
+(`cntb` no gestiona DNS inverso) y `finish`; primer backup propio correcto (23:17).
+vps-01 con todos sus contenedores parados (lista en
+`~julio-marte/cutover-running-20261124.txt`).
+
+Lecciones para la proxima vez:
+
+- Coolify rearranca `coolify-proxy` aunque se pare con `docker stop` (lo hizo a los
+  pocos minutos, durante el backup final). Parar tambien el contenedor `coolify`
+  justo despues del snapshot de sistema, o vigilarlo.
+- Traefik pide los certificados al arrancar, antes del cambio de DNS, y falla; tras
+  cambiar el DNS: `docker restart coolify-proxy` (obtuvo los 11 al momento).
+- Mailu: `live/npm-2/fullchain.pem` y `privkey.pem` venian de vps-01 como ficheros
+  sueltos con un certificado caducado, no como enlaces a `archive/npm-2/*4.pem`, asi que
+  `mailu-cert-sync.sh` actualizaba ficheros que el front no lee ("no shared cipher" en
+  993/587/25). Arreglo: enlaces a `../../archive/npm-2/fullchain4.pem` y
+  `privkey4.pem` y `docker restart` del front (los antiguos en `/root/mailu-certs-old`).
+- Con el proxy de Cloudflare los registros web cambian al instante; `mail`, `mesh` y el
+  resto salen del comodin `*` (sin proxy, TTL automatico de 300 s): no hizo falta bajar
+  TTL con 24 h de antelacion.
+
 ## Despues
 
 - Netdata: `/root/cutover/vps02-cutover.sh netdata` instala el agente con la
