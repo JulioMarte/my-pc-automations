@@ -1,0 +1,7 @@
+# Aviso cuando falla una unidad (se engancha con OnFailure=vps-alert-failed@%n.service).
+[Unit]
+Description=Aviso de fallo de %i
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c '/usr/local/sbin/vps-alert high "fallo: %i" "La unidad %i ha fallado. Revisar: journalctl -u %i -n 80"'

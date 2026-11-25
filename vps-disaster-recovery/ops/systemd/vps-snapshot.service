@@ -1,0 +1,9 @@
+[Unit]
+Description=Snapshot semanal del disco en Contabo
+After=network-online.target
+Wants=network-online.target
+OnFailure=vps-alert-failed@%n.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/vps-snapshot semanal

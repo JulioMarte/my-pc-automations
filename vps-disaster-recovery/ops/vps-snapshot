@@ -1,0 +1,148 @@
+#!/usr/bin/env bash
+# vps-snapshot: snapshots del disco de este VPS en Contabo, con un usuario de API
+# limitado (rol: solo crear, listar y borrar snapshots de esta instancia; sin
+# rollback, parada, reinstalacion ni otros VPS). Volver a un snapshot se hace a
+# mano desde el panel: este host no puede pisarse a si mismo.
+#
+#   vps-snapshot crear [--con-backup] "motivo"   antes de un cambio arriesgado
+#   vps-snapshot semanal                         lo lanza vps-snapshot.timer
+#   vps-snapshot listar
+#   vps-snapshot comprobar                       credenciales y alcance del rol
+#
+# Un snapshot es el disco entero en caliente (como un corte de luz): Postgres y
+# MariaDB se recuperan solos; las SQLite pueden quedar a medias, por eso
+# --con-backup hace antes un backup de Restic (copias consistentes). Al volver a un
+# snapshot se pierde todo lo escrito despues. No sustituye a Restic: mismo
+# proveedor y mismo centro de datos.
+#
+# Rotacion: solo borra snapshots creados por esta herramienta (nombre con el
+# prefijo SNAPSHOT_PREFIX), nunca los hechos a mano en el panel.
+#
+# Configuracion en /etc/vps-backup/contabo.env (root:root 0600):
+#   CONTABO_CLIENT_ID=  CONTABO_CLIENT_SECRET=  (panel > API)
+#   CONTABO_API_USER=   CONTABO_API_PASSWORD=   (usuario con el rol limitado)
+#   CONTABO_INSTANCE_ID=
+#   SNAPSHOT_PREFIX=vps-snap   SNAPSHOT_MAX=2
+set -Eeuo pipefail
+
+CONF="${VPS_SNAPSHOT_CONF:-/etc/vps-backup/contabo.env}"
+API=https://api.contabo.com/v1
+TOKEN_URL=https://auth.contabo.com/auth/realms/contabo/protocol/openid-connect/token
+
+die() { echo "vps-snapshot: $*" >&2; logger -t vps-snapshot "ERROR: $*"; exit 1; }
+log() { echo "vps-snapshot: $*"; logger -t vps-snapshot "$*"; }
+
+case "${1:-}" in
+  crear|semanal|listar|comprobar) ;;
+  *) sed -n '2,/^set -E/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac
+
+[[ -r "$CONF" ]] || die "falta $CONF"
+# shellcheck disable=SC1090
+. "$CONF"
+for v in CONTABO_CLIENT_ID CONTABO_CLIENT_SECRET CONTABO_API_USER CONTABO_API_PASSWORD CONTABO_INSTANCE_ID; do
+  [[ -n "${!v:-}" ]] || die "$v vacio en $CONF"
+done
+PREFIX="${SNAPSHOT_PREFIX:-vps-snap}"
+MAX="${SNAPSHOT_MAX:-2}"
+BASE="$API/compute/instances/$CONTABO_INSTANCE_ID/snapshots"
+
+token() {
+  curl -fsS --max-time 30 "$TOKEN_URL" \
+    --data-urlencode "client_id=$CONTABO_CLIENT_ID" \
+    --data-urlencode "client_secret=$CONTABO_CLIENT_SECRET" \
+    --data-urlencode "username=$CONTABO_API_USER" \
+    --data-urlencode "password=$CONTABO_API_PASSWORD" \
+    --data-urlencode "grant_type=password" | jq -r '.access_token // empty'
+}
+
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+TOK=$(token) || true
+[[ -n "$TOK" ]] || die "no consigo token de Contabo (credenciales?)"
+
+# api METODO URL [json]: deja el cuerpo en $WORK/body y el codigo HTTP en
+# HTTP_CODE (sin subshell, para que HTTP_CODE llegue al llamante).
+api() {
+  local method="$1" url="$2" body="${3:-}"
+  local -a a=(-sS --max-time 60 -o "$WORK/body" -w '%{http_code}' -X "$method"
+              -H "Authorization: Bearer $TOK" -H "x-request-id: $(cat /proc/sys/kernel/random/uuid)"
+              -H "Content-Type: application/json")
+  [[ -n "$body" ]] && a+=(-d "$body")
+  : > "$WORK/body"
+  HTTP_CODE=$(curl "${a[@]}" "$url") || HTTP_CODE=000
+}
+
+# Todos los snapshots de la instancia, del mas antiguo al mas reciente, en
+# $WORK/list (JSON). Muere si la API no responde.
+fetch_list() {
+  api GET "$BASE?size=100"
+  [[ "$HTTP_CODE" == 200 ]] || die "listar snapshots: HTTP $HTTP_CODE"
+  jq '.data | sort_by(.createdDate)' "$WORK/body" > "$WORK/list"
+}
+
+delete_oldest_own() {
+  local id name
+  fetch_list
+  IFS=$'\t' read -r id name < <(jq -r --arg p "$PREFIX-" '.[] | select(.name | startswith($p)) | "\(.snapshotId)\t\(.name)"' "$WORK/list" | head -1) || true
+  [[ -n "${id:-}" ]] || return 1
+  api DELETE "$BASE/$id"
+  [[ "$HTTP_CODE" =~ ^20 ]] || die "borrar $name: HTTP $HTTP_CODE"
+  log "borrado el snapshot antiguo $name"
+}
+
+create() {
+  local reason="$1" name desc
+  name="$PREFIX-$(date +%Y%m%d-%H%M)"
+  desc=$(printf '%s' "$reason" | tr -cd '[:alnum:] ._:/-' | cut -c1-200)
+  fetch_list
+  while (( $(jq length "$WORK/list") >= MAX )); do
+    delete_oldest_own || die "hay $MAX snapshots o mas y ninguno es de esta herramienta: borra uno a mano en el panel"
+    fetch_list
+  done
+  api POST "$BASE" "$(jq -nc --arg n "$name" --arg d "${desc:-sin motivo}" '{name:$n, description:$d}')"
+  if [[ ! "$HTTP_CODE" =~ ^20 ]]; then
+    die "crear $name: HTTP $HTTP_CODE $(jq -r '.message // empty' "$WORK/body" 2>/dev/null)"
+  fi
+  log "snapshot $name pedido (${desc:-sin motivo}); Contabo tarda unos minutos en completarlo"
+}
+
+case "${1:-}" in
+  crear)
+    shift
+    with_backup=false
+    if [[ "${1:-}" == --con-backup ]]; then with_backup=true; shift; fi
+    reason="${1:-}"
+    [[ -n "$reason" ]] || die 'uso: vps-snapshot crear [--con-backup] "motivo"'
+    if $with_backup; then
+      log "backup de Restic antes del snapshot"
+      vps-backup backup || die "el backup previo fallo; no creo el snapshot"
+    fi
+    create "$reason"
+    ;;
+  semanal)
+    create "semanal automatico"
+    ;;
+  listar)
+    fetch_list
+    jq -r '.[] | "\(.createdDate)  \(.name)  \(.description // "")  (borrado auto: \(.autoDeleteDate // "-"))"' "$WORK/list"
+    ;;
+  comprobar)
+    fetch_list
+    log "listar snapshots: OK ($(jq length "$WORK/list") existentes, maximo configurado $MAX)"
+    # El rol no debe ver otras instancias ni usuarios. Solo lecturas: nunca se prueba
+    # una accion peligrosa para ver si esta prohibida.
+    api GET "$API/compute/instances?size=100"
+    if [[ "$HTTP_CODE" == 200 ]]; then
+      n=$(jq '.data | length' "$WORK/body")
+      (( n <= 1 )) || die "el rol ve $n instancias: deberia ver como mucho esta"
+    fi
+    api GET "$API/users?size=1"
+    [[ "$HTTP_CODE" == 403 || "$HTTP_CODE" == 401 ]] || die "el rol puede leer usuarios (HTTP $HTTP_CODE): es demasiado amplio"
+    log "alcance del rol: OK (no ve usuarios ni otras instancias)"
+    ;;
+  *)
+    sed -n '2,/^set -E/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'
+    exit 2
+    ;;
+esac

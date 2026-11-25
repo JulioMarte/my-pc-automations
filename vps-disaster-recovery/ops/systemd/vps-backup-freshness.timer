@@ -1,0 +1,10 @@
+[Unit]
+Description=Comprobacion horaria de la frescura de los backups
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=300
+Persistent=true
+
+[Install]
+WantedBy=timers.target
