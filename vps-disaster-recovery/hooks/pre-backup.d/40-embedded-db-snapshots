@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+# Copia consistente de las bases de datos embebidas (SQLite, BoltDB) de los
+# contenedores en marcha. Destino: /etc/vps-backup/hooks/pre-backup.d/ (root, 0700).
+#
+# Problema: el snapshot de sistema y la estrategia restic-live copian estos ficheros
+# mientras la app escribe. Una copia hecha a trozos puede mezclar paginas de momentos
+# distintos (SQLite con WAL, BoltDB) y no ser ni siquiera "como tras un corte de luz".
+#
+# Que hace: busca en los montajes (volumenes y binds) de cada contenedor en marcha
+# ficheros *.sqlite, *.sqlite3 y *.db con cabecera SQLite o BoltDB. Por cada origen
+# pausa (docker pause) todos los contenedores en marcha que lo montan, copia el
+# fichero con su -wal/-shm/-journal, y los reanuda. Pausado, nadie escribe: la copia
+# equivale a un corte de luz, que SQLite y BoltDB recuperan. Si hay sqlite3 en el
+# host, comprueba la copia con PRAGMA quick_check.
+#
+# Salida: ${VPS_BACKUP_STAGING}/workloads/embedded-db/ (el bundle DR la restaura)
+#   manifest.tsv  id <TAB> ruta-viva <TAB> tipo <TAB> sha256-del-fichero-principal
+#   files/<id>/<nombre>[-wal|-shm|-journal]
+# 40-embedded-db-restore (restore.d) las pone en su sitio durante el DR.
+#
+# Una copia que falla se avisa y no aborta el backup (el resto del snapshot sigue
+# valiendo). Solo falla, y aborta, si no puede reanudar un contenedor pausado.
+#
+# Variables opcionales:
+#   EMBEDDED_DB_MAX_DEPTH     profundidad de busqueda en cada montaje (4)
+#   EMBEDDED_DB_MAX_MIB       tamano maximo por fichero (2048)
+#   EMBEDDED_DB_EXCLUDE_RE    regex de rutas a ignorar
+set -Eeuo pipefail
+umask 077
+
+STAGING="${VPS_BACKUP_STAGING:?VPS_BACKUP_STAGING no definido}"
+OUT="${STAGING}/workloads/embedded-db"
+MAX_DEPTH="${EMBEDDED_DB_MAX_DEPTH:-4}"
+MAX_MIB="${EMBEDDED_DB_MAX_MIB:-2048}"
+EXCLUDE_RE="${EMBEDDED_DB_EXCLUDE_RE:-^$}"
+PAUSED=()
+
+log() { printf '[hook embedded-db] %s\n' "$*" >&2; }
+
+unpause_all() {
+  local c rc=0
+  for c in "${PAUSED[@]}"; do
+    docker unpause "$c" >/dev/null 2>&1 || { log "ERROR: no pude reanudar $c"; rc=1; }
+  done
+  PAUSED=()
+  return "$rc"
+}
+trap 'unpause_all || true' EXIT
+
+# Tipo de base de datos embebida segun la cabecera; vacio si no lo es.
+db_kind() {
+  local f="$1" head magic
+  head=$(head -c 15 -- "$f" 2>/dev/null | tr -d '\0' || true)
+  [[ "$head" == "SQLite format 3" ]] && { printf 'sqlite'; return 0; }
+  # BoltDB: pagina meta con magic 0xED0CDAED (little-endian) en el byte 16.
+  magic=$(od -An -tx1 -j16 -N4 -- "$f" 2>/dev/null | tr -d ' \n' || true)
+  [[ "$magic" == "edda0ced" ]] && { printf 'bolt'; return 0; }
+  return 1
+}
+
+# Copia el fichero y sus compañeros de WAL/journal.
+copy_db() {
+  local f="$1" dest="$2" s
+  cp -a -- "$f" "$dest/" || return 1
+  for s in -wal -shm -journal; do
+    [[ -e "$f$s" ]] || continue
+    cp -a -- "$f$s" "$dest/" || return 1
+  done
+}
+
+# Origenes de montaje (directorio o fichero) de los contenedores en marcha:
+#   <origen> <TAB> <contenedor>
+mount_sources() {
+  local c
+  for c in $(docker ps -q 2>/dev/null); do
+    docker inspect -f '{{.Name}}{{range .Mounts}}|{{.Source}}{{end}}' "$c" 2>/dev/null || true
+  done | awk -F'|' '{n=$1; sub(/^\//, "", n); for (i = 2; i <= NF; i++) if ($i != "") print $i "\t" n}'
+}
+
+skip_source() {
+  case "$1" in
+    /|/proc|/proc/*|/sys|/sys/*|/dev|/dev/*|/run|/run/*|/var/run|/var/run/*|/etc|/etc/*|/tmp|/tmp/*) return 0 ;;
+    /data/coolify/source|/data/coolify/source/*|/data/coolify/ssh|/data/coolify/ssh/*|/data/coolify/proxy|/data/coolify/proxy/*) return 0 ;;
+    /var/lib/docker/volumes/coolify-db/*|/var/lib/docker/volumes/coolify-redis/*) return 0 ;;
+  esac
+  return 1
+}
+
+main() {
+  local src c f kind id dest sha users found=0 copied=0 failed=0
+  local -A users_of=()
+  rm -rf -- "$OUT"
+  install -d -m 0700 "$OUT/files"
+  : > "$OUT/manifest.tsv"
+
+  while IFS=$'\t' read -r src c; do
+    [[ -n "$src" && -n "$c" ]] || continue
+    skip_source "$src" && continue
+    users_of["$src"]+="${users_of[$src]:+ }$c"
+  done < <(mount_sources)
+
+  for src in "${!users_of[@]}"; do
+    local -a files=()
+    if [[ -f "$src" ]]; then
+      files=("$src")
+    elif [[ -d "$src" ]]; then
+      mapfile -t files < <(find "$src" -xdev -maxdepth "$MAX_DEPTH" -type f \
+        \( -name '*.sqlite' -o -name '*.sqlite3' -o -name '*.db' \) -size -"${MAX_MIB}"M 2>/dev/null | sort)
+    fi
+    local -a dbs=() kinds=()
+    for f in "${files[@]}"; do
+      [[ "$f" =~ $EXCLUDE_RE ]] && continue
+      grep -Fqx -- "$f" "$OUT/.seen" 2>/dev/null && continue
+      kind=$(db_kind "$f") || continue
+      dbs+=("$f"); kinds+=("$kind")
+      printf '%s\n' "$f" >> "$OUT/.seen"
+    done
+    (( ${#dbs[@]} > 0 )) || continue
+    found=$((found + ${#dbs[@]}))
+
+    # Pausar a todos los que montan este origen (y estan en marcha).
+    read -r -a users <<<"${users_of[$src]}"
+    for c in "${users[@]}"; do
+      [[ "$(docker inspect -f '{{.State.Running}} {{.State.Paused}}' "$c" 2>/dev/null)" == "true false" ]] || continue
+      if docker pause "$c" >/dev/null 2>&1; then PAUSED+=("$c"); else log "AVISO: no pude pausar $c; copio sin pausa"; fi
+    done
+    local i
+    for i in "${!dbs[@]}"; do
+      f="${dbs[$i]}"; kind="${kinds[$i]}"
+      id=$(printf '%s' "$f" | sha256sum | cut -c1-16)
+      dest="$OUT/files/$id"
+      install -d -m 0700 "$dest"
+      if copy_db "$f" "$dest"; then
+        sha=$(sha256sum -- "$dest/$(basename -- "$f")" | cut -d' ' -f1)
+        printf '%s\t%s\t%s\t%s\n' "$id" "$f" "$kind" "$sha" >> "$OUT/manifest.tsv"
+        copied=$((copied + 1))
+      else
+        log "AVISO: falló la copia de $f; queda solo la copia en caliente del snapshot"
+        rm -rf -- "$dest"
+        failed=$((failed + 1))
+      fi
+    done
+    unpause_all || exit 1
+  done
+  rm -f -- "$OUT/.seen"
+
+  # Comprobacion opcional de las copias SQLite (sobre una copia temporal: abrirla
+  # con su -wal la modificaria).
+  if command -v sqlite3 >/dev/null 2>&1; then
+    local tmp res
+    while IFS=$'\t' read -r id f kind sha; do
+      [[ "$kind" == sqlite ]] || continue
+      tmp=$(mktemp -d)
+      cp -a -- "$OUT/files/$id/." "$tmp/"
+      res=$(sqlite3 "$tmp/$(basename -- "$f")" 'PRAGMA quick_check;' 2>&1 | head -1 || true)
+      rm -rf -- "$tmp"
+      [[ "$res" == ok ]] || log "AVISO: quick_check de la copia de $f: ${res:-sin respuesta}"
+    done < "$OUT/manifest.tsv"
+  fi
+  (cd "$OUT" && find files -type f -print0 | sort -z | xargs -0r sha256sum > SHA256SUMS)
+  log "bases embebidas: encontradas=$found copiadas=$copied fallidas=$failed"
+}
+
+main "$@"

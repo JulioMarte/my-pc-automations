@@ -1,0 +1,10 @@
+[
+  {
+    "name": "e2e-exit",
+    "location": "e2e",
+    "host": "exit",
+    "port": 8899,
+    "user": "e2e-exit",
+    "pass": "e2e-secret"
+  }
+]

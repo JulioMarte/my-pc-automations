@@ -1,2 +1,8 @@
 # Los scripts de shell DEBEN usar LF (un shebang con CRLF rompe en Linux).
 *.sh text eol=lf
+# Los programas awk que inyecta el materializador tambien van en LF.
+*.awk text eol=lf
+# Los hooks de vps-backup no llevan extension y tambien son scripts de shell.
+vps-disaster-recovery/hooks/** text eol=lf
+# Herramientas de operacion (alertas, snapshots): scripts sin extension y units.
+vps-disaster-recovery/ops/** text eol=lf

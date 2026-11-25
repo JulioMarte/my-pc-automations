@@ -1,0 +1,42 @@
+# local-proxy: exit (servicio systemd) - OPCIONAL
+#
+# Alternativa "servicio real" al cron (scripts/exit-daemon.sh). NO reemplaza nada
+# por si sola: instalala solo si quieres un servicio real y desactiva antes el
+# mecanismo viejo para no arrancar dos veces (ver docs/service.md).
+#
+# Placeholder que reemplaza service/systemd/install.sh:
+#   __PROJECT_DIR__  -> ruta absoluta del proyecto (p. ej. /home/usuario/local-proxy)
+#
+# Instalar:  sudo service/systemd/install.sh exit
+# Estado:    systemctl status local-proxy-exit.service
+# Logs:      journalctl -u local-proxy-exit.service -f
+# Quitar:    sudo systemctl disable --now local-proxy-exit.service
+#
+# Requiere la build: __PROJECT_DIR__/dist/exit.js (npm run build).
+
+[Unit]
+Description=local-proxy exit (salida HTTP CONNECT sobre Tailscale)
+After=network-online.target tailscaled.service
+Wants=network-online.target tailscaled.service
+
+[Service]
+Type=simple
+WorkingDirectory=__PROJECT_DIR__
+ExecStart=/usr/bin/node dist/exit.js
+# El .env define EXIT_USERS, EXIT_HOST, EXIT_PORT, etc. El prefijo "-" evita
+# fallar si el archivo todavia no existe.
+EnvironmentFile=-__PROJECT_DIR__/.env
+Restart=always
+RestartSec=5
+# La app maneja SIGTERM para drenar los tuneles en vuelo (EXIT_SHUTDOWN_GRACE_MS).
+KillSignal=SIGTERM
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=local-proxy-exit
+# Opcional: correr como usuario sin privilegios (debe poder leer __PROJECT_DIR__).
+#User=local-proxy
+#Group=local-proxy
+
+[Install]
+WantedBy=multi-user.target

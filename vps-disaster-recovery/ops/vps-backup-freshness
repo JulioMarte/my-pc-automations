@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# vps-backup-freshness: comprueba en el repositorio (no en logs locales) que el
+# ultimo snapshot de sistema y el de volumenes de este host no son mas viejos que
+# MAX_AGE_HOURS. Avisa con vps-alert al pasar a mal estado, cada 24 h mientras siga
+# mal, y una vez al recuperarse. Lo lanza vps-backup-freshness.timer cada hora.
+#
+# Variables (en /etc/vps-backup/alert.env o el entorno):
+#   FRESHNESS_MAX_AGE_HOURS  (por defecto 8: backups cada 6 h + margen)
+set -Eeuo pipefail
+
+ETC=/etc/vps-backup
+STATE_DIR=/var/lib/vps-alert
+STATE="$STATE_DIR/freshness.state"
+REPEAT_SECS=86400
+
+# shellcheck disable=SC1091
+[[ -r "$ETC/alert.env" ]] && . "$ETC/alert.env"
+max_h="${FRESHNESS_MAX_AGE_HOURS:-8}"
+
+set -a
+# shellcheck disable=SC1091
+. "$ETC/credentials"
+set +a
+install -d -m 0700 "$STATE_DIR"
+
+host=$(hostname -s)
+now=$(date +%s)
+problem=""
+
+# Imprime la fecha (epoch) del ultimo snapshot con esa etiqueta, "none" si no hay
+# ninguno, o nada si el repositorio no responde.
+latest_epoch() { # $1 = tag
+  local json t
+  # Bajo systemd no hay HOME: misma cache que vps-backup.
+  json=$(restic snapshots --no-lock --cache-dir /var/cache/vps-backup/restic --host "$host" --tag "$1" --latest 1 --json 2>/dev/null) || return 0
+  t=$(jq -r 'if length == 0 then "none" else .[-1].time end' <<<"$json" 2>/dev/null) || return 0
+  if [[ "$t" == none ]]; then echo none; else date -d "$t" +%s 2>/dev/null || true; fi
+}
+
+for tag in system docker-volumes; do
+  ts=$(latest_epoch "$tag" || true)
+  if [[ -z "$ts" ]]; then
+    problem="no puedo leer el repositorio de backups (red, credenciales o R2)"
+    break
+  elif [[ "$ts" == none ]]; then
+    problem="no hay ningun snapshot '$tag' de $host"
+    break
+  fi
+  age_h=$(( (now - ts) / 3600 ))
+  if (( age_h >= max_h )); then
+    problem="el ultimo snapshot '$tag' tiene ${age_h} h (limite ${max_h} h)"
+    break
+  fi
+done
+
+prev_state="ok" prev_sent=0
+[[ -r "$STATE" ]] && read -r prev_state prev_sent < "$STATE" || true
+
+if [[ -n "$problem" ]]; then
+  if [[ "$prev_state" != bad ]] || (( now - prev_sent >= REPEAT_SECS )); then
+    vps-alert urgent "backups sin actualizar" "$problem. Revisar: systemctl status vps-backup.service; journalctl -u vps-backup.service -n 50" \
+      && prev_sent=$now
+  fi
+  printf 'bad %s\n' "$prev_sent" > "$STATE"
+  logger -t vps-backup-freshness "MAL: $problem"
+  exit 1
+fi
+
+if [[ "$prev_state" == bad ]]; then
+  vps-alert default "backups al dia de nuevo" "Los snapshots de sistema y volumenes vuelven a tener menos de ${max_h} h." || true
+fi
+printf 'ok %s\n' "$now" > "$STATE"
+logger -t vps-backup-freshness "ok"

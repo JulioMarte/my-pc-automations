@@ -84,6 +84,10 @@ deliberadamente agnóstico: `bun src/gateway.ts` funciona.
   únicas por exit**; failover de WebSocket/Upgrade; recarga en caliente de `.env`.
 - **Credenciales**: rotadas a `exit-home` / `exit-vps-01` / `exit-vps-02`; la clave
   compartida anterior ya no autentica (devuelve `407`).
+- **Operaciones (2026-09-16)**: health check **multi-target con fallback real** (un destino
+  caído ya no tumba la salud), **panel** en `/panel`, **alertas** ligeras
+  (`scripts/monitor.ts`), **Docker** (imagen única + e2e de contenedores), **servicio real**
+  (systemd/WinSW), **user journeys + stress test** y **CI** de GitHub Actions.
 - **Pendiente**: aplicar la política de Tailscale ACLs (versionada, **no aplicada**) y el
   resto del roadmap.
 
@@ -140,6 +144,7 @@ compila `src/*.ts` a `dist/`.
 | `MAX_CONNECTIONS` | Límite de conexiones simultáneas del gateway (0 = sin límite). Al superarlo, Node descarta la conexión |
 | `MAX_CONNECTIONS_PER_USER` | Límite de conexiones simultáneas por **usuario base/tenant** (0 = ilimitado). Aplica al nombre base, así que `agent-session-x` y `agent-exit-home` comparten la cuota de `agent`. Al superarlo: HTTP `429` con `Retry-After` y, en SOCKS5, conexión rechazada (REP `0x02`) |
 | `STATS_TOKEN` | **Obligatorio** para leer `/__stats` (por `?token=` o `Authorization: Bearer`); si queda vacío, `/__stats` responde 403 |
+| `PANEL_ENABLED` | Sirve el panel HTML en `GET /panel` y `GET /` (`true` por defecto). El panel no incrusta secretos |
 | `EXITS_FILE` / `STATS_FILE` | Rutas de configuración y métricas (relativas al proyecto o absolutas) |
 | `LOG_LEVEL` | Nivel mínimo de log: `debug`, `info`, `warn` o `error` (`info` por defecto) |
 | `LOG_FORMAT` | Formato de log: `json` (una línea JSON por evento, por defecto) o `text` (legible para desarrollo) |
@@ -334,6 +339,25 @@ Todos los exits llevan `EXIT_ALLOW=100.110.109.28`: solo el gateway puede usarlo
 (comprobado: desde otro VPS con credenciales válidas devuelve `407`).
 
 Alternativa con root: unit de systemd con `Restart=always` en lugar de cron.
+
+---
+
+## Operaciones: Docker, servicio real, alertas, panel y tests
+
+Además del arranque por Task Scheduler/cron, el proyecto trae opciones de operación. Cada
+una tiene su guía:
+
+| Tema | Qué aporta | Guía |
+|---|---|---|
+| **Docker** | Imagen única (rol `gateway`/`exit`), `docker compose`, healthcheck. `npm run docker:build`, `docker:gateway`, `docker:exit`, `docker:e2e` | [docs/docker.md](docs/docker.md) |
+| **Servicio real** | systemd (Linux) y servicio de Windows vía WinSW, con `Restart=always` | [docs/service.md](docs/service.md) |
+| **Alertas** | `scripts/monitor.ts` sondea `/healthz`+`/readyz` y avisa a ntfy/Telegram/webhook en las transiciones. `npm run monitor` / `monitor:once` | [docs/alerts.md](docs/alerts.md) |
+| **Panel** | Dashboard HTML en `GET /panel` (o `/`) para ver el estado desde el móvil; se autentica con `STATS_TOKEN` | [Monitoreo](#monitoreo) |
+| **Tests / CI** | `npm test`, `npm run test:journey`, `npm run stress`; CI de GitHub Actions (typecheck + tests + build + docker e2e) | [docs/testing.md](docs/testing.md), [docs/ci.md](docs/ci.md) |
+
+> El **servicio real** y el arranque actual no se conocen entre sí: usa **uno** de los dos
+> (desactiva Task Scheduler/cron/watchdog antes de instalar el servicio) para no arrancar
+> el proxy dos veces. Ver [docs/service.md](docs/service.md).
 
 ---
 
@@ -698,6 +722,10 @@ Muchas apps (curl, Python `requests`, Go) usan `HTTP_PROXY`/`HTTPS_PROXY` solas.
   los destinos de `HEALTH_TARGETS` (o `HEALTH_TARGET` si aquella está vacía), con **jitter**
   e **histéresis**: 2 fallos consecutivos marcan el exit como no sano y 2 éxitos lo
   recuperan.
+- **Multi-target con fallback real**: si defines varios destinos, se prueban en orden
+  aleatorio y basta con que **uno** responda para considerar el exit sano. Antes se elegía
+  un destino al azar por ciclo, así que un único destino caído o que bloqueara al exit
+  producía falsos negativos. Ahora un destino roto no tumba la salud de los exits.
 - Cada exit tiene un **circuit breaker**: se abre tras 3 fallos consecutivos, pasa a
   *half-open* tras un backoff con jitter y se cierra en el primer éxito.
 - Si el exit elegido falla (conexión, timeout o `407/502/503/504` **generado por el exit**),
@@ -732,6 +760,7 @@ Endpoints del gateway (en el puerto HTTP del proxy, acceso directo, no a través
 |---|---|---|
 | `GET /healthz` | ninguna | Liveness: `200` siempre que el proceso esté vivo |
 | `GET /readyz` | ninguna | Readiness: `200` si hay ≥1 exit usable y el gateway no está drenando, `503` si no |
+| `GET /panel` (y `/`) | ninguna (los datos piden `STATS_TOKEN` en el navegador) | Panel HTML de estado (exits, salud, conexiones, bytes, sesiones) para ver desde el móvil. Se desactiva con `PANEL_ENABLED=false` |
 | `POST /__drain` | `?token=<STATS_TOKEN>` o `Authorization: Bearer <STATS_TOKEN>` | Inicia el drenado: `/readyz` → `503`, nuevas peticiones de proxy `503` + `Retry-After`; los túneles en vuelo terminan hasta `SHUTDOWN_GRACE_MS` |
 | `GET /__stats` | `?token=<STATS_TOKEN>` o `Authorization: Bearer <STATS_TOKEN>` | Exits, salud, conexiones, bytes y sesiones activas |
 | `GET /metrics` | ninguna si `METRICS_TOKEN` está vacío; si no, `?token=<METRICS_TOKEN>` o `Authorization: Bearer <METRICS_TOKEN>` | Métricas en formato Prometheus (`text/plain; version=0.0.4`), antes de la auth y solo por ruta relativa |

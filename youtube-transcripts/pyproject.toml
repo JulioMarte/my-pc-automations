@@ -1,0 +1,31 @@
+[project]
+name = "yt-channel-transcripts"
+version = "0.1.0"
+description = "Servidor MCP y CLI para descargar, buscar y exportar transcripciones de canales de YouTube (yt-dlp + youtube-transcript-api)"
+authors = [
+    { name = "JulioMarte", email = "julio19955@hotmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "fpdf2>=2.9.0",
+    "mcp[cli]>=2.3.0",
+    "youtube-transcript-api>=1.2.5",
+    "yt-dlp>=2026.10.26",
+]
+
+[project.scripts]
+yt-transcripts = "yt_channel_transcripts.cli:main"
+yt-transcripts-mcp = "yt_channel_transcripts.server:main"
+
+[build-system]
+requires = ["uv_build>=0.10.4,<0.11.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["network: toca YouTube de verdad (solo con YT_NETWORK_TESTS=1)"]

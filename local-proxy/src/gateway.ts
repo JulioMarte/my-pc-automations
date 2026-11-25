@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
 import net from 'node:net';
-import { loadEnv, watchEnv, envString, envNumber, envList } from './env.ts';
+import { loadEnv, watchEnv, envString, envNumber, envBool, envList } from './env.ts';
 import { connectViaHttpProxy, forwardHttp, pipeUpgrade, upgradeHeaders, basic, ProxyError } from './upstream.ts';
 import { createSocks5Server } from './socks5.ts';
 import {
@@ -20,6 +20,7 @@ import {
 import { Registry, startTimer, elapsedSeconds, type Counter } from './metrics.ts';
 import { createLogger, parseLogLevel, parseLogFormat, type Logger } from './logger.ts';
 import { ConnectionLimiter } from './limits.ts';
+import { renderDashboard } from './dashboard.ts';
 
 const RETRYABLE_STATUS = new Set([407, 502, 503, 504]);
 const HTTP_TIMEOUTS = { headersTimeout: 10000, requestTimeout: 30000, keepAliveTimeout: 10000 };
@@ -54,6 +55,7 @@ export interface GatewayConfig {
   authWindowMs?: number;
   authBlockMs?: number;
   readyz?: boolean;
+  panelEnabled?: boolean;
   logger?: Logger;
   metrics?: Registry;
   metricsToken?: string;
@@ -215,6 +217,7 @@ export function createGateway(config: GatewayConfig = {}) {
     authWindowMs = 60000,
     authBlockMs = 60000,
     readyz = true,
+    panelEnabled = true,
     logger = createLogger({ role: 'gateway' }),
     metrics: metricsRegistry,
     metricsToken = '',
@@ -384,6 +387,7 @@ export function createGateway(config: GatewayConfig = {}) {
       host,
       httpPort: portOf(httpServer, httpPort),
       socksPort: portOf(socksServer, socksPort),
+      uptimeMs: Math.round(process.uptime() * 1000),
       ...pool.stats(),
     };
   }
@@ -556,6 +560,15 @@ export function createGateway(config: GatewayConfig = {}) {
     if (pathname === '/healthz') {
       response.writeHead(200, { 'content-type': 'application/json' });
       response.end(JSON.stringify({ ok: true, uptimeMs: Math.round(process.uptime() * 1000) }));
+      return;
+    }
+    if (panelEnabled && (pathname === '/panel' || pathname === '/')) {
+      response.writeHead(200, {
+        'content-type': 'text/html; charset=utf-8',
+        'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'",
+        'x-content-type-options': 'nosniff',
+      });
+      response.end(renderDashboard());
       return;
     }
     if (pathname === '/readyz') {
@@ -770,17 +783,34 @@ export function createGateway(config: GatewayConfig = {}) {
     if (checking.has(exit.name)) return;
     checking.add(exit.name);
     try {
-      const target = targets[Math.floor(Math.random() * targets.length)];
-      if (!target) return;
-      const socket = await connectViaHttpProxy({
-        proxy: exit,
-        host: target.host,
-        port: target.port,
-        timeoutMs: healthTimeoutMs,
+      // Multi-target con fallback real: se prueban los destinos en orden aleatorio y
+      // basta con que UNO responda para considerar el exit sano. Asi un unico destino
+      // caido o que nos bloquee no marca como no sanos todos los exits.
+      const order = [...targets];
+      for (let i = order.length - 1; i > 0; i -= 1) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [order[i], order[j]] = [order[j] as HealthTarget, order[i] as HealthTarget];
+      }
+      let lastError: unknown;
+      for (const target of order) {
+        try {
+          const socket = await connectViaHttpProxy({
+            proxy: exit,
+            host: target.host,
+            port: target.port,
+            timeoutMs: healthTimeoutMs,
+          });
+          socket.destroy();
+          pool.recordSuccess(exit);
+          return;
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      logger.debug?.('health check fallo en todos los destinos', {
+        exit: exit.name,
+        error: errorMessage(lastError),
       });
-      socket.destroy();
-      pool.recordSuccess(exit);
-    } catch {
       healthcheckFailures.inc({ exit: exit.name });
       pool.recordFailure(exit);
     } finally {
@@ -988,6 +1018,7 @@ export function runGateway(): void {
     healthTarget: parseHealthTarget(envString('HEALTH_TARGET', 'api.ipify.org:443')),
     healthTargets: healthTargets.length ? healthTargets : undefined,
     healthTimeoutMs: envNumber('HEALTH_TIMEOUT_MS', 10000),
+    panelEnabled: envBool('PANEL_ENABLED', true),
     maxConnections: envNumber('MAX_CONNECTIONS', 0),
     maxConnectionsPerUser: envNumber('MAX_CONNECTIONS_PER_USER', 0),
     metricsToken: envString('METRICS_TOKEN', ''),

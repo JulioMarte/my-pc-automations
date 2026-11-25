@@ -1,0 +1,52 @@
+# docker-compose.yml - local-proxy (gateway + exit) desde una sola imagen.
+#
+# Uso:
+#   docker compose --profile gateway up -d
+#   docker compose --profile exit up -d
+#   docker compose --profile gateway --profile exit up -d
+#
+# IMPORTANTE (network_mode: host):
+#   El proxy necesita ver y anunciar la interfaz de Tailscale (IP 100.x).
+#   Con la red bridge por defecto el contenedor queda aislado y no alcanza
+#   tailscale0, asi que ambos servicios usan network_mode: host (sin mapeo de
+#   puertos: los EXPOSE del Dockerfile son solo documentacion).
+#
+#   Caveat Docker Desktop (Windows/macOS): el modo host no se comporta igual que
+#   en Linux nativo; en versiones recientes hay que habilitar "host networking"
+#   en Settings > Resources. Si no esta disponible, se puede usar bridge con
+#   mapeo de puertos para pruebas, pero la IP 100.x de Tailscale NO sera
+#   alcanzable desde el contenedor. Para produccion usar un host Linux.
+
+services:
+  gateway:
+    build:
+      context: .
+    image: local-proxy:latest
+    profiles: ["gateway"]
+    init: true
+    restart: unless-stopped
+    env_file: .env
+    network_mode: host
+    volumes:
+      # Exits: solo lectura (el gateway no debe modificarlos).
+      - ./exits.json:/app/exits.json:ro
+      # Estadisticas por peticion (append). Debe existir el fichero en el host.
+      - ./stats.jsonl:/app/stats.jsonl
+      # Logs del host (paridad con el despliegue nativo).
+      - ./logs:/app/logs
+    # ROLE no se define: docker-entrypoint.sh usa "gateway" por defecto.
+
+  exit:
+    build:
+      context: .
+    image: local-proxy:latest
+    profiles: ["exit"]
+    init: true
+    restart: unless-stopped
+    env_file: .env
+    network_mode: host
+    environment:
+      # El mismo entrypoint decide el binario segun ROLE.
+      ROLE: exit
+    volumes:
+      - ./logs:/app/logs
